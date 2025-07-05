@@ -7,3 +7,7 @@ Our study yields the following findings: 1) Among the factors affecting CoT qual
 low-quality CoTs reveals that LLMs can improve CoT, especially when providing detailed CoT problem information. Our findings shed light on the underlying issues that hinder the effectiveness of CoT in LLM-based code generation, offering valuable insights for enhancing both the reasoning process and the overall reliability of code generation.
 
 # File organization
+- xxx
+  - xxxx
+  - xxxx
+- xxx
