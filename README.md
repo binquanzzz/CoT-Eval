@@ -6,6 +6,9 @@ Large language models (LLMs) have demonstrated impressive performance in code ge
 Our study yields the following findings: 1) Among the factors affecting CoT quality, external factors account for 53.60%, primarily including unclear requirements and lack of contextual information. Internal factors make up 40.10%, mainly due to inconsistencies between CoT and prompts caused by LLMs’ misunderstanding of the instructions. 2) Despite CoT being correct, 18.5% of the generated code still contains errors. This is primarily due to LLMs failing to follow instructions, leading to inconsistencies between CoT and the code. Additionally, we found that even when the code is correct, there is an 11.90% chance that the CoT contains errors. 3) Our further research on refining the
 low-quality CoTs reveals that LLMs can improve CoT, especially when providing detailed CoT problem information. Our findings shed light on the underlying issues that hinder the effectiveness of CoT in LLM-based code generation, offering valuable insights for enhancing both the reasoning process and the overall reliability of code generation.
 
+# Taxonomy of factors influencing CoT quality
+![image]()
+
 # File organization
 - xxx
   - xxxx
