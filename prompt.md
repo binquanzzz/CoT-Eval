@@ -42,12 +42,12 @@ changes to multiple files.
 
 @@ -1,27 +1,35 @@
 def euclidean(a, b):
-- while b:
-- a, b = b, a % b
-- return a
-+ if b == 0:
-+ return a
-+ return euclidean(b, a % b)
+-  while b:
+-     a, b = b, a % b
+-  return a
++  if b == 0:
++     return a
++  return euclidean(b, a % b)
 
 
 def bresenham(x0, y0, x1, y1):
