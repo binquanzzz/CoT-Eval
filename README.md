@@ -9,8 +9,50 @@ low-quality CoTs reveals that LLMs can improve CoT, especially when providing de
 # Taxonomy of Factors Influencing CoT Quality
 ![image](./CoT_examples/taxonomy_CoT.png)
 
-# File Organization
-- xxx
-  - xxxx
-  - xxxx
-- xxx
+# Project Structure
+├── 📁 annotations            # Manual annotation results, including DeepSeek-R1, Gemini-2.0-Flash-Thinking, and o1-2024-12-17 on coderEval and SWE-Bench (New Feature).
+│   ├── 📁 deepseek-coderEval-analyze-data                     
+│   │   ├── 📄 deepseek-false-output-1.txt
+│   │   ├── 📄 deepseek-false-output-2.txt
+│   │   ├── …
+│   │   └── 📄 deepseek-false-output-17.txt
+│   ├── 📁 deepseek-swe-bench-analyze-data
+│   │   ├── 📄 deepseek-r1-output-1.txt
+│   │   ├── 📄 deepseek-r1-output-2.txt
+│   │   ├── …
+│   │   └── 📄 deepseek-r1-output-19.txt
+│   ├── 📁 gemini-coderEval-analyze-data
+│   │   ├── 📄 gemini-false-output-1.txt
+│   │   ├── 📄 gemini-false-output-2.txt
+│   │   ├── …
+│   │   └── 📄 gemini-false-output-17.txt
+│   ├── 📁 gemini-swe-bench-analyze-data
+│   │   ├── 📄 gemini-output-1.txt
+│   │   ├── 📄 gemini-output-2.txt
+│   │   ├── …
+│   │   └── 📄 gemini-output-19.txt
+│   ├── 📁 gpt-coderEval-analyze-data
+│   │   ├── 📄 o1-false-output-1.txt
+│   │   ├── 📄 o1-false-output-2.txt
+│   │   ├── …
+│   │   └── 📄 o1-false-output-17.txt
+│   └── 📁 gpt-swe-bench-analyze-data
+│       ├── 📄 o1-output-1.txt
+│       ├── 📄 o1-output-2.txt
+│       ├── …
+│       └── 📄 o1-output-19.txt
+├── 📁 codebook            # Contains the results of building the codebook
+│   └── 📄 codebook.txt
+├── 📁 CoT_examples 
+│   ├── 📄 external_factors_examples.md
+│   ├── 📄 internal_factors_examples.md
+│   └── 📄 taxonomy_CoT.png
+├── 📁 LLM_gen_CoT_results # DeepSeek-R1, Gemini-2.0-Flash-Thinking, and o1-2024-12-17 generate CoT results on coderEval and SWE-Bench (New Feature)
+│   ├── 📄 CoderEval_humanLabel_deepseek-r1_solutions.jsonl
+│   ├── 📄 CoderEval_humanLabel_gemini-2.0-flash-thinking-exp-01-21_solutions_step.jsonl
+│   ├── 📄 CoderEval_humanLabel_o1-2024-12-17_solutions_steps.jsonl
+│   ├── 📄 SWE-bench-NF_deepseek-r1_solutions_final.jsonl
+│   ├── 📄 SWE-bench-NF_gemini-2.0-flash-thinking-exp-01-21_solutions_final.jsonl
+│   └── 📄 SWE-bench-NF_o1-2024-12-17_solutions_final.jsonl
+└── 📁 prompt              # Prompt for generating CoT
+    └── 📄 prompt.md
