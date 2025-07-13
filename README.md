@@ -10,6 +10,7 @@ low-quality CoTs reveals that LLMs can improve CoT, especially when providing de
 ![image](./CoT_examples/taxonomy_CoT.png)
 
 # Project Structure
+```text
 ├── 📁 annotations            # Manual annotation results, including DeepSeek-R1, Gemini-2.0-Flash-Thinking, and o1-2024-12-17 on coderEval and SWE-Bench (New Feature).
 │   ├── 📁 deepseek-coderEval-analyze-data                     
 │   │   ├── 📄 deepseek-false-output-1.txt
