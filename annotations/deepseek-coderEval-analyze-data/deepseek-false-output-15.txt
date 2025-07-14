@@ -1,0 +1,415 @@
+
+==================== 630629e052e177c0ba46a0c4 ====================
+_id: 630629e052e177c0ba46a0c4
+file_path: federation/utils/diaspora.py
+project: jaywink/federation
+name: parse_diaspora_webfinger
+
+prompt:
+Parse Diaspora webfinger which is either in JSON format (new) or XRD (old).
+
+https://diaspora.github.io/diaspora_federation/discovery/webfinger.html
+
+steps:
+
+1. Parse the input JSON document string into a Python dictionary using json.loads().
+2. Access the 'links' key from the parsed dictionary to get the list of links.
+3. Iterate through each link in the list to find the one with 'rel' equal to 'http://microformats.org/profile/hcard'.
+4. Extract the 'href' value from the matching link.
+5. Return a dictionary with the key 'hcard_url' and the extracted href as the value.
+
+
+generate_code:
+
+import json
+from typing import Dict
+
+def parse_diaspora_webfinger(document: str) -> Dict:
+    data = json.loads(document)
+    for link in data.get('links', []):
+        if link.get('rel') == 'http://microformats.org/profile/hcard':
+            return {'hcard_url': link['href']}
+    return {}
+
+
+--------------------------------------------------
+analyze
+Internal factors - Incomplete logical flow - Incomplete path coverage
+Incompatible with XRD format
+==================== 630629e152e177c0ba46a0d2 ====================
+file_path: federation/utils/diaspora.py
+project: jaywink/federation
+name: retrieve_and_parse_diaspora_webfinger
+
+prompt:
+Retrieve a and parse a remote Diaspora webfinger document.
+
+:arg handle: Remote handle to retrieve
+:returns: dict
+
+steps:
+
+1. Parse the input handle to extract the domain by splitting the string at '@'.
+2. Construct the WebFinger URL using the domain and handle in the format: https://{domain}/.well-known/webfinger?resource=acct:{handle}.
+3. Send an HTTP GET request to the constructed URL with appropriate headers to accept JSON responses.
+4. Handle possible exceptions during the request (e.g., network errors, timeouts).
+5. Check if the HTTP response status is successful (200 OK).
+6. Parse the JSON response from the WebFinger document.
+7. Extract relevant data from the JSON, including subject, aliases, and links.
+8. Iterate through the links to find entries with specific 'rel' values for GUID and seed location.
+9. Return a dictionary containing the parsed information.
+
+
+generate_code:
+
+import requests
+
+def retrieve_and_parse_diaspora_webfinger(handle):
+    try:
+        username, domain = handle.split('@')
+    except ValueError:
+        raise ValueError("Invalid handle format. Expected 'user@domain'")
+
+    url = f"https://{domain}/.well-known/webfinger"
+    params = {'resource': f'acct:{handle}'}
+    headers = {'Accept': 'application/jrd+json'}
+
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Request failed: {str(e)}")
+
+    result = {
+        'subject': data.get('subject'),
+        'aliases': data.get('aliases', []),
+        'guid': None,
+        'seed_location': None
+    }
+
+    for link in data.get('links', []):
+        rel = link.get('rel')
+        if rel == 'http://joindiaspora.com/guid':
+            result['guid'] = link.get('href')
+        elif rel == 'http://joindiaspora.com/seed_location':
+            result['seed_location'] = link.get('href')
+
+    return result
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information - lack of repo-level information
+Missing information for `try_retrieve_webfinger_document` and `parse_diaspora_webfinger` functions
+
+==================== 630629e252e177c0ba46a0d6 ====================
+file_path: federation/utils/diaspora.py
+project: jaywink/federation
+name: retrieve_diaspora_host_meta
+
+prompt:
+Retrieve a remote Diaspora host-meta document.
+
+:arg host: Host to retrieve from
+:returns: ``XRD`` instance
+
+steps:
+
+1. Identify the correct URL for the Diaspora host-meta document, which is typically at `/.well-known/host-meta` under the given host using HTTPS.
+2. Use the `requests` library to send a GET request to the constructed URL.
+3. Handle potential exceptions such as network errors, timeouts, or invalid responses.
+4. Check if the HTTP response status code is 200 (OK) to confirm a successful retrieval.
+5. Parse the returned XML content using `xml.etree.ElementTree` to create an XML element tree.
+6. Instantiate an `XRD` object (assuming `XRD` is a predefined class that accepts the parsed XML element) and return it.
+
+
+generate_code:
+
+import requests
+from xml.etree import ElementTree as ET
+
+def retrieve_diaspora_host_meta(host):
+    url = f"https://{host}/.well-known/host-meta"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        xml_root = ET.fromstring(response.content)
+        return XRD(xml_root)
+    except requests.RequestException as e:
+        raise ValueError(f"Failed to retrieve host-meta: {e}") from e
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information - lack of repo-level information
+Missing `fetch_document` function information
+==================== 630629e752e177c0ba46a0fb ====================
+_id: 630629e752e177c0ba46a0fb
+file_path: federation/utils/network.py
+project: jaywink/federation
+name: send_document
+
+prompt:
+Helper method to send a document via POST.
+
+Additional ``*args`` and ``**kwargs`` will be passed on to ``requests.post``.
+
+:arg url: Full url to send to, including protocol
+:arg data: Dictionary (will be form-encoded), bytes, or file-like object to send in the body
+:arg timeout: Seconds to wait for response (defaults to 10)
+:arg method: Method to use, defaults to post
+:returns: Tuple of status code (int or None) and error (exception class instance or None)
+
+steps:
+
+1. **Import the requests library**: The function will use the `requests` library to send HTTP requests, so we need to import it first.
+
+2. **Define the function with correct parameters**: The parameters need to be ordered correctly to avoid syntax errors. The corrected order is `url`, `data`, `timeout`, followed by `*args`, then `method` as a keyword-only parameter, and finally `**kwargs`.
+
+3. **Use requests.request**: The `requests.request` method allows specifying the HTTP method dynamically. Pass `method.upper()` to ensure the method is uppercase (e.g., POST instead of post).
+
+4. **Pass parameters to the request**: Include `url`, `data`, and `timeout` explicitly. Then unpack `*args` and `**kwargs` to forward any additional arguments to the `requests.request` function.
+
+5. **Return the response object**: The function returns the response from the server for further processing if needed.
+
+
+generate_code:
+
+import requests
+
+def send_document(url, data, timeout=10, *args, method="post", **kwargs):
+    response = requests.request(
+        method=method.upper(),
+        url=url,
+        data=data,
+        timeout=timeout,
+        *args,
+        **kwargs
+    )
+    return response
+
+
+--------------------------------------------------
+analyze
+Internal factors - CoT and propt are inconsistent
+The parameter method should be before *args
+==================== 6306091073426c38ae68acac ====================
+file_path: infrared/core/utils/dict_utils.py
+project: redhat-openstack/infrared
+name: dict_insert
+
+prompt:
+insert a value of a nested key into a dictionary
+
+to insert value for a nested key, all ancestor keys should be given as
+method's arguments
+
+example:
+  dict_insert({}, 'val', 'key1.key2'.split('.'))
+
+:param dic: a dictionary object to insert the nested key value into
+:param val: a value to insert to the given dictionary
+:param key: first key in a chain of key that will store the value
+:param keys: sub keys in the keys chain
+
+steps:
+
+1. Combine the initial key and additional keys into a single list to form the full key chain.
+2. Traverse the dictionary using each key in the chain except the last one. For each key:
+   a. If the key doesn't exist in the current level or isn't a dictionary, create an empty dictionary at that key.
+   b. Move the current reference to the next level dictionary.
+3. After reaching the second-to-last key, assign the value to the last key in the chain within the current dictionary.
+
+
+generate_code:
+
+def dict_insert(dic, val, key, *keys):
+    keys_chain = [key] + list(keys)
+    current = dic
+    for k in keys_chain[:-1]:
+        if k not in current or not isinstance(current[k], dict):
+            current[k] = {}
+        current = current[k]
+    current[keys_chain[-1]] = val
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information - lack of repo-level information
+Missing `dict_merge` function information
+==================== 6306091a73426c38ae68acc8 ====================
+file_path: tests/test_complex_types.py
+project: redhat-openstack/infrared
+name: list_of_file_names
+
+prompt:
+Create a new IniType complex type
+
+steps:
+
+1. The task requires creating a function named list_of_file_names that returns an IniType complex type using cli.ListOfFileNames().
+2. The function parameters are settings_dirs and spec_option, which need to be passed to cli.ListOfFileNames().
+3. The cli module's ListOfFileNames method is likely a factory function that generates the IniType instance.
+4. The function will simply call cli.ListOfFileNames with the provided arguments and return the result.
+5. Ensure that the cli module is imported or available in the environment where this function will be used.
+6. No error handling or additional logic is mentioned, so the implementation is straightforward.
+
+
+generate_code:
+
+import cli
+
+def list_of_file_names(settings_dirs, spec_option):
+    return cli.ListOfFileNames(settings_dirs, spec_option)
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information - lack of repo-level information
+Missing `ListOfFileNames` class information
+
+==================== 6306091c73426c38ae68acdc ====================
+file_path: infrared/core/utils/validators.py
+project: redhat-openstack/infrared
+name: validate_from_content
+
+prompt:
+validates that spec (YAML) content has all required fields
+
+:param spec_content: content of spec file
+:raise IRValidatorException: when mandatory data
+is missing in spec file
+:return: Dictionary with data loaded from a spec (YAML) file
+
+steps:
+
+1. Check if spec_content is None or empty. If so, raise IRValidatorException.
+2. Attempt to parse the YAML content using yaml.safe_load(). Handle any parsing errors by raising IRValidatorException.
+3. Define a list of required fields that must be present in the parsed data. These fields are assumed to be part of the class's REQUIRED_FIELDS attribute.
+4. Check if all required fields are present in the parsed data. If any are missing, collect their names.
+5. If there are missing fields, raise IRValidatorException with a message indicating the missing fields.
+6. Return the parsed data if validation is successful.
+
+
+generate_code:
+
+import yaml
+
+def validate_from_content(cls, spec_content=None):
+    if not spec_content:
+        raise IRValidatorException("Spec content is empty or None.")
+    try:
+        data = yaml.safe_load(spec_content)
+    except yaml.YAMLError as e:
+        raise IRValidatorException(f"Invalid YAML content: {e}")
+    
+    required_fields = getattr(cls, 'REQUIRED_FIELDS', [])
+    missing_fields = [field for field in required_fields if field not in data]
+    
+    if missing_fields:
+        raise IRValidatorException(f"Missing required fields: {', '.join(missing_fields)}")
+    
+    return data
+
+
+--------------------------------------------------
+analyze
+External factors - Implementation details are unclear
+Specific description of IRValidatorException not thrown
+==================== 6306091c73426c38ae68acdd ====================
+file_path: infrared/core/utils/validators.py
+project: redhat-openstack/infrared
+name: validate_from_file
+
+prompt:
+Loads & validates that a YAML file has all required fields
+
+:param yaml_file: Path to YAML file
+:raise IRValidatorException: when mandatory data is missing in file
+:return: Dictionary with data loaded from a YAML file
+
+steps:
+
+1. Import the necessary modules, such as yaml for parsing YAML files.
+2. Check if the provided yaml_file is not None to avoid errors when opening the file.
+3. Open the YAML file in read mode and load its contents using yaml.safe_load to safely parse the YAML data.
+4. Verify that the loaded data is a dictionary. If not, raise an IRValidatorException indicating invalid format.
+5. Retrieve the list of required fields from the class attribute REQUIRED_FIELDS.
+6. Check each required field to see if it exists in the loaded data. Collect any missing fields.
+7. If there are missing fields, raise an IRValidatorException with a message listing them.
+8. Return the validated data dictionary if all checks pass.
+
+
+generate_code:
+
+import yaml
+
+@classmethod
+def validate_from_file(cls, yaml_file=None):
+    if yaml_file is None:
+        raise IRValidatorException("No YAML file provided")
+    
+    with open(yaml_file, 'r') as f:
+        data = yaml.safe_load(f)
+    
+    if not isinstance(data, dict):
+        raise IRValidatorException("Invalid YAML format: expected a dictionary")
+    
+    required_fields = getattr(cls, 'REQUIRED_FIELDS', [])
+    missing_fields = [field for field in required_fields if field not in data]
+    
+    if missing_fields:
+        raise IRValidatorException(f"Missing required fields: {', '.join(missing_fields)}")
+    
+    return data
+
+
+--------------------------------------------------
+analyze
+External factors - Implementation details are unclear
+Specific description of IRValidatorException not thrown
+==================== 6306091d73426c38ae68ace5 ====================
+file_path: infrared/core/inspector/helper.py
+project: redhat-openstack/infrared
+name: _include_groups
+
+prompt:
+Resolves the include dict directive in the spec files.
+
+steps:
+
+1. The method needs to process each group in the parser_dict to resolve included groups.
+2. For each group, check if it has an 'include' key specifying other groups to include.
+3. For each included group, recursively resolve its includes before merging.
+4. Merge the included groups' data into a temporary dictionary.
+5. Update the temporary dictionary with the current group's data to allow overriding.
+6. Replace the current group's data with the merged result and remove the 'include' key.
+7. Ensure all groups are processed, even if they were included by others, by iterating through all group names initially.
+
+
+generate_code:
+
+def _include_groups(self, parser_dict):
+    def resolve_includes(group_name):
+        group = parser_dict.get(group_name, {})
+        if 'include' not in group:
+            return
+        includes = group.pop('include')
+        merged = {}
+        for included_name in includes:
+            resolve_includes(included_name)
+            included_group = parser_dict.get(included_name, {})
+            merged.update(included_group)
+        merged.update(group)
+        parser_dict[group_name] = merged
+
+    for group_name in list(parser_dict.keys()):
+        resolve_includes(group_name)
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information
+Missing `SpecDictHelper` class information
+

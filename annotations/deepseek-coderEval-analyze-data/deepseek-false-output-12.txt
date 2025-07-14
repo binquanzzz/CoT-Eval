@@ -1,0 +1,473 @@
+
+
+==================== 62ece4992e6aefcf4aabbd83 ====================
+file_path: makeprojects/core.py
+project: burgerbecky/makeprojects
+name: run_command
+
+prompt:
+Call the given command(s).
+
+steps:
+
+1. Understand the function parameters: commands (list of command parts), args (additional arguments), cwd (working directory), verbose (print output), hide_stderr (suppress stderr), env (environment variables). 
+2. Combine commands and args into a single list to form the full command.
+3. Determine stderr handling: redirect to DEVNULL if hide_stderr is True, else merge with stdout.
+4. Use subprocess.Popen to execute the command, capturing stdout and handling stderr as specified.
+5. Read output line by line, collecting into a buffer. If verbose is True, print each line immediately.
+6. After the process completes, ensure all remaining output is read and captured.
+7. Return the captured stdout and the process's return code.
+
+
+generate_code:
+
+import subprocess
+
+def run_command(commands, args, cwd=None, verbose=False, hide_stderr=False, env=None):
+    full_cmd = commands + args
+    stderr_param = subprocess.DEVNULL if hide_stderr else subprocess.STDOUT
+
+    proc = subprocess.Popen(
+        full_cmd,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=stderr_param,
+        text=True,
+        universal_newlines=True,
+    )
+
+    output = []
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            if proc.poll() is not None:
+                break
+            continue
+        output.append(line)
+        if verbose:
+            print(line, end='')
+
+    remaining = proc.stdout.read()
+    if remaining:
+        output.append(remaining)
+        if verbose:
+            print(remaining, end='')
+
+    returncode = proc.wait()
+    stdout = ''.join(output)
+    return stdout, returncode
+
+
+The correct code also checked the operating system, and it is not very certain whether this has any impact on the evaluation results or whether it is necessary.
+
+==================== 62ece4992e6aefcf4aabbd87 ====================
+file_path: apphelpers/loggers.py
+project: scrolltech/apphelpers
+name: build_app_logger
+
+prompt:
+General purpose application logger. Useful mainly for debugging
+
+steps:
+
+1. Import the necessary modules: logging for logger functionality and sys for StreamHandler.
+2. Create the logger object using logging.getLogger with the provided name.
+3. Set the logger's level to DEBUG if debug is True, otherwise set it to INFO.
+4. Remove any existing handlers attached to the logger to prevent duplication.
+5. Create a FileHandler for writing logs to the specified logfile.
+6. Create a StreamHandler to output logs to the console (stdout).
+7. Define a formatter with a standardized log message format including timestamp, logger name, log level, and message.
+8. Apply the formatter to both handlers.
+9. Add both handlers to the logger.
+10. Return the configured logger instance.
+
+
+generate_code:
+
+import logging
+import sys
+
+def build_app_logger(name='app', logfile='app.log', debug=True):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+(Missing judgment)if not os.path.exists(logdir):
+        os.mkdir(logdir)
+    # Remove existing handlers to avoid duplication
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Create file handler and stream handler
+    file_handler = logging.FileHandler(logfile)
+    stream_handler = logging.StreamHandler(sys.stdout)
+    
+    # Set handler levels
+    handler_level = logging.DEBUG if debug else logging.INFO
+    file_handler.setLevel(handler_level)
+    stream_handler.setLevel(handler_level)
+    
+    # Create formatter and add to handlers
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    stream_handler.setFormatter(formatter)
+    
+    # Add handlers to the logger
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+    
+    return logger
+
+
+
+==================== 62ece4992e6aefcf4aabbd89 ====================
+file_path: concert/tests/unit/devices/test_monochromator.py
+project: ufo-kit/concert
+name: gaussian
+
+prompt:
+Gaussian centered around 0.2 with a sigma of 0.1.
+
+steps:
+
+1. Understand the problem: The task is to create a Python function `gaussian(x)` that computes the value of a Gaussian distribution at a point `x`. The Gaussian is centered at `u=0.2` (mean) with a standard deviation `sigma=0.1`.
+
+2. Recall the Gaussian formula: The general formula for a Gaussian function is:
+   \[
+   f(x) = \frac{1}{\sigma \sqrt{2\pi}} e^{-\frac{1}{2}\left(\frac{x - \mu}{\sigma}\right)^2}
+   \]
+   Here, \(\mu = 0.2\) and \(\sigma = 0.1\).
+
+3. Identify required components:
+   - Calculate the exponent part: \(-\frac{(x - \mu)^2}{2\sigma^2}\).
+   - Compute the normalization factor: \(\frac{1}{\sigma \sqrt{2\pi}}\).
+   - Multiply the normalization factor by the exponential of the exponent.
+
+4. Handle mathematical operations: Use Python's `math` module for `sqrt`, `exp`, and `pi`.
+
+5. Implement the function:
+   - Hardcode \(\mu = 0.2\) and \(\sigma = 0.1\) inside the function.
+   - Compute the exponent term using the formula.
+   - Calculate the normalization coefficient.
+   - Return the product of the coefficient and the exponential term.
+
+
+generate_code:
+
+import math
+
+def gaussian(x):
+    mu = 0.2
+    sigma = 0.1
+    exponent = -((x - mu) ** 2) / (2 * sigma ** 2)
+    coefficient = 1 / (sigma * math.sqrt(2 * math.pi))
+    return coefficient * math.exp(exponent)
+
+
+
+
+==================== 62e60873d76274f8a4026bd8 ====================
+file_path: neo4j/_async/io/_bolt.py
+project: neo4j/neo4j-python-driver
+name: protocol_handlers
+
+prompt:
+Return a dictionary of available Bolt protocol handlers,
+keyed by version tuple. If an explicit protocol version is
+provided, the dictionary will contain either zero or one items,
+depending on whether that version is supported. If no protocol
+version is provided, all available versions will be returned.
+
+:param protocol_version: tuple identifying a specific protocol
+    version (e.g. (3, 5)) or None
+:return: dictionary of version tuple to handler class for all
+    relevant and supported protocol versions
+:raise TypeError: if protocol version is not passed in a tuple
+
+steps:
+
+1. Check if `protocol_version` is provided and not None.
+2. If provided, validate that it's a tuple. If not, raise TypeError.
+3. Check if the provided `protocol_version` exists in the class's internal protocol handlers dictionary (assumed to be `cls._protocol_handlers`).
+4. If it exists, return a dictionary with the version as the key and the handler as the value. Otherwise, return an empty dictionary.
+5. If no `protocol_version` is provided, return a copy of the entire `cls._protocol_handlers` dictionary to avoid external modifications.
+
+
+generate_code:
+
+@classmethod
+def protocol_handlers(cls, protocol_version=None):
+    if protocol_version is not None:
+        if not isinstance(protocol_version, tuple):
+            raise TypeError("Protocol version must be a tuple")
+        if protocol_version in cls._protocol_handlers:
+            return {protocol_version: cls._protocol_handlers[protocol_version]}
+        return {}
+    return cls._protocol_handlers.copy()
+
+
+
+==================== 62e60e3bd76274f8a4026d1a ====================
+file_path: neo4j/api.py
+project: neo4j/neo4j-python-driver
+name: from_raw_values
+
+prompt:
+Create a Bookmarks object from a list of raw bookmark string values.
+
+You should not need to use this method unless you want to deserialize
+bookmarks.
+
+:param values: ASCII string values (raw bookmarks)
+:type values: Iterable[str]
+
+steps:
+
+1. Understand the problem: Create a class method `from_raw_values` for the `Bookmarks` class that takes a list of raw bookmark strings and returns a `Bookmarks` instance.
+2. Determine the purpose of the method: The method acts as a factory to construct a `Bookmarks` object from raw input data.
+3. Identify required processing: Since the input is a list of raw strings, no additional processing is mentioned, implying direct initialization.
+4. Recall Python class method structure: Use `@classmethod` decorator, with `cls` as the first parameter.
+5. Construct the method: Return an instance of `cls` initialized with the provided `values` list.
+6. Ensure the `Bookmarks` class __init__ can handle the `values` list (assumed based on the problem context).
+
+
+generate_code:
+
+@classmethod
+def from_raw_values(cls, values):
+    """
+    Create a Bookmarks object from a list of raw bookmark string values.
+    """
+    return cls(values)
+
+
+
+==================== 62b87b199a0c4fa8b80b354c ====================
+file_path: lena/core/split.py
+project: ynikitenko/lena
+name: _get_seq_with_type
+
+prompt:
+Return a (sequence, type) pair.
+Sequence is derived from *seq*
+(or is *seq*, if that is of a sequence type).
+
+steps:
+
+1. **Check if `seq` is a sequence type**: Use `collections.abc.Sequence` to determine if `seq` is an instance of a sequence. This covers standard sequence types like list, tuple, str, bytes, etc.
+2. **Return original `seq` and type if it's a sequence**: If `seq` is a sequence, return it along with its type.
+3. **Convert non-sequence `seq` to a list**: If `seq` isn't a sequence, convert it to a list (a common mutable sequence type) using `list(seq)`.
+4. **Return converted list and its type**: Return the new list and the type `list` as the sequence-type pair.
+5. **Ignore `bufsize` parameter**: Since the docstring doesn't mention `bufsize`, it's not used in the implementation.
+
+
+generate_code:
+
+import collections.abc
+
+def _get_seq_with_type(seq, bufsize=None):
+    if isinstance(seq, collections.abc.Sequence):
+        return (seq, type(seq))
+    else:
+        converted = list(seq)
+        return (converted, type(converted))
+
+
+
+==================== 62b87b4f9a0c4fa8b80b3581 ====================
+file_path: lena/structures/histogram.py
+project: ynikitenko/lena
+name: scale
+
+prompt:
+Compute or set scale (integral of the histogram).
+
+If *other* is ``None``, return scale of this histogram.
+If its scale was not computed before,
+it is computed and stored for subsequent use
+(unless explicitly asked to *recompute*).
+Note that after changing (filling) the histogram
+one must explicitly recompute the scale
+if it was computed before.
+
+If a float *other* is provided, rescale self to *other*.
+
+Histograms with scale equal to zero can't be rescaled.
+:exc:`.LenaValueError` is raised if one tries to do that.
+
+steps:
+
+1. **Check the purpose of the method call**: Determine if the user is requesting the current scale or rescaling the histogram based on the `other` parameter.
+2. **Handle scale retrieval or computation**:
+   - If `other` is `None`, check if the scale needs to be recomputed (either because `recompute` is `True` or the scale hasn't been calculated before).
+   - Compute the scale by summing all bin values and store it in `self._scale` if necessary.
+3. **Handle rescaling**:
+   - If `other` is a float, compute the current scale first.
+   - Check if the current scale is zero to avoid division by zero, raising an error if true.
+   - Calculate the scaling factor and apply it to each bin in the histogram.
+   - Update the stored scale to the new value (`other`) after rescaling.
+4. **Ensure data integrity**: After rescaling, update the stored scale to maintain consistency for future calls unless recomputation is requested.
+5. **Error handling**: Raise `LenaValueError` when rescaling a histogram with a zero scale to prevent invalid operations.
+
+
+generate_code:
+
+def scale(self, other=None, recompute=False):
+    if other is None:
+        if recompute or not hasattr(self, '_scale'):
+            self._scale = sum(bin for bin in self.bins)
+        return self._scale
+    else:
+        current_scale = self.scale(recompute=recompute)
+        if current_scale == 0:
+            raise LenaValueError("Cannot rescale histogram with zero scale")
+        factor = other / current_scale
+        self.bins = [bin * factor for bin in self.bins]
+        self._scale = other
+
+
+
+==================== 62b87b519a0c4fa8b80b3583 ====================
+file_path: lena/structures/graph.py
+project: ynikitenko/lena
+name: scale
+
+prompt:
+Get or set the scale of the graph.
+
+If *other* is ``None``, return the scale of this graph.
+
+If a numeric *other* is provided, rescale to that value.
+If the graph has unknown or zero scale,
+rescaling that will raise :exc:`~.LenaValueError`.
+
+To get meaningful results, graph's fields are used.
+Only the last coordinate is rescaled.
+For example, if the graph has *x* and *y* coordinates,
+then *y* will be rescaled, and for a 3-dimensional graph
+*z* will be rescaled.
+All errors are rescaled together with their coordinate.
+
+steps:
+
+1. **Check if `other` is None**: If so, return the current scale of the graph stored in `self._scale`.
+2. **Handle rescaling when `other` is numeric**:
+   - **Validate current scale**: Raise `LenaValueError` if the current scale (`self._scale`) is `None` or zero.
+   - **Calculate scaling factor**: Compute the factor as `other / self._scale`.
+   - **Identify the last coordinate**: Use the last element from `self.coordinates` (e.g., 'y' for 2D, 'z' for 3D).
+   - **Update coordinates and errors**:
+     - Iterate over each data point in `self.data`.
+     - Adjust the last coordinate's value and its corresponding error (if present) by multiplying them with the scaling factor.
+   - **Set new scale**: Update `self._scale` to the new value `other`.
+
+
+generate_code:
+
+def scale(self, other=None):
+    from lena.core import LenaValueError
+    
+    if other is None:
+        return self._scale
+    else:
+        if self._scale in (0, None):
+            raise LenaValueError("Cannot rescale graph with unknown or zero scale")
+        factor = other / self._scale
+        last_coord = self.coordinates[-1]
+        error_name = 'd' + last_coord
+        for point in self.data:
+            current_val = getattr(point, last_coord)
+            setattr(point, last_coord, current_val * factor)
+            if hasattr(point, error_name):
+                current_error = getattr(point, error_name)
+                setattr(point, error_name, current_error * factor)
+        self._scale = other
+
+
+
+==================== 62b87b869a0c4fa8b80b35e1 ====================
+file_path: lena/structures/hist_functions.py
+project: ynikitenko/lena
+name: hist_to_graph
+
+prompt:
+Convert a :class:`.histogram` to a :class:`.graph`.
+
+*make_value* is a function to set the value of a graph's point.
+By default it is bin content.
+*make_value* accepts a single value (bin content) without context.
+
+This option could be used to create graph's error bars.
+For example, to create a graph with errors
+from a histogram where bins contain
+a named tuple with fields *mean*, *mean_error* and a context
+one could use
+
+>>> make_value = lambda bin_: (bin_.mean, bin_.mean_error)
+
+*get_coordinate* defines what the coordinate
+of a graph point created from a histogram bin will be.
+It can be "left" (default), "right" and "middle".
+
+*field_names* set field names of the graph. Their number
+must be the same as the dimension of the result.
+For a *make_value* above they would be
+*("x", "y_mean", "y_mean_error")*.
+
+*scale* becomes the graph's scale (unknown by default).
+If it is ``True``, it uses the histogram scale.
+
+*hist* must contain only numeric bins (without context)
+or *make_value* must remove context when creating a numeric graph.
+
+Return the resulting graph.
+
+steps:
+
+1. **Iterate through each bin in the histogram** to collect data points for the graph.
+2. **Calculate the x-coordinate** based on the `get_coordinate` parameter (left, right, or middle of the bin interval).
+3. **Retrieve the bin value** and apply the `make_value` function if provided, defaulting to the bin's raw value.
+4. **Ensure processed values are tuples** for consistent handling, even if `make_value` returns a single value.
+5. **Construct each data point** by combining the x-coordinate with processed values.
+6. **Validate field_names length** matches the number of elements in each data point.
+7. **Determine the graph's scale** based on the `scale` parameter (use histogram's scale if `scale=True`).
+8. **Instantiate and return the Graph** with collected data points, field names, and scale.
+
+
+generate_code:
+
+def hist_to_graph(hist, make_value=None, get_coordinate="left", field_names=("x", "y"), scale=None):
+    data_points = []
+    for bin in hist.bins():
+        interval = bin.interval
+        if get_coordinate == "left":
+            x = interval.left
+        elif get_coordinate == "right":
+            x = interval.right
+        elif get_coordinate == "middle":
+            x = (interval.left + interval.right) / 2
+        else:
+            raise ValueError(f"Invalid get_coordinate: {get_coordinate}")
+
+        bin_value = bin.value
+        if make_value is not None:
+            processed = make_value(bin_value)
+        else:
+            processed = bin_value
+        
+        if not isinstance(processed, tuple):
+            processed = (processed,)
+        
+        data_point = (x,) + processed
+        data_points.append(data_point)
+    
+    if data_points:
+        expected_len = len(data_points[0])
+        if len(field_names) != expected_len:
+            raise ValueError(f"Expected {expected_len} field names, got {len(field_names)}")
+    
+    graph_scale = hist.scale if scale is True else scale
+    
+    return Graph(data_points, field_names=field_names, scale=graph_scale)
+
+
+The error code directly accesses interval.left and interval.right, but the structure of bin.interval is not explicitly given, which may lead to incompatible errors.
+The error calls to non-existent variables are all caused by the lack of repo-level information.

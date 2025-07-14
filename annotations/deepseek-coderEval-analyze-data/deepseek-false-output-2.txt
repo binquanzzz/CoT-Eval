@@ -1,0 +1,715 @@
+
+==================== 62e60879d76274f8a4026bec ====================
+file_path: neo4j/_async/io/_bolt3.py
+project: neo4j/neo4j-python-driver
+name: begin
+
+prompt:
+Appends a BEGIN message to the output queue.
+
+:param mode: access mode for routing - "READ" or "WRITE" (default)
+:param bookmarks: iterable of bookmark values after which this transaction should begin
+:param metadata: custom metadata dictionary to attach to the transaction
+:param timeout: timeout for transaction execution (seconds)
+:param db: name of the database against which to begin the transaction
+    Requires Bolt 4.0+.
+:param imp_user: the user to impersonate
+    Requires Bolt 4.4+
+:param dehydration_hooks:
+    Hooks to dehydrate types (dict from type (class) to dehydration
+    function). Dehydration functions receive the value and returns an
+    object of type understood by packstream.
+:param hydration_hooks:
+    Hooks to hydrate types (mapping from type (class) to
+    dehydration function). Dehydration functions receive the value of
+    type understood by packstream and are free to return anything.
+:param handlers: handler functions passed into the returned Response object
+:return: Response object
+
+steps:
+
+1. Analyze the method parameters and their corresponding keys in the Bolt BEGIN message.
+2. Convert the timeout from seconds to milliseconds as an integer for the "tx_timeout" key.
+3. Convert bookmarks iterable to a list if provided.
+4. Construct the 'extra' dictionary with non-None parameters, mapping to appropriate keys.
+5. Append the BEGIN message with the 'extra' dict to the output queue using self._append.
+6. Return a Response object initialized with dehydration_hooks, hydration_hooks, and other handlers.
+
+
+generate_code:
+
+def begin(self, mode=None, bookmarks=None, metadata=None, timeout=None,
+              db=None, imp_user=None, dehydration_hooks=None,
+              hydration_hooks=None, **handlers):
+    extra = {}
+    if mode is not None:
+        extra["mode"] = mode
+    if bookmarks is not None:
+        extra["bookmarks"] = list(bookmarks)
+    if metadata is not None:
+        extra["metadata"] = metadata
+    if timeout is not None:
+        extra["tx_timeout"] = int(timeout * 1000)
+    if db is not None:
+        extra["db"] = db
+    if imp_user is not None:
+        extra["imp_user"] = imp_user
+    self._append("BEGIN", extra)
+    return Response(
+        dehydration_hooks=dehydration_hooks,
+        hydration_hooks=hydration_hooks,
+        **handlers
+    )
+
+Analysis: Exception handling process without version checking and TypeError
+--------------------------------------------------
+
+==================== 62e60707d76274f8a4026b69 ====================
+file_path: neo4j/_spatial/__init__.py
+project: neo4j/neo4j-python-driver
+name: point_type
+
+prompt:
+Dynamically create a Point subclass.
+
+steps:
+
+1. Understand the requirements: The function needs to dynamically create a Point class with specified fields and SRID handling.
+2. Identify parameters: 'name' is the class name, 'fields' are the attributes, 'srid_map' maps class names to SRIDs.
+3. Generate __init__ method: Accepts *args, validates the number of arguments matches the fields, assigns each to instance attributes.
+4. Generate to_wkt method: Constructs WKT string by joining field values, includes SRID from the class if present.
+5. Class attributes: '_fields' stores the list of fields, 'srid' is retrieved from srid_map using the class name.
+6. Use type() to create the class: Combine the methods and attributes into a class dictionary and instantiate the class dynamically.
+
+
+generate_code:
+
+def point_type(name, fields, srid_map):
+    """
+    Dynamically Generating Point Class
+    """
+    def __init__(self, *args):
+        expected = len(self.__class__._fields)
+        if len(args) != expected:
+            raise ValueError(f"Expected {expected} arguments, got {len(args)}")
+        for field, value in zip(self.__class__._fields, args):
+            setattr(self, field, value)
+    
+    def to_wkt(self):
+        coords = ' '.join(str(getattr(self, field)) for field in self.__class__._fields)
+        srid = self.__class__.srid
+        if srid is not None:
+            return f'SRID={srid};POINT({coords})'
+        else:
+            return f'POINT({coords})'
+    
+    cls_dict = {
+        '__init__': __init__,
+        'to_wkt': to_wkt,
+        '_fields': fields,
+        'srid': srid_map.get(name, None),
+    }
+    
+    return type(name, (object,), cls_dict)
+
+There is too little information about prompt.
+--------------------------------------------------
+
+==================== 62e4fc3c85ea98643089041e ====================
+file_path: pre_commit/languages/r.py
+project: pre-commit/pre-commit
+name: _inline_r_setup
+
+prompt:
+Some behaviour of R cannot be configured via env variables, but can
+only be configured via R options once R has started. These are set here.
+
+steps:
+
+1. The function needs to prepend R configuration code to the provided input code.
+2. Identify the R options that must be set at runtime. Common examples include:
+   - Setting default CRAN mirror
+   - Suppressing warnings
+   - Disabling graphics
+3. Format the R options string using valid R syntax
+4. Concatenate the options string with the user-provided code
+
+5. Return the combined string that will execute configuration first followed by user code
+
+
+generate_code:
+
+def _inline_r_setup(code: str) -> str:
+    r_options = (
+        "options(repos=c(CRAN='https://cloud.r-project.org'), warn=-1, device=NULL)\n"
+    )
+    return r_options + code
+
+
+--------------------------------------------------
+There is no specific R-option to be set, and the repo-level information is missing.
+==================== 62e4fbda85ea986430890405 ====================
+file_path: pre_commit/xargs.py
+project: pre-commit/pre-commit
+name: xargs
+
+prompt:
+A simplified implementation of xargs.
+
+color: Make a pty if on a platform that supports it
+target_concurrency: Target number of partitions to run concurrently
+
+steps:
+
+1. **Understand the xargs Functionality**: The function should take a command and a list of arguments, split them into chunks that fit within the system's maximum command line length, and execute them in parallel as specified.
+
+2. **Calculate Command Length**: Precompute the sum of lengths and the number of arguments in the base command (cmd) to use in batch calculations.
+
+3. **Batch Creation Logic**: Iterate through varargs, adding each argument to the current batch while ensuring the total command line length (including cmd) doesn't exceed the maximum allowed. Split into new batches when needed.
+
+4. **Handle Oversized Arguments**: If a single argument exceeds the max length, include it in its own batch to mimic xargs' behavior of passing arguments even if they're too long.
+
+5. **Concurrent Execution**: Use a ThreadPoolExecutor to run each batch's command in parallel, respecting the target_concurrency parameter.
+
+6. **Subprocess Handling**: Execute each command using subprocess.run, passing through any additional keyword arguments for flexibility.
+
+
+generate_code:
+
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from typing import Sequence
+
+def xargs(
+    cmd: tuple[str, ...],
+    varargs: Sequence[str],
+    *,
+    color: bool = False,
+    target_concurrency: int = 1,
+    _max_length: int = 131072,  # Simplified platform default
+    **kwargs
+) -> list[subprocess.CompletedProcess]:
+    sum_cmd = sum(len(arg) for arg in cmd)
+    len_cmd = len(cmd)
+    batches = []
+    current_batch = []
+    current_sum = 0
+    current_len = 0
+
+    for arg in varargs:
+        new_sum = current_sum + len(arg)
+        new_len = current_len + 1
+        total = sum_cmd + new_sum + (len_cmd + new_len - 1)
+
+        if total > _max_length:
+            if not current_batch:
+                batches.append([arg])
+                current_sum = 0
+                current_len = 0
+            else:
+                batches.append(current_batch)
+                current_batch = [arg]
+                current_sum = len(arg)
+                current_len = 1
+                if sum_cmd + current_sum + (len_cmd + current_len - 1) > _max_length:
+                    batches.append(current_batch)
+                    current_batch = []
+                    current_sum = 0
+                    current_len = 0
+        else:
+            current_batch.append(arg)
+            current_sum = new_sum
+            current_len = new_len
+
+    if current_batch:
+        batches.append(current_batch)
+
+    with ThreadPoolExecutor(max_workers=target_concurrency) as executor:
+        futures = [executor.submit(subprocess.run, (*cmd, *batch), **kwargs) for batch in batches]
+        return [future.result() for future in futures]
+
+
+--------------------------------------------------
+Prompt fuzzy: propt does not provide effective information, and the big model does not know how to generate code. At the same time, it also lacks the necessary repo-level information.
+Cot logic flow is incomplete: Exception handling has not been considered
+==================== 62e4fb4d85ea9864308902e7 ====================
+file_path: pre_commit/parse_shebang.py
+project: pre-commit/pre-commit
+name: normalize_cmd
+
+prompt:
+Fixes for the following issues on windows
+- https://bugs.python.org/issue8557
+- windows does not parse shebangs
+
+This function also makes deep-path shebangs work just fine
+
+steps:
+
+1. Check if the input command tuple is empty. If so, return it immediately.
+2. Extract the executable (first element) from the command tuple.
+3. Determine if the executable is an absolute path using `os.path.isabs()`. If yes, leave it unchanged.
+4. If the executable is a relative path (contains '/' or '\'), resolve it to an absolute path using `os.path.abspath()`.
+5. If the executable is a name without path separators, use `shutil.which()` to find its full path in the system's PATH environment variable. If found, use the resolved path; otherwise, keep the original name.
+6. Reconstruct the command tuple with the resolved executable and the remaining arguments, then return it.
+
+
+generate_code:
+
+import os
+import shutil
+from typing import tuple
+
+def normalize_cmd(cmd: tuple[str, ...]) -> tuple[str, ...]:
+    if not cmd:
+        return cmd
+    exe = cmd[0]
+    if os.path.isabs(exe):
+        return cmd
+    if '/' in exe or '\\' in exe:
+        resolved_exe = os.path.abspath(exe)
+    else:
+        resolved_exe = shutil.which(exe) or exe
+    return (resolved_exe,) + cmd[1:]
+
+
+--------------------------------------------------
+There is no implementation details and no information about normexe function.
+==================== 62b8d27a48ba5a41d1c3f4c6 ====================
+file_path: cachetools/decorators.py
+project: pexip/os-python-cachetools
+name: cached
+
+prompt:
+Decorator to wrap a function with a memoizing callable that saves
+results in a cache.
+
+steps:
+
+1. **Understand the Problem**: The task is to create a decorator `cached` that saves function results in a provided cache. The decorator should use a key function to generate cache keys and optionally use a lock for thread-safe access.
+
+2. **Define Parameters**: The decorator generator `cached` takes `cache`, `key` (defaulting to `hashkey`), and `lock` (default None).
+
+3. **Structure the Decorator**:
+   - The outer function `cached` returns the actual decorator.
+   - The decorator wraps the target function to enable caching.
+
+4. **Key Generation**: The `key` function is called with the target function's `args` and `kwargs` to generate a unique cache key.
+
+5. **Cache Check and Update**:
+   - If the key exists in the cache, return the cached value.
+   - If not, compute the result, store it in the cache, and return it.
+
+6. **Thread Safety with Lock**:
+   - If a `lock` is provided, use a context manager (`with lock:`) to ensure atomic cache access and modification.
+   - Without a lock, directly check and update the cache.
+
+7. **Avoid Lock During Computation**: To prevent holding the lock during potentially expensive computations, the lock is only used around cache access, not during the function execution. However, the initial approach (for simplicity) might hold the lock during computation, which the problem may accept.
+
+8. **Final Implementation**: Combine all elements into the decorator, ensuring proper handling of args, kwargs, key generation, and optional locking.
+
+
+generate_code:
+
+def cached(cache, key=hashkey, lock=None):
+    """
+    Returns a decorator function that saves the results in the cache
+    """
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            cache_key = key(args, kwargs)
+            if lock is not None:
+                with lock:
+                    if cache_key in cache:
+                        return cache[cache_key]
+                    result = func(*args, **kwargs)
+                    cache[cache_key] = result
+                    return result
+            else:
+                if cache_key in cache:
+                    return cache[cache_key]
+                result = func(*args, **kwargs)
+                cache[cache_key] = result
+                return result
+        return wrapper
+    return decorator
+
+analyze:
+Prompt does not provide information about functools.
+Cot did not consider exception handling.
+==================== 62b8d24048ba5a41d1c3f49f ====================
+file_path: cachetools/func.py
+project: pexip/os-python-cachetools
+name: ttl_cache
+
+prompt:
+Decorator to wrap a function with a memoizing callable that saves
+up to `maxsize` results based on a Least Recently Used (LRU)
+algorithm with a per-item time-to-live (TTL) value.
+
+steps:
+
+1. **Understand the Requirements**: The goal is to create a decorator `ttl_cache` that combines LRU caching with a TTL for each entry. Each cached item should expire after a specified time, and the cache should evict the least recently used items when full.
+
+2. **Data Structure Selection**: Use `OrderedDict` to maintain insertion order and efficiently move items to the end when accessed (LRU). Each entry stores the result and its timestamp.
+
+3. **Key Generation**: Create a hashable key from function arguments and keyword arguments, considering the `typed` parameter to differentiate values by type.
+
+4. **Cache Lookup and Expiration**: When accessing a cached item, check if it's expired using the TTL and current time. If valid, move it to the end of the OrderedDict. If expired, remove it.
+
+5. **Cache Update and Eviction**: On a cache miss, compute the result, store it with the current timestamp, and add to the OrderedDict. If exceeding `maxsize`, remove the oldest item (first in the OrderedDict).
+
+6. **Handling Parameters**: The decorator accepts `maxsize`, `ttl`, `timer`, and `typed` to configure caching behavior and expiration checks.
+
+7. **Thread Safety**: Omitted for simplicity, assuming the use case doesn't require it.
+
+8. **Testing Edge Cases**: Ensure expired items are removed on access and LRU eviction works correctly when the cache is full.
+
+
+generate_code:
+
+import time
+from collections import OrderedDict
+from functools import wraps
+
+def ttl_cache(maxsize=128, ttl=600, timer=time.monotonic, typed=False):
+    def decorator(func):
+        cache = OrderedDict()
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            key = []
+            for arg in args:
+                key.append((arg, type(arg)) if typed else arg)
+            if kwargs:
+                items = sorted(kwargs.items())
+                for k, v in items:
+                    key.append((k, (v, type(v))) if typed else (k, v))
+            key = tuple(key)
+            now = timer()
+            if key in cache:
+                value, timestamp = cache[key]
+                if now - timestamp <= ttl:
+                    cache.move_to_end(key)
+                    return value
+                else:
+                    del cache[key]
+            result = func(*args, **kwargs)
+            cache[key] = (result, now)
+            if maxsize is not None and len(cache) > maxsize:
+                cache.popitem(last=False)
+            return result
+        return wrapper
+    return decorator
+
+
+--------------------------------------------------
+No _cache function related information.
+==================== 62b8d23b48ba5a41d1c3f49a ====================
+file_path: cachetools/func.py
+project: pexip/os-python-cachetools
+name: mru_cache
+
+prompt:
+Decorator to wrap a function with a memoizing callable that saves
+up to `maxsize` results based on a Most Recently Used (MRU)
+algorithm.
+
+steps:
+
+1. **Understand the MRU Cache Requirements**: The decorator should cache function results, evicting the Most Recently Used (MRU) entry when the cache is full. This is the opposite of LRU, where the least recently used is evicted.
+
+2. **Choose Data Structure**: Use `OrderedDict` to track access order. MRU items are moved to the front, and eviction removes the front item when full.
+
+3. **Key Generation**: Create a unique key from function arguments, considering types if `typed=True`. This involves converting args and sorted kwargs into a tuple, adding type information if needed.
+
+4. **Handling Cache Hits**: When a cached result is accessed, move the key to the front of `OrderedDict` to mark it as MRU.
+
+5. **Handling Cache Misses**: Compute the result, add it to the cache. If the cache is full, evict the front (MRU) item before adding the new entry, then move the new entry to the front.
+
+6. **Special Cases**: Handle `maxsize=0` (no caching) and `maxsize=None` (unbounded cache) appropriately. Implement `cache_info` and `cache_clear` methods for monitoring and managing the cache.
+
+7. **Edge Cases and Validation**: Ensure maxsize validation and correct handling of different argument types when `typed=True`.
+
+
+generate_code:
+
+from collections import OrderedDict
+
+def mru_cache(maxsize=128, typed=False):
+    if maxsize is not None and not (isinstance(maxsize, int) and maxsize >= 0):
+        raise ValueError("maxsize must be a non-negative integer or None")
+
+    def decorator(func):
+        if maxsize == 0:
+            def wrapper(*args, **kwargs):
+                return func(*args, **kwargs)
+            wrapper.cache_info = lambda: (0, 0, 0, 0)
+            wrapper.cache_clear = lambda: None
+            return wrapper
+
+        cache = OrderedDict()
+        hits = 0
+        misses = 0
+
+        def wrapper(*args, **kwargs):
+            nonlocal hits, misses
+            key = _make_key(args, kwargs, typed)
+            if key in cache:
+                hits += 1
+                cache.move_to_end(key, last=False)
+                return cache[key]
+            misses += 1
+            result = func(*args, **kwargs)
+            if maxsize is not None:
+                if len(cache) >= maxsize:
+                    cache.popitem(last=False)
+                cache[key] = result
+                cache.move_to_end(key, last=False)
+            else:
+                cache[key] = result
+                cache.move_to_end(key, last=False)
+            return result
+
+        def _make_key(args, kwargs, typed_flag):
+            key = args
+            if kwargs:
+                key += tuple(sorted(kwargs.items()))
+            if typed_flag:
+                key += tuple(type(arg) for arg in args)
+                if kwargs:
+                    key += tuple(type(val) for _, val in sorted(kwargs.items()))
+            return key
+
+        def cache_info():
+            return (hits, misses, maxsize, len(cache))
+
+        def cache_clear():
+            nonlocal hits, misses
+            cache.clear()
+            hits = 0
+            misses = 0
+
+        wrapper.cache_info = cache_info
+        wrapper.cache_clear = cache_clear
+        return wrapper
+
+    return decorator
+
+
+--------------------------------------------------
+No _cache function related information.
+==================== 62b8d23948ba5a41d1c3f498 ====================
+file_path: cachetools/func.py
+project: pexip/os-python-cachetools
+name: lru_cache
+
+prompt:
+Decorator to wrap a function with a memoizing callable that saves
+up to `maxsize` results based on a Least Recently Used (LRU)
+algorithm.
+
+steps:
+
+1. **Understand the Requirements**: The task is to implement a decorator `lru_cache` that memoizes function results using an LRU eviction policy when the cache exceeds `maxsize`.
+
+2. **Key Generation**:
+   - **Positional and Keyword Arguments**: Convert arguments into a hashable key. For keyword arguments, sort them by key to ensure order doesn't matter.
+   - **Typed Differentiation**: If `typed` is True, include the type of each argument and keyword value in the key to differentiate between values of different types.
+
+3. **LRU Mechanism**:
+   - **Linked List**: Use a circular doubly linked list with a root node as a sentinel. The most recently used (MRU) items are near the root, and the least recently used (LRU) are at the end.
+   - **Node Management**: On cache hit, move the node to the MRU position. On cache miss, add a new node. If the cache exceeds `maxsize`, remove the LRU node.
+
+4. **Cache Operations**:
+   - **Insertion**: Add new nodes to the MRU position.
+   - **Eviction**: Remove the LRU node when the cache is full.
+   - **Statistics Tracking**: Track hits, misses, and current cache size.
+
+5. **Edge Cases**:
+   - **maxsize=0**: Disable caching.
+   - **maxsize=None**: Allow unlimited cache growth.
+   - **Hashable Keys**: Ensure generated keys are hashable for dictionary storage.
+
+6. **Implementation Details**:
+   - Use a dictionary (`cache`) to map keys to linked list nodes.
+   - Nodes are part of a circular linked list for efficient LRU tracking.
+   - Helper functions for key generation and linked list manipulation.
+
+
+generate_code:
+
+def lru_cache(maxsize=128, typed=False):
+    def decorator(func):
+        cache = {}
+        root = []  # Circular doubly linked list: [PREV, NEXT, KEY, RESULT]
+        root[:] = [root, root, None, None]
+        hits = 0
+        misses = 0
+
+        def make_key(args, kwargs):
+            key = []
+            for arg in args:
+                key.append((arg, type(arg)) if typed else arg)
+            if kwargs:
+                for k, v in sorted(kwargs.items()):
+                    item = (k, (v, type(v))) if typed else (k, v)
+                    key.append(item)
+            return tuple(key)
+
+        def update_lru(link):
+            """Move link to MRU position."""
+            link_prev, link_next = link[0], link[1]
+            link_prev[1] = link_next
+            link_next[0] = link_prev
+            last = root[0]
+            last[1] = root[0] = link
+            link[0] = last
+            link[1] = root
+
+        def wrapper(*args, **kwargs):
+            nonlocal hits, misses
+            key = make_key(args, kwargs)
+            link = cache.get(key, None)
+            if link is not None:
+                hits += 1
+                update_lru(link)
+                return link[3]
+            
+            misses += 1
+            result = func(*args, **kwargs)
+            
+            if key in cache:
+                return result
+            link = [root[0], root, key, result]
+            cache[key] = link
+            root[0][1] = link
+            root[0] = link
+            
+            if maxsize is not None and len(cache) > maxsize:
+                lru = root[1]
+                lru_prev, lru_next = lru[0], lru[1]
+                lru_prev[1] = lru_next
+                lru_next[0] = lru_prev
+                del cache[lru[2]]
+            
+            return result
+
+        def cache_info():
+            from collections import namedtuple
+            CacheInfo = namedtuple('CacheInfo', 'hits misses maxsize currsize')
+            return CacheInfo(hits, misses, maxsize, len(cache))
+
+        wrapper.cache_info = cache_info
+        return wrapper
+
+    if isinstance(maxsize, int):
+        if maxsize == 0:
+            def decorator(func):
+                def wrapper(*args, **kwargs):
+                    nonlocal misses
+                    misses += 1
+                    return func(*args, **kwargs)
+                wrapper.cache_info = lambda: (0, misses, 0, 0)
+                return wrapper
+            return decorator
+        elif maxsize < 0:
+            raise ValueError('maxsize must be non-negative')
+
+    return decorator
+
+
+--------------------------------------------------
+No _cache function related information.
+==================== 62b8d23748ba5a41d1c3f496 ====================
+file_path: cachetools/func.py
+project: pexip/os-python-cachetools
+name: lfu_cache
+
+prompt:
+Decorator to wrap a function with a memoizing callable that saves
+up to `maxsize` results based on a Least Frequently Used (LFU)
+algorithm.
+
+steps:
+
+1. **Understand LFU Cache Requirements**: The decorator needs to cache function results, evicting the least frequently used items when the cache is full. Frequency is based on the number of accesses, and in case of ties, the least recently accessed item is evicted.
+
+2. **Data Structures**: Use a dictionary to store cache entries with keys generated from function arguments. Each entry holds the result, access frequency, and a timestamp for the last access.
+
+3. **Key Generation**: Create a unique key from positional and keyword arguments. Handle `typed` to differentiate arguments by type. Use a special marker to separate positional and keyword arguments to avoid key collisions.
+
+4. **Cache Operations**:
+   - **Hit**: Increment frequency and update timestamp.
+   - **Miss**: Compute result, add to cache. If full, evict the entry with the lowest frequency (oldest timestamp on ties).
+
+5. **Eviction Process**: Iterate through all entries to find the entry with the minimum frequency and oldest timestamp when necessary.
+
+6. **Timestamp Management**: Use a global counter to track access order for resolving ties in eviction.
+
+7. **Additional Features**: Implement `cache_info` and `clear_cache` methods for monitoring and managing the cache.
+
+
+generate_code:
+
+def lfu_cache(maxsize=128, typed=False):
+    _kwd_mark = object()
+
+    def decorator(func):
+        cache = {}
+        hits = 0
+        misses = 0
+        time = 0
+
+        def wrapper(*args, **kwargs):
+            nonlocal hits, misses, time
+            key = args
+            if kwargs:
+                key += (_kwd_mark,) + tuple(sorted(kwargs.items()))
+            if typed:
+                key += tuple(type(arg) for arg in args)
+                if kwargs:
+                    key += tuple(type(value) for _, value in sorted(kwargs.items()))
+            if key in cache:
+                value, freq, _ = cache[key]
+                time += 1
+                cache[key] = (value, freq + 1, time)
+                hits += 1
+                return value
+            else:
+                misses += 1
+                value = func(*args, **kwargs)
+                if maxsize > 0:
+                    if len(cache) >= maxsize:
+                        min_freq = None
+                        oldest_time = None
+                        evict_key = None
+                        for k, (v, f, t) in cache.items():
+                            if min_freq is None or f < min_freq or (f == min_freq and t < oldest_time):
+                                min_freq = f
+                                oldest_time = t
+                                evict_key = k
+                        if evict_key is not None:
+                            del cache[evict_key]
+                    time += 1
+                    cache[key] = (value, 1, time)
+                return value
+
+        def cache_info():
+            return (hits, misses, maxsize, len(cache))
+
+        def clear_cache():
+            nonlocal hits, misses, time, cache
+            cache.clear()
+            hits = 0
+            misses = 0
+            time = 0
+
+        wrapper.cache_info = cache_info
+        wrapper.clear_cache = clear_cache
+        return wrapper
+
+    return decorator
+
+
+No _cache function related information.
+

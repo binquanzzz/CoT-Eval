@@ -1,0 +1,492 @@
+
+==================== 62ece4982e6aefcf4aabbd6b ====================
+file_path: rows/utils/__init__.py
+project: turicas/rows
+name: subclasses
+
+prompt:
+Return all subclasses of a class, recursively
+
+steps:
+
+1. Recognize that each class in Python has the __subclasses__() method to get immediate subclasses.
+2. Understand that to get all subclasses recursively, we need to include subclasses of each subclass.
+3. Realize that multiple inheritance can lead to duplicate entries if not handled properly.
+4. Decide to use a set to track visited subclasses and avoid duplicates.
+5. Create a helper generator function that recursively yields subclasses not yet seen.
+6. Initialize the helper with the original class and an empty set for tracking.
+7. Convert the generator output into a list to return all unique subclasses.
+
+
+generate_code:
+
+def subclasses(cls):
+    def recurse(cls, seen):
+        for subclass in cls.__subclasses__():
+            if subclass not in seen:
+                seen.add(subclass)
+                yield subclass
+                yield from recurse(subclass, seen)
+    return list(recurse(cls, set()))
+
+analyze:
+External factors: Missing context information: Missing return value details
+The return value of the reference code is set, and the return value of the generated code is list
+--------------------------------------------------
+
+==================== 62ece4982e6aefcf4aabbd6f ====================
+file_path: swh/lister/arch/lister.py
+project: SoftwareHeritage/swh-lister
+name: get_repo_archive
+
+prompt:
+Given an url and a destination path, retrieve and extract .tar.gz archive
+which contains 'desc' file for each package.
+Each .tar.gz archive corresponds to an Arch Linux repo ('core', 'extra', 'community').
+
+Args:
+    url: url of the .tar.gz archive to download
+    destination_path: the path on disk where to extract archive
+
+Returns:
+    a directory Path where the archive has been extracted to.
+
+steps:
+
+1. Import necessary modules: requests for handling HTTP requests, tarfile for extracting archives, Path from pathlib for path handling, tempfile for creating temporary files, and os for file deletion.
+
+2. Define the function get_repo_archive with parameters url (str) and destination_path (Path), returning a Path.
+
+3. Ensure the destination directory exists by calling mkdir on destination_path with parents and exist_ok set to True.
+
+4. Use requests.get with stream=True to download the archive in chunks to avoid loading the entire file into memory.
+
+5. Check if the HTTP request was successful by calling raise_for_status() on the response.
+
+6. Create a named temporary file with delete=False to store the downloaded archive. This prevents automatic deletion so the file can be used later for extraction.
+
+7. Iterate over the response content in chunks, writing each chunk to the temporary file.
+
+8. After downloading, store the temporary file's name and close the file.
+
+9. Open the temporary file using tarfile in read mode with gzip compression ('r:gz').
+
+10. Extract all contents of the tar archive into the destination_path.
+
+11. Use a try/finally block to ensure the temporary file is deleted after extraction, even if an error occurs during extraction.
+
+12. Return the destination_path as the result.
+
+
+generate_code:
+
+import requests
+import tarfile
+from pathlib import Path
+import tempfile
+import os
+
+def get_repo_archive(url: str, destination_path: Path) -> Path:
+    destination_path.mkdir(parents=True, exist_ok=True)
+    
+    with requests.get(url, stream=True) as response:
+        response.raise_for_status()
+        with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as temp_file:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    temp_file.write(chunk)
+            temp_file_name = temp_file.name
+    
+    try:
+        with tarfile.open(temp_file_name, 'r:gz') as tar:
+            tar.extractall(path=destination_path)
+    finally:
+        os.remove(temp_file_name)
+    
+    return destination_path
+
+analyze:
+External factors: Missing context information: Missing input parameters
+Class method, missing self
+--------------------------------------------------
+
+==================== 62ece4982e6aefcf4aabbd71 ====================
+file_path: makeprojects/util.py
+project: burgerbecky/makeprojects
+name: regex_dict
+
+prompt:
+Convert *.cpp keys to regex keys
+
+Given a dict where the keys are all filenames with wildcards, convert only
+the keys into equivalent regexes and leave the values intact.
+
+Example:
+
+rules = {
+    '*.cpp':
+        {'a': 'arf', 'b': 'bark', 'c': 'coo'},
+    '*.h':
+        {'h': 'help'}
+}
+regex_keys = regex_dict(rules)
+
+Args:
+    item: dict to convert
+Returns:
+    dict with keys converted to regexes
+
+steps:
+
+1. **Understand the Problem**: Convert dictionary keys from wildcard file patterns (like "*.cpp") into regular expressions, leaving values unchanged. The wildcards '*' (matches any characters) and '?' (matches a single character) need regex conversion.
+2. **Escape Special Characters**: Use `re.escape()` to escape regex-special characters in the original key, ensuring literal interpretation of characters like '.'.
+3. **Replace Wildcards**:
+   - Convert escaped '\*' (from `re.escape()`) to '.*' (regex for any characters).
+   - Convert escaped '\?' (from `re.escape()`) to '.' (regex for any single character).
+4. **Anchor Regex**: Wrap the converted pattern with '^' and '$' to enforce full string matching (e.g., "file*.cpp" becomes "^file.*\.cpp$").
+5. **Build New Dictionary**: Iterate over input items, apply conversions to keys, and retain original values.
+
+
+generate_code:
+
+import re
+
+def regex_dict(item):
+    new_item = {}
+    for key, value in item.items():
+        escaped = re.escape(key)
+        regex_key = escaped.replace(r'\*', '.*').replace(r'\?', '.')
+        new_item[f'^{regex_key}$'] = value
+    return new_item
+
+analyze:
+External factors: Missing context information: Missing return value details
+The reference code returns a string match object, and the return value of the generated code is a string
+--------------------------------------------------
+
+==================== 62ece4982e6aefcf4aabbd72 ====================
+file_path: rdiffweb/core/librdiff.py
+project: ikus060/rdiffweb
+name: unquote
+
+prompt:
+Remove quote from the given name.
+
+steps:
+
+1. Understand the problem: The task is to remove quotes from the beginning and end of the input string using regular expressions.
+2. Identify possible quote characters: Both single (') and double (") quotes need to be handled.
+3. Formulate the regex pattern: Create a regex that matches quotes at the start (^['"]) or end (['"]$) of the string using alternation (|).
+4. Use re.sub to replace matched quotes with an empty string, effectively removing them.
+5. Return the modified string after substitution.
+
+
+generate_code:
+
+import re
+
+def unquote(name):
+    return re.sub(r"^['\"]|['\"]$", '', name)
+
+analyze:
+External factors: Missing context information: Missing input parameter details
+The actual reference code input type is byte, and the generated code is str
+
+--------------------------------------------------
+
+==================== 62ece4982e6aefcf4aabbd74 ====================
+file_path: swh/lister/arch/tests/__init__.py
+project: SoftwareHeritage/swh-lister
+name: prepare_repository_from_archive
+
+prompt:
+Given an existing archive_path, uncompress it.
+Returns a file repo url which can be used as origin url.
+
+This does not deal with the case where the archive passed along does not exist.
+
+steps:
+
+1. **Handle tmp_path Conversion**: Convert `tmp_path` to a `Path` object to ensure compatibility regardless of input type (string or PosixPath).
+
+2. **Determine Extract Directory**: 
+   - If `filename` is provided, create the directory `tmp_path/filename` and use it as the extraction directory.
+   - If `filename` is not provided, generate a unique temporary directory within `tmp_path` using `tempfile.mkdtemp`.
+
+3. **Create Parent Directories**: Ensure the extraction directory exists by creating parent directories if necessary, especially when `filename` is provided.
+
+4. **Extract the Archive**: Use `shutil.unpack_archive` to decompress and extract the contents of the archive into the determined extraction directory.
+
+5. **Identify Repository Path**:
+   - List the contents of the extraction directory.
+   - If there's exactly one directory in the extraction directory, use it as the repository path.
+   - Otherwise, use the extraction directory itself as the repository path.
+
+6. **Return Repository Path**: Convert the final repository path to a string and return it.
+
+
+generate_code:
+
+import shutil
+from pathlib import Path
+import tempfile
+from typing import Optional, Union
+
+
+def prepare_repository_from_archive(
+    archive_path: str,
+    filename: Optional[str] = None,
+    tmp_path: Union[PosixPath, str] = "/tmp",
+) -> str:
+    tmp_path = Path(tmp_path)
+    
+    if filename:
+        extract_dir = tmp_path / filename
+        extract_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        extract_dir = Path(tempfile.mkdtemp(dir=tmp_path))
+    
+    shutil.unpack_archive(archive_path, extract_dir=extract_dir)
+    
+    contents = list(extract_dir.iterdir())
+    if len(contents) == 1 and contents[0].is_dir():
+        repo_path = contents[0]
+    else:
+        repo_path = extract_dir
+    
+    return str(repo_path)
+
+Reference code
+def prepare_repository_from_archive(
+        archive_path: str,
+        filename: Optional[str] = None,
+        tmp_path: Union[PosixPath, str] = "/tmp",
+) -> str:
+    """Given an existing archive_path, uncompress it.
+    Returns a file repo url which can be used as origin url.
+
+    This does not deal with the case where the archive passed along does not exist.
+    """
+    if not isinstance(tmp_path, str):
+        tmp_path = str(tmp_path)
+    # uncompress folder/repositories/dump for the loader to ingest
+    subprocess.check_output(["tar", "xf", archive_path, "-C", tmp_path])
+    # build the origin url (or some derivative form)
+    _fname = filename if filename else os.path.basename(archive_path)
+    repo_url = f"file://{tmp_path}/{_fname}"
+    return repo_url
+Test cases
+def test_prepare_repository_from_archive():
+    """Check the correctness of prepare_repository_from_archive
+    """
+    #print(prepare_repository_from_archive("dump.tar.gz"))
+    assert prepare_repository_from_archive("dump.tar.gz") == "file:///tmp/dump.tar.gz"
+
+analyze:
+Internal factors: cot and propt are inconsistent
+Prompt requires the repo url protocol path to be returned.Cot returns the real path
+--------------------------------------------------
+
+==================== 62ece4982e6aefcf4aabbd75 ====================
+file_path: src/flashbake/plugins/ignored.py
+project: commandline/flashbake
+name: addignored
+
+prompt:
+cd to obtain the file names, turn it into a list, sort the list for only ignored files, return those files as a single string with each filename separated by a comma.
+
+steps:
+
+1. Execute the 'git ls-files --others --ignored --exclude-standard' command to retrieve a list of ignored files.
+2. Decode the command's byte output into a string.
+3. Split the string into individual filenames using newline characters.
+4. Remove any empty entries from the list caused by trailing newlines.
+5. Sort the list of filenames alphabetically.
+6. Join the sorted filenames into a single string separated by commas.
+7. Return the resulting comma-separated string.
+
+
+generate_code:
+
+import subprocess
+
+def addignored(ignored):
+    output = subprocess.check_output(['git', 'ls-files', '--others', '--ignored', '--exclude-standard'])
+    files = output.decode('utf-8').split('\n')
+    files = [file.strip() for file in files if file.strip()]
+    files.sort()
+    return ','.join(files)
+
+
+--------------------------------------------------
+analyze:
+External factors:
+Missing context information:
+Missing description of input parameters results in inconsistent meaning of parameters
+==================== 62ece4982e6aefcf4aabbd77 ====================
+file_path: borgmatic/borg/check.py
+project: witten/borgmatic
+name: parse_frequency
+
+prompt:
+Given a frequency string with a number and a unit of time, return a corresponding
+datetime.timedelta instance or None if the frequency is None or "always".
+
+For instance, given "3 weeks", return datetime.timedelta(weeks=3)
+
+Raise ValueError if the given frequency cannot be parsed.
+
+steps:
+
+1. Check if the input frequency is None or "always" (case-insensitive). If so, return None.
+2. Strip whitespace and convert the frequency to lowercase to handle case variations.
+3. Split the frequency string into parts. If there aren't exactly two parts, raise an error.
+4. Validate the first part as a numeric value. If not a valid integer, raise an error.
+5. Map the second part (time unit) to a valid timedelta parameter, handling both singular and plural forms of units like day/days, hour/hours, etc.
+6. If the unit is invalid, raise an error.
+7. Create and return a timedelta instance using the parsed number and unit.
+
+
+generate_code:
+
+import datetime
+
+def parse_frequency(frequency):
+    if frequency is None:
+        return None
+    frequency_clean = frequency.strip().lower()
+    if frequency_clean == "always":
+        return None
+    parts = frequency_clean.split()
+    if len(parts) != 2:
+        raise ValueError("Invalid frequency format")
+    number_str, unit = parts
+    try:
+        number = int(number_str)
+    except ValueError:
+        raise ValueError(f"Invalid number: {number_str}")
+    unit_mapping = {
+        'second': 'seconds',
+        'seconds': 'seconds',
+        'minute': 'minutes',
+        'minutes': 'minutes',
+        'hour': 'hours',
+        'hours': 'hours',
+        'day': 'days',
+        'days': 'days',
+        'week': 'weeks',
+        'weeks': 'weeks'
+    }
+    if unit not in unit_mapping:
+        raise ValueError(f"Invalid unit: {unit}")
+    delta_arg = unit_mapping[unit]
+    return datetime.timedelta(**{delta_arg: number})
+
+
+--------------------------------------------------
+analyze:
+External factors: Improving details are unclear
+No explanation is given whether month and year are handled
+==================== 62ece4992e6aefcf4aabbd79 ====================
+file_path: borgmatic/borg/list.py
+project: witten/borgmatic
+name: make_find_paths
+
+prompt:
+Given a sequence of path fragments or patterns as passed to `--find`, transform all path
+fragments into glob patterns. Pass through existing patterns untouched.
+
+For example, given find_paths of:
+
+  ['foo.txt', 'pp:root/somedir']
+
+... transform that into:
+
+  ['sh:**/*foo.txt*/**', 'pp:root/somedir']
+
+steps:
+
+1. Check each path in the input sequence to determine if it contains any glob special characters ('*', '?', '[').
+2. If a path contains any of these characters, add it to the result as-is.
+3. If a path does not contain glob characters, normalize it by stripping any trailing '/'.
+4. Append '/**' to the normalized path to create a recursive glob pattern.
+5. Collect all transformed paths into a tuple and return it.
+
+
+generate_code:
+
+def make_find_paths(find_paths):
+    transformed = []
+    for path in find_paths:
+        if any(c in path for c in {'*', '?', '['}):
+            transformed.append(path)
+        else:
+            stripped_path = path.rstrip('/')
+            transformed.append(f"{stripped_path}/**")
+    return tuple(transformed)
+Reference code:
+def make_find_paths(find_paths):
+    '''
+    Given a sequence of path fragments or patterns as passed to `--find`, transform all path
+    fragments into glob patterns. Pass through existing patterns untouched.
+
+    For example, given find_paths of:
+
+      ['foo.txt', 'pp:root/somedir']
+
+    ... transform that into:
+
+      ['sh:**/*foo.txt*/**', 'pp:root/somedir']
+    '''
+
+    return tuple(
+        find_path
+        if re.compile(r'([-!+RrPp] )|(\w\w:)').match(find_path)
+        else f'sh:**/*{find_path}*/**'
+        for find_path in find_paths
+    )
+
+--------------------------------------------------
+analyze:
+
+Internal factors:
+Cot and propt are inconsistent
+Missing logic for matching pp prefix in path in cot
+==================== 62ece4992e6aefcf4aabbd7b ====================
+file_path: borgmatic/config/generate.py
+project: witten/borgmatic
+name: write_configuration
+
+prompt:
+Given a target config filename and rendered config YAML, write it out to file. Create any
+containing directories as needed. But if the file already exists and overwrite is False,
+abort before writing anything.
+
+steps:
+
+1. Check if the file exists using os.path.exists.
+2. If the file exists and overwrite is False, return immediately without writing.
+3. If the file exists and overwrite is True, or if it doesn't exist, proceed.
+4. Create the parent directories if they don't exist using os.makedirs with exist_ok=True.
+5. Open the file in write mode ('w') to create or overwrite it.
+6. Write the rendered_config content to the file.
+7. Set the file permissions using os.chmod with the specified mode.
+
+
+generate_code:
+
+import os
+
+def write_configuration(config_filename, rendered_config, mode=0o600, overwrite=False):
+    if os.path.exists(config_filename) and not overwrite:
+        return
+    dir_name = os.path.dirname(config_filename)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+    with open(config_filename, 'w') as f:
+        f.write(rendered_config)
+    os.chmod(config_filename, mode)
+analyze:
+Internal factors:
+Logical flow incomplete: Missing exception handling
+--------------------------------------------------

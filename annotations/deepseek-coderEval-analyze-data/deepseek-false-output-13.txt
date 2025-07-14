@@ -1,0 +1,744 @@
+
+==================== 62b8b4baeb7e40a82d2d1137 ====================
+file_path: src/zope/interface/verify.py
+project: pexip/os-zope
+name: verifyObject
+
+prompt:
+Verify that *candidate* might correctly provide *iface*.
+
+This involves:
+
+- Making sure the candidate claims that it provides the
+  interface using ``iface.providedBy`` (unless *tentative* is `True`,
+  in which case this step is skipped). This means that the candidate's class
+  declares that it `implements <zope.interface.implementer>` the interface,
+  or the candidate itself declares that it `provides <zope.interface.provider>`
+  the interface
+
+- Making sure the candidate defines all the necessary methods
+
+- Making sure the methods have the correct signature (to the
+  extent possible)
+
+- Making sure the candidate defines all the necessary attributes
+
+:return bool: Returns a true value if everything that could be
+   checked passed.
+:raises zope.interface.Invalid: If any of the previous
+   conditions does not hold.
+
+.. versionchanged:: 5.0
+    If multiple methods or attributes are invalid, all such errors
+    are collected and reported. Previously, only the first error was reported.
+    As a special case, if only one such error is present, it is raised
+    alone, like before.
+
+
+steps:
+
+1. **Check if the candidate claims to provide the interface**: If `tentative` is `False`, verify using `iface.providedBy(candidate)`. If not met, collect an error.
+2. **Collect all errors in a list** to report multiple issues at once.
+3. **Iterate over each name in the interface's definitions**: For each name, retrieve the specification (method or attribute).
+4. **Check methods**:
+   - Ensure the candidate has the method.
+   - Verify the method is callable.
+   - Validate the method's signature against the interface's specification using `_verify_method`.
+5. **Check attributes**: Ensure the candidate has each required attribute.
+6. **Raise errors**: If any errors are collected, raise `Invalid` with all messages. If only one error, raise it directly; otherwise, combine them.
+
+
+generate_code:
+
+import zope.interface
+from zope.interface import Invalid
+from zope.interface.interface import Method, Attribute
+from zope.interface.verify import _verify_method
+
+def verifyObject(iface, candidate, tentative=False):
+    errors = []
+    
+    if not tentative and not iface.providedBy(candidate):
+        errors.append(f"The object does not provide the interface '{iface.__name__}'.")
+    
+    for name in iface.names():
+        spec = iface.get(name)
+        
+        if isinstance(spec, Method):
+            method = getattr(candidate, name, None)
+            if method is None:
+                errors.append(f"Method '{name}' is not present.")
+            else:
+                if not callable(method):
+                    errors.append(f"Attribute '{name}' is not callable.")
+                else:
+                    try:
+                        _verify_method(spec, method, name)
+                    except Invalid as e:
+                        errors.append(str(e))
+        
+        elif isinstance(spec, Attribute):
+            if not hasattr(candidate, name):
+                errors.append(f"Required attribute '{name}' is missing.")
+    
+    if errors:
+        if len(errors) == 1:
+            raise Invalid(errors[0])
+        else:
+            error_msg = "Multiple errors found:\n" + "\n".join(f"- {error}" for error in errors)
+            raise Invalid(error_msg)
+    
+    return True
+
+gold_code：
+def _verify(iface, candidate, tentative=False, vtype=None):
+    if vtype == 'c':
+        tester = iface.implementedBy
+    else:
+        tester = iface.providedBy
+
+    excs = []
+    if not tentative and not tester(candidate):
+        excs.append(DoesNotImplement(iface, candidate))
+
+    for name, desc in iface.namesAndDescriptions(all=True):
+        try:
+            _verify_element(iface, name, desc, candidate, vtype)
+        except Invalid as e:
+            excs.append(e)
+
+    if excs:
+        if len(excs) == 1:
+            raise excs[0]
+        raise MultipleInvalid(iface, candidate, excs)
+
+    return True
+
+analyze:
+The input parameter vtype used in gold_code is not mentioned in the context.
+The _verify_method method can be called directly to verify (corresponding to steps 4.3), and before this, all redundant steps (steps 4.1, 4.2).
+
+--------------------------------------------------
+
+==================== 62b8d22a48ba5a41d1c3f47d ====================
+file_path: cachetools/cache.py
+project: pexip/os-python-cachetools
+name: pop
+
+prompt:
+D.pop(k[,d]) -> v, remove specified key and return the corresponding value.
+If key is not found, d is returned if given, otherwise KeyError is raised.
+
+steps:
+
+1. Check if the key exists in the dictionary.
+2. If the key exists:
+   a. Retrieve the corresponding value.
+   b. Remove the key from the dictionary.
+   c. Return the retrieved value.
+3. If the key does not exist:
+   a. Check if a default value was provided (i.e., `default` is not the sentinel `__marker`).
+   b. If a default was provided, return it.
+   c. If no default was provided, raise a `KeyError` indicating the missing key.
+
+
+generate_code:
+
+def pop(self, key, default=__marker):
+    if key in self:
+        value = self[key]
+        del self[key]
+        return value
+    if default is not __marker:
+        return default
+    raise KeyError(key)
+
+gold_code：
+    def pop(self, key, default=__marker):
+        if key in self:
+            value = self[key]
+            del self[key]
+        elif default is self.__marker:
+            raise KeyError(key)
+        else:
+            value = default
+        return value
+
+analyze:
+To determine whether it is the default value, it should be if default is (not) self.__marker, where _marker can be seen as an identifier in the class based on the context; and because of the lack of repo_level information, the model regards marker as/understands as a global variable, using if default is not __marker.
+
+--------------------------------------------------
+
+==================== 62b8d23748ba5a41d1c3f497 ====================
+file_path: cachetools/lfu.py
+project: pexip/os-python-cachetools
+name: popitem
+
+prompt:
+Remove and return the `(key, value)` pair least frequently used.
+
+steps:
+
+1. **Check if the cache is empty**: If the cache is empty, raise a KeyError as there's nothing to pop.
+2. **Find the minimum frequency**: Determine the smallest frequency in the frequency dictionary (freq_dict) to identify the least frequently used items.
+3. **Retrieve the least frequently used key**: Access the deque associated with the minimum frequency and pop the leftmost key (oldest in case of ties).
+4. **Update data structures**: Remove the key from the cache and the key-frequency dictionary. If the deque for the minimum frequency becomes empty after removal, delete that frequency entry from the frequency dictionary.
+5. **Return the key-value pair**: Return the popped key and its corresponding value as a tuple.
+
+
+generate_code:
+
+def popitem(self):
+    if not self.cache:
+        raise KeyError("popitem(): cache is empty")
+    min_freq = min(self.freq_dict.keys())
+    key = self.freq_dict[min_freq].popleft()
+    if not self.freq_dict[min_freq]:
+        del self.freq_dict[min_freq]
+    value = self.cache.pop(key)
+    del self.key_freq[key]
+    return (key, value)
+
+gold_code：
+    def popitem(self):
+        """Remove and return the `(key, value)` pair least frequently used."""
+        try:
+            (key, _), = self.__counter.most_common(1)
+        except ValueError:
+            raise KeyError('%s is empty' % type(self).__name__) from None
+        else:
+            return (key, self.pop(key))
+
+analyze:
+The lack of repo-level context makes CoT fabricate properties like freq_dict that do not exist, and use them to achieve the requirement of "finding the least key-value pairs that use".
+In step 4, you can actually just use self.pop(key) and you don't need to delete it from many places like CoT.
+
+--------------------------------------------------
+
+==================== 62b8d23a48ba5a41d1c3f499 ====================
+file_path: cachetools/lru.py
+project: pexip/os-python-cachetools
+name: popitem
+
+prompt:
+Remove and return the `(key, value)` pair least recently used.
+
+steps:
+
+1. Check if the cache is empty by verifying if `self.cache` has no entries. If empty, raise a `KeyError`.
+2. Retrieve the least recently used (LRU) node, which is the node before the tail dummy node (`self.tail.prev`).
+3. Remove the LRU node from the doubly linked list using a helper method `_remove_node`.
+4. Delete the corresponding entry from the cache dictionary using the LRU node's key.
+5. Return the (key, value) pair from the removed node.
+
+
+generate_code:
+
+def popitem(self):
+    if not self.cache:
+        raise KeyError("popitem(): LRU dict is empty")
+    lru_node = self.tail.prev
+    self._remove_node(lru_node)
+    del self.cache[lru_node.key]
+    return (lru_node.key, lru_node.value)
+
+gold_code：
+    def popitem(self):
+        """Remove and return the `(key, value)` pair least recently used."""
+        try:
+            key = next(iter(self.__order))
+        except StopIteration:
+            raise KeyError('%s is empty' % type(self).__name__) from None
+        else:
+            return (key, self.pop(key))
+
+
+analyze:
+The same problem as above, without context clear information, we can only infer that "the linked list data structure is used", using the self.tail.prev attribute and the non-existent _remove_node method.
+
+--------------------------------------------------
+
+==================== 62b8d23c48ba5a41d1c3f49b ====================
+file_path: cachetools/mru.py
+project: pexip/os-python-cachetools
+name: popitem
+
+prompt:
+Remove and return the `(key, value)` pair most recently used.
+
+steps:
+
+1. Check if the data structure is empty by verifying if the head node exists. If not, raise a KeyError.
+2. Retrieve the most recently used node, which is the head of the linked list.
+3. Handle the case where there's only one node by setting both head and tail to None.
+4. If there are multiple nodes, update the head to the next node and remove the previous link from the new head.
+5. Remove the node's key from the cache dictionary to maintain consistency.
+6. Return the (key, value) tuple of the removed node.
+
+
+generate_code:
+
+def popitem(self):
+    if not self.head:
+        raise KeyError("popitem(): dictionary is empty")
+    node = self.head
+    if self.head == self.tail:
+        self.head = self.tail = None
+    else:
+        self.head = self.head.next
+        self.head.prev = None
+    del self.cache[node.key]
+    return (node.key, node.value)
+
+gold_code：
+    def popitem(self):
+        """Remove and return the `(key, value)` pair most recently used."""
+        try:
+            key = next(iter(self.__order))
+        except StopIteration:
+            raise KeyError('%s is empty' % type(self).__name__) from None
+        else:
+            return (key, self.pop(key))
+
+analyze:
+The problem is the same as above (these three are similar to propt and logic), making Cache uses linked lists, making .head, .tail and other attributes.
+
+--------------------------------------------------
+
+==================== 62b8d23e48ba5a41d1c3f49e ====================
+file_path: cachetools/rr.py
+project: pexip/os-python-cachetools
+name: popitem
+
+prompt:
+Remove and return a random `(key, value)` pair.
+
+steps:
+
+1. Check if the dictionary is empty. If empty, raise a KeyError with the message "popitem(): dictionary is empty".
+2. Use the __choice method to select a random key from the dictionary.
+3. Retrieve the corresponding value of the selected key.
+4. Delete the key-value pair from the dictionary.
+5. Return the (key, value) tuple.
+
+
+generate_code:
+
+def popitem(self):
+    if not self:
+        raise KeyError("popitem(): dictionary is empty")
+    key = self.__choice()
+    value = self[key]
+    del self[key]
+    return (key, value)
+
+gold_code：
+    def popitem(self):
+        """Remove and return a random `(key, value)` pair."""
+        try:
+            key = self.__choice(list(self))
+        except IndexError:
+            raise KeyError('%s is empty' % type(self).__name__) from None
+        else:
+            return (key, self.pop(key))
+
+analyze:
+prompt does not involve the definition of the key method self.__choice(), so no parameters are passed in generated_code when used.
+
+--------------------------------------------------
+
+==================== 62b43425903eeb48555d3ea1 ====================
+file_path: sqlparams/__init__.py
+project: cpburnz/python-sql-parameters
+name: _create_in_regex
+
+prompt:
+Create the in-style parameter regular expression.
+
+Returns the in-style parameter regular expression (:class:`re.Pattern`).
+
+steps:
+
+1. Identify the structure of in-style parameters, which are enclosed in angle brackets and may include a converter followed by a colon and a parameter name.
+2. Determine the valid characters for converter and parameter names, typically starting with a letter or underscore followed by letters, digits, or underscores.
+3. Construct a regex pattern that matches the angle brackets and captures the optional converter and required parameter name.
+4. Use a non-capturing group for the optional converter part, followed by a colon, ensuring the colon is only present if there's a converter.
+5. Capture the parameter name after the optional converter.
+6. Compile the regex pattern using `re.compile` and return it.
+
+
+generate_code:
+
+import re
+from typing import Pattern
+
+def _create_in_regex(self) -> Pattern:
+    return re.compile(r'<(?:([a-zA-Z_][a-zA-Z0-9_]*):)?([a-zA-Z_][a-zA-Z0-9_]*)>')
+
+gold_code：
+    @staticmethod
+    def __create_in_regex(
+        escape_char: str,
+        in_obj: _styles.Style,
+        out_obj: _styles.Style,
+    ) -> Pattern:
+        regex_parts = []
+
+        if in_obj.escape_char != "%" and out_obj.escape_char == "%":
+            regex_parts.append("(?P<out_percent>%)")
+
+        if escape_char:
+            # Escaping is enabled.
+            escape = in_obj.escape_regex.format(char=re.escape(escape_char))
+            regex_parts.append(escape)
+
+        regex_parts.append(in_obj.param_regex)
+
+        return re.compile("|".join(regex_parts))
+
+analyze:
+prompt information is very little, it only says "returns a regular expression", and there is no other details at all. Therefore, generate_code can only return one regular expression at any time.
+
+--------------------------------------------------
+
+==================== 62b43426903eeb48555d3ea2 ====================
+file_path: sqlparams/__init__.py
+project: cpburnz/python-sql-parameters
+name: _create_converter
+
+prompt:
+Create the parameter style converter.
+
+Returns the parameter style converter (:class:`._converting._Converter`).
+
+steps:
+
+1. Understand that the method needs to create and return a _Converter instance from the _converting module.
+2. Determine what parameters the _Converter constructor requires. Since it's related to parameter style conversion, likely the database connection's paramstyle is needed.
+3. Assume that the current instance (self) has a paramstyle attribute indicating the database's parameter style (e.g., 'qmark', 'format', etc.).
+4. Instantiate the _Converter class with self.paramstyle as the parameter to configure it correctly.
+5. Return the newly created _Converter instance from the method.
+
+
+generate_code:
+
+def _create_converter(self) -> _converting._Converter:
+    return _converting._Converter(self.paramstyle)
+
+gold_code：
+    @staticmethod
+    def __create_converter(
+        escape_char: Optional[str],
+        expand_tuples: bool,
+        in_obj: _styles.Style,
+        in_regex: Pattern,
+        in_style: str,
+        out_obj: _styles.Style,
+        out_style: str,
+    ) -> _converting.Converter:
+        """
+        Create the parameter style converter.
+
+        *escape_char* (:class:`str` or :data:`None`) is the escape character
+        used to prevent matching an in-style parameter.
+
+        *expand_tuples* (:class:`bool`) is whether to convert tuples into a
+        sequence of parameters.
+
+        *in_obj* (:class:`._styles.Style`) is the in-style parameter object.
+
+        *in_style* (:class:`str`) is the in-style name.
+
+        *in_regex* (:class:`re.Pattern`) is the regular expression used to
+        extract the in-style parameters.
+
+        *out_obj* (:class:`._styles.Style`) is the out-style parameter
+        object.
+
+        *out_style* (:class:`str`) is the out-style name.
+
+        Returns the parameter style converter (:class:`._converting.Converter`).
+        """
+        # Determine converter class.
+        converter_class: Type[_converting.Converter]
+        if isinstance(in_obj, _styles.NamedStyle):
+            if isinstance(out_obj, _styles.NamedStyle):
+                converter_class = _converting.NamedToNamedConverter
+            elif isinstance(out_obj, _styles.NumericStyle):
+                converter_class = _converting.NamedToNumericConverter
+            elif isinstance(out_obj, _styles.OrdinalStyle):
+                converter_class = _converting.NamedToOrdinalConverter
+            else:
+                raise TypeError("out_style:{!r} maps to an unexpected type: {!r}".format(
+                    out_style,
+                    out_obj,
+                ))
+
+        elif isinstance(in_obj, _styles.NumericStyle):
+            if isinstance(out_obj, _styles.NamedStyle):
+                converter_class = _converting.NumericToNamedConverter
+            elif isinstance(out_obj, _styles.NumericStyle):
+                converter_class = _converting.NumericToNumericConverter
+            elif isinstance(out_obj, _styles.OrdinalStyle):
+                converter_class = _converting.NumericToOrdinalConverter
+            else:
+                raise TypeError("out_style:{!r} maps to an unexpected type: {!r}".format(
+                    out_style,
+                    out_obj,
+                ))
+
+        elif isinstance(in_obj, _styles.OrdinalStyle):
+            if isinstance(out_obj, _styles.NamedStyle):
+                converter_class = _converting.OrdinalToNamedConverter
+            elif isinstance(out_obj, _styles.NumericStyle):
+                converter_class = _converting.OrdinalToNumericConverter
+            elif isinstance(out_obj, _styles.OrdinalStyle):
+                converter_class = _converting.OrdinalToOrdinalConverter
+            else:
+                raise TypeError("out_style:{!r} maps to an unexpected type: {!r}".format(
+                    out_style,
+                    out_obj,
+                ))
+
+        else:
+            raise TypeError("in_style:{!r} maps to an unexpected type: {!r}".format(
+                in_style,
+                in_obj,
+            ))
+
+        # Create converter.
+        converter = converter_class(
+            escape_char=escape_char,
+            expand_tuples=expand_tuples,
+            in_regex=in_regex,
+            in_style=in_obj,
+            out_style=out_obj,
+        )
+        return converter
+
+analyze:
+Same as above, propt has no other implementation details, and the model can only infer and assume it by itself.
+It is also because of the lack of repo_level information that the model cannot know what class: `._converting._Converter` is and how to construct it, so it can infer assumptions by itself.
+
+
+--------------------------------------------------
+
+==================== 62b8966c755ee91dce50a154 ====================
+file_path: dateutil/parser/isoparser.py
+project: pexip/os-python-dateutil
+name: isoparse
+
+prompt:
+Parse an ISO-8601 datetime string into a :class:`datetime.datetime`.
+
+An ISO-8601 datetime string consists of a date portion, followed
+optionally by a time portion - the date and time portions are separated
+by a single character separator, which is ``T`` in the official
+standard. Incomplete date formats (such as ``YYYY-MM``) may *not* be
+combined with a time portion.
+
+Supported date formats are:
+
+Common:
+
+- ``YYYY``
+- ``YYYY-MM`` or ``YYYYMM``
+- ``YYYY-MM-DD`` or ``YYYYMMDD``
+
+Uncommon:
+
+- ``YYYY-Www`` or ``YYYYWww`` - ISO week (day defaults to 0)
+- ``YYYY-Www-D`` or ``YYYYWwwD`` - ISO week and day
+
+The ISO week and day numbering follows the same logic as
+:func:`datetime.date.isocalendar`.
+
+Supported time formats are:
+
+- ``hh``
+- ``hh:mm`` or ``hhmm``
+- ``hh:mm:ss`` or ``hhmmss``
+- ``hh:mm:ss.ssssss`` (Up to 6 sub-second digits)
+
+Midnight is a special case for `hh`, as the standard supports both
+00:00 and 24:00 as a representation. The decimal separator can be
+either a dot or a comma.
+
+
+.. caution::
+
+    Support for fractional components other than seconds is part of the
+    ISO-8601 standard, but is not currently implemented in this parser.
+
+Supported time zone offset formats are:
+
+- `Z` (UTC)
+- `±HH:MM`
+- `±HHMM`
+- `±HH`
+
+Offsets will be represented as :class:`dateutil.tz.tzoffset` objects,
+with the exception of UTC, which will be represented as
+:class:`dateutil.tz.tzutc`. Time zone offsets equivalent to UTC (such
+as `+00:00`) will also be represented as :class:`dateutil.tz.tzutc`.
+
+:param dt_str:
+    A string or stream containing only an ISO-8601 datetime string
+
+:return:
+    Returns a :class:`datetime.datetime` representing the string.
+    Unspecified components default to their lowest value.
+
+.. warning::
+
+    As of version 2.7.0, the strictness of the parser should not be
+    considered a stable part of the contract. Any valid ISO-8601 string
+    that parses correctly with the default settings will continue to
+    parse correctly in future versions, but invalid strings that
+    currently fail (e.g. ``2017-01-01T00:00+00:00:00``) are not
+    guaranteed to continue failing in future versions if they encode
+    a valid date.
+
+.. versionadded:: 2.7.0
+
+steps:
+
+1. **Parse the date component**:
+   - Identify if the date is in ISO week format (YYYY-Www or YYYYWww) or common format (YYYY, YYYY-MM, etc.).
+   - For ISO week dates, extract year, week, and optional day. Convert to a date using ISO calendar logic.
+   - For common dates, parse year, month, and day with defaults for missing parts.
+
+2. **Parse the time component** (if present):
+   - Split hours, minutes, seconds, and microseconds using regex to handle optional colons and commas.
+   - Handle 24:00 by converting to 00:00 and adjusting the date.
+
+3. **Parse the timezone component** (if present):
+   - Capture UTC ('Z') or offsets (��HH:MM, ��HHMM, ��HH).
+   - Convert to tzinfo objects (tzutc for UTC, tzoffset for others).
+
+4. **Combine components** into a datetime object, applying defaults for missing time parts and adjusting for timezones.
+
+
+generate_code:
+
+import re
+from datetime import datetime, timedelta
+from dateutil.tz import tzutc, tzoffset
+
+def isoparse(dt_str):
+    # Split into date, time, and timezone parts
+    tz_info = None
+    time_part = None
+    date_part = dt_str
+
+    # Check for timezone
+    tz_match = re.search(r'([Zz+-].*)$', dt_str)
+    if tz_match:
+        tz_str = tz_match.group(1)
+        date_part = dt_str[:tz_match.start()]
+        tz_info = parse_tz(tz_str)
+
+    # Split date and time
+    if 'T' in date_part:
+        date_part, time_part = date_part.split('T', 1)
+    else:
+        # Check for any single non-date separator
+        time_sep = re.search(r'(\D)(\d{2})', date_part)
+        if time_sep and len(date_part) > time_sep.start():
+            sep_pos = time_sep.start()
+            date_part, time_part = date_part[:sep_pos], date_part[sep_pos+1:]
+
+    # Parse date
+    date = parse_date(date_part)
+
+    # Parse time
+    time = parse_time(time_part) if time_part else (0, 0, 0, 0)
+    hours, minutes, seconds, microseconds = time
+
+    # Handle 24:00
+    if hours == 24:
+        hours = 0
+        date += timedelta(days=1)
+
+    # Combine into datetime
+    dt = datetime(date.year, date.month, date.day, hours, minutes, seconds, microseconds)
+    if tz_info:
+        dt = dt.replace(tzinfo=tz_info)
+    return dt
+
+def parse_date(date_str):
+    # ISO week formats
+    week_match = re.match(r'^(\d{4})-?W(\d{2})(?:-?(\d))?$', date_str)
+    if week_match:
+        year, week, day = week_match.groups()
+        year, week = int(year), int(week)
+        day = int(day) if day else 1
+        return iso_to_gregorian(year, week, day)
+    
+    # Common formats
+    parts = re.split(r'\-', date_str) if '-' in date_str else list(filter(None, re.findall(r'\d{2,4}', date_str)))
+    year = int(parts[0])
+    month = int(parts[1]) if len(parts) > 1 else 1
+    day = int(parts[2]) if len(parts) > 2 else 1
+    return datetime(year, month, day).date()
+
+def iso_to_gregorian(year, week, day):
+    # Convert ISO year/week/day to Gregorian date
+    jan1 = datetime(year, 1, 1)
+    _, jan1_week, jan1_day = jan1.isocalendar()
+    if jan1_week > 1:
+        start = jan1 + timedelta(weeks=1, days=-jan1_day)
+    else:
+        start = jan1 + timedelta(days=-jan1_day + 1)
+    return (start + timedelta(weeks=week-1, days=day-1)).date()
+
+def parse_time(time_str):
+    # Split into components
+    time_match = re.match(r'^(\d{2})(?::?(\d{2}))?(?::?(\d{2}))?(?:[.,](\d{1,6}))?$', time_str)
+    if not time_match:
+        raise ValueError("Invalid time format")
+    groups = time_match.groups()
+    hours = int(groups[0])
+    minutes = int(groups[1]) if groups[1] else 0
+    seconds = int(groups[2]) if groups[2] else 0
+    frac = groups[3].ljust(6, '0')[:6] if groups[3] else '0'
+    microseconds = int(frac) if frac else 0
+    return (hours, minutes, seconds, microseconds)
+
+def parse_tz(tz_str):
+    if tz_str.upper() == 'Z':
+        return tzutc()
+    sign = -1 if tz_str[0] == '-' else 1
+    tz_str = tz_str[1:]
+    if ':' in tz_str:
+        hours, mins = map(int, tz_str.split(':'))
+    elif len(tz_str) == 4:
+        hours, mins = int(tz_str[:2]), int(tz_str[2:])
+    else:
+        hours, mins = int(tz_str), 0
+    offset = sign * (hours * 3600 + mins * 60)
+    if offset == 0:
+        return tzutc()
+    return tzoffset(None, offset)
+
+gold_code：
+@_takes_ascii
+    def isoparse(self, dt_str):
+        components, pos = self._parse_isodate(dt_str)
+
+        if len(dt_str) > pos:
+            if self._sep is None or dt_str[pos:pos + 1] == self._sep:
+                components += self._parse_isotime(dt_str[pos + 1:])
+            else:
+                raise ValueError('String contains unknown ISO components')
+
+        if len(components) > 3 and components[3] == 24:
+            components[3] = 0
+            return datetime(*components) + timedelta(days=1)
+
+        return datetime(*components)
+
+analyze:
+Without the methods provided by repo_level, the model can only write methods on its own to achieve the requirements.
+
+--------------------------------------------------

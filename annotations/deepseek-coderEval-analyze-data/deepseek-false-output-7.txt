@@ -1,0 +1,439 @@
+
+==================== 62b463153879012d194814a1 ====================
+file_path: packtools/sps/models/packages.py
+project: scieloorg/packtools
+name: add_rendition
+
+prompt:
+{
+    "original": "artigo02.pdf",
+    "en": "artigo02-en.pdf",
+}
+
+steps:
+
+1. Check if the class has an attribute `_renditions`. If not, it should be initialized, possibly as a dictionary.
+2. The method `add_rendition` is supposed to take `lang` and `file_path` as parameters.
+3. According to the docstring, the method should assign the result of `self.filepath()` to `self._renditions[lang]`.
+4. The parameter `file_path` is present but not used based on the docstring. It might be a mistake, but the code follows the given instructions.
+5. Implement the method by calling `self.filepath()` and assigning the result to `self._renditions[lang]`.
+
+
+generate_code:
+
+def add_rendition(self, lang, file_path):
+    self._renditions[lang] = self.filepath()
+
+
+--------------------------------------------------
+analyze:
+Prompt Blur - Implementing Blur Detail Blur
+Prompt gives too little information to generate accurate CoT steps based on this propt
+==================== 62b463163879012d194814a2 ====================
+file_path: packtools/sps/models/packages.py
+project: scieloorg/packtools
+name: add_asset
+
+prompt:
+"{
+    "artigo02-gf03.tiff": "/path/artigo02-gf03.tiff",
+    "artigo02-gf03.jpg": "/path/artigo02-gf03.jpg",
+    "artigo02-gf03.png": "/path/artigo02-gf03.png",
+}
+
+steps:
+
+1. The method `add_asset` is part of a class and needs to assign a value to `self._assets[basename]`.
+2. The value to assign is obtained by calling `self.filepath()`, which is a method of the class.
+3. The `file_path` parameter is passed to `self.filepath()` to generate the correct file path.
+4. The generated file path from `self.filepath(file_path)` is then stored in the `_assets` dictionary under the `basename` key.
+
+
+generate_code:
+
+def add_asset(self, basename, file_path):
+    self._assets[basename] = self.filepath(file_path)
+
+
+--------------------------------------------------
+analyze:
+Prompt Blur - Implementing Blur Detail Blur
+Prompt gives too little information to generate accurate CoT steps based on this propt
+
+==================== 62b463163879012d194814a4 ====================
+file_path: packtools/sps/models/packages.py
+project: scieloorg/packtools
+name: _explore_zipfile
+
+prompt:
+Get packages' data from zip_path
+
+Groups files by their XML basename and returns data in dict format.
+
+Parameters
+----------
+zip_path : str
+    zip file path
+Returns
+-------
+dict
+
+steps:
+
+1. Import the zipfile module to handle reading the zip file.
+2. Open the zip file using zipfile.ZipFile in read mode to access its contents.
+3. Retrieve the list of all file names within the zip file using the namelist() method.
+4. Pass the list of file names to the _group_files_by_xml_filename function for processing.
+5. Return the result from the _group_files_by_xml_filename function.
+
+
+generate_code:
+
+import zipfile
+
+def _explore_zipfile(zip_path):
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        file_names = zf.namelist()
+    return _group_files_by_xml_filename(file_names)
+
+analyze:
+The specific information of functions such as repo is missing, and the specific information of _group_files_by_xml_filename is unclear.
+--------------------------------------------------
+
+==================== 62b4631b3879012d194814dd ====================
+file_path: packtools/sps/utils/xml_utils.py
+project: scieloorg/packtools
+name: fix_namespace_prefix_w
+
+prompt:
+Convert text that defaults to 'w:st="' to 'w-st="'
+
+steps:
+
+1. Define the function fix_namespace_prefix_w which takes a single parameter content.
+2. Use the string replace() method to replace all occurrences of "w:st=" with "w-st=" in the content.
+3. Return the modified content after the replacement.
+
+
+generate_code:
+
+def fix_namespace_prefix_w(content):
+    return content.replace("w:st=", "w-st=")
+
+analyze:
+Prompt implementation details are unclear
+Prompt only tells you to change 'w:st="' to 'w-st="', without specifying that this is a format, and you need to convert all w:xx formats to w-xx
+
+--------------------------------------------------
+
+==================== 62b463303879012d19481579 ====================
+file_path: packtools/sps/models/front_articlemeta_issue.py
+project: scieloorg/packtools
+name: _extract_number_and_supplment_from_issue_element
+
+prompt:
+Extract the possible values of number and suppl from the contents of issue.
+
+steps:
+
+1. **Understand the Input and Desired Output**: The function needs to extract 'number' and 'sup' (supplement) from an 'issue' string. The string may contain a main number, a supplement, or both, formatted with variations like 'Suppl', 'Supplement', or 'Sup' followed by a number.
+
+2. **Identify Patterns**: 
+   - The main number is a standalone digit sequence.
+   - The supplement is indicated by keywords followed by a digit sequence.
+   - Both components can appear in various orders or alone.
+
+3. **Design Regular Expression**:
+   - Use regex to capture two scenarios:
+     - Main number with optional supplement.
+     - Supplement alone.
+   - Handle case insensitivity and optional whitespace.
+
+4. **Implement Regex with Groups**:
+   - Named groups 'number' and 'sup' for main number and supplement.
+   - Use alternation to handle both scenarios in a single regex.
+
+5. **Process Match Groups**:
+   - Extract 'number' and 'sup' from the matched groups.
+   - Convert extracted strings to integers, handling missing values.
+
+6. **Edge Cases**:
+   - Handle cases with no valid number or supplement.
+   - Strip input to manage leading/trailing spaces.
+
+
+generate_code:
+
+import re
+
+def _extract_number_and_supplment_from_issue_element(issue):
+    issue = issue.strip()
+    pattern = r'''
+        ^
+        (?:
+            (?P<number>\d+)
+            (?:\s*(?:Suppl(?:ement)?|Sup)\s*(?P<sup>\d+))?
+            |
+            (?:Suppl(?:ement)?|Sup)\s*(?P<sup_only>\d+)
+        )
+        $
+    '''
+    match = re.fullmatch(
+        pattern, 
+        issue, 
+        flags=re.IGNORECASE | re.VERBOSE
+    )
+    if not match:
+        return (None, None)
+    number = match.group('number')
+    sup = match.group('sup') or match.group('sup_only')
+    number = int(number) if number else None
+    sup = int(sup) if sup else None
+    return (number, sup)
+
+analyze:
+Prompt implementation details are unclear
+Prompt only describes the need to extract the value of number and suppl from the issue, and does not specify whether the issue is text, file or other form.
+--------------------------------------------------
+
+==================== 62b46746d2f69a53b4661722 ====================
+file_path: boolean/boolean.py
+project: bastikr/boolean
+name: absorb
+
+prompt:
+Given an `args` sequence of expressions, return a new list of expression
+applying absorption and negative absorption.
+
+See https://en.wikipedia.org/wiki/Absorption_law
+
+Absorption::
+
+    A & (A | B) = A, A | (A & B) = A
+
+Negative absorption::
+
+    A & (~A | B) = A & B, A | (~A & B) = A | B
+
+steps:
+
+1. **Understand Absorption Law**: Recognize that absorption in boolean algebra simplifies expressions like A �� (A �� B) to A and A �� (A �� B) to A.
+2. **Check Expression Types**: For each expression in the input list, determine if it's an OR or AND operation.
+3. **Decompose Expressions**: For OR expressions, split into left and right operands. Check if one operand is present in the list and the other is an AND/OR containing that operand.
+4. **Absorption Conditions**:
+   - For OR expressions, check if one operand exists in the list and the other is an AND with that operand.
+   - For AND expressions, check if one operand exists in the list and the other is an OR with that operand.
+5. **Filter Absorbed Expressions**: Collect expressions that do not meet the absorption conditions, ensuring they are retained in the result.
+6. **Edge Cases Handling**: Ensure non-OR/AND expressions are kept and handle nested structures correctly by checking operand presence and types.
+
+
+generate_code:
+
+def absorb(self, args):
+    absorbed = []
+    for expr in args:
+        keep = True
+        if isinstance(expr, Or):
+            a, b = expr.left, expr.right
+            if (a in args and isinstance(b, And) and (a == b.left or a == b.right)) or \
+               (b in args and isinstance(a, And) and (b == a.left or b == a.right)):
+                keep = False
+        elif isinstance(expr, And):
+            a, b = expr.left, expr.right
+            if (a in args and isinstance(b, Or) and (a == b.left or a == b.right)) or \
+               (b in args and isinstance(a, Or) and (b == a.left or b == a.right)):
+                keep = False
+        if keep:
+            absorbed.append(expr)
+    return absorbed
+
+analyze:
+Prompt implementation details blurred
+The format of args is not given in the Prompt description, and it is not clear how to read the content of args
+--------------------------------------------------
+
+==================== 62b86729b4d922cb0e688c2f ====================
+file_path: krake/tests/conftest.py
+project: rak-n-rok/Krake
+name: base_config
+
+prompt:
+Creates a configuration with some simple parameters, which have a default value
+that can be set.
+
+Args:
+    user (str): the name of the user for the static authentication
+    etcd_host (str): the host for the database.
+    etcd_port (int): the port for the database.
+
+Returns:
+    dict: the created configuration.
+
+steps:
+
+1. Define the function base_config with parameters user, etcd_host (default "localhost"), and etcd_port (default 2379).
+2. Initialize the configuration dictionary with the required top-level keys: "tls", "authentication", "authorization", "etcd", "docs", and "log".
+3. For the "tls" key, create a sub-dictionary with "enabled" set to False, and default paths for "cert_path" and "key_path".
+4. Set "authentication" and "authorization" to True if a user is provided, otherwise False.
+5. For the "etcd" key, include the provided etcd_host and etcd_port in a sub-dictionary.
+6. Set "docs" to a default boolean value (True).
+7. Configure the "log" key with a sub-dictionary containing default "level" and "path".
+8. Return the constructed configuration dictionary.
+
+
+generate_code:
+
+def base_config(user, etcd_host="localhost", etcd_port=2379):
+    config = {
+        "tls": {
+            "enabled": False,
+            "cert_path": "/etc/ssl/certs/cert.pem",
+            "key_path": "/etc/ssl/private/key.pem"
+        },
+        "authentication": user is not None,
+        "authorization": user is not None,
+        "etcd": {
+            "host": etcd_host,
+            "port": etcd_port
+        },
+        "docs": True,
+        "log": {
+            "level": "INFO",
+            "path": "/var/log/service.log"
+        }
+    }
+    return config
+analyze:
+The description in Prompt does not give a specific description of how to implement the configuration and what configuration to implement. Prompt is very vague and I don’t know how to do it.
+--------------------------------------------------
+
+==================== 62b8a4a4755ee91dce50a3d2 ====================
+file_path: dateutil/tz/_common.py
+project: pexip/os-python-dateutil
+name: _fromutc
+
+prompt:
+Given a timezone-aware datetime in a given timezone, calculates a
+timezone-aware datetime in a new timezone.
+
+Since this is the one time that we *know* we have an unambiguous
+datetime object, we take this opportunity to determine whether the
+datetime is ambiguous and in a "fold" state (e.g. if it's the first
+occurrence, chronologically, of the ambiguous datetime).
+
+:param dt:
+    A timezone-aware :class:`datetime.datetime` object.
+
+steps:
+
+1. Check if the input datetime `dt` is aware and in UTC. If not, raise an error.
+2. Use binary search to find the last transition time in `self._utc_transition_times` that is less than or equal to `dt`.
+3. Retrieve the corresponding timezone information (offset, DST offset, timezone name) from `self._transition_info`.
+4. Calculate the local time by adding the UTC offset to `dt`.
+5. Return a new datetime object with the calculated local time, setting the timezone to `self` and handling any potential DST fold.
+
+
+generate_code:
+
+import bisect
+
+def _fromutc(self, dt):
+    if dt.tzinfo is not self:
+        raise ValueError("dt must be in UTC")
+    
+    transitions = self._utc_transition_times
+    if not transitions:
+        return dt + self.utcoffset(dt)
+    
+    idx = bisect.bisect_right(transitions, dt) - 1
+    if idx < 0:
+        idx = 0
+    
+    tzinfo = self._transition_info[idx]
+    new_dt = dt + tzinfo[0]
+    
+    fold = 0
+    if idx + 1 < len(transitions):
+        next_tzinfo = self._transition_info[idx + 1]
+        if tzinfo[0] > next_tzinfo[0]:
+            transition = transitions[idx + 1]
+            if dt >= transition - tzinfo[0]:
+                fold = 1
+    
+    return new_dt.replace(tzinfo=self, fold=fold)
+analyze:
+Missing repo information:
+Repo information is missing, the class:`datetime.datetime` object information to which dt belongs is not provided. The methods owned by this class are unclear.
+--------------------------------------------------
+
+==================== 62b87d24d292efb640a55670 ====================
+file_path: src/prestoplot/_version.py
+project: eykd/prestoplot
+name: get_versions
+
+prompt:
+Get version information or return default if unable to do so.
+
+steps:
+
+1. Import the necessary modules: importlib.metadata for retrieving package versions and handling exceptions.
+2. Define the get_versions function with a docstring explaining its purpose.
+3. Use a try-except block to attempt retrieving the package version using importlib.metadata.version, using __package__ to dynamically get the current package name.
+4. If the package version is not found (PackageNotFoundError), return the default version "0.0.0".
+5. Handle any other exceptions by also returning the default version to ensure robustness.
+
+
+generate_code:
+
+from importlib.metadata import version, PackageNotFoundError
+
+def get_versions():
+    """
+    Obtains the version information. If the version information cannot be obtained, the default value is returned.
+    """
+    try:
+        return version(__package__)
+    except PackageNotFoundError:
+        return "0.0.0"
+    except:
+        return "0.0.0"
+analyze:
+Implementation details are unclear - version information is unclear
+What content should be included in the version information content is not given in detail in the propt, and I don’t know what the default status should return.
+--------------------------------------------------
+
+==================== 62b87d24d292efb640a5566f ====================
+file_path: src/prestoplot/_version.py
+project: eykd/prestoplot
+name: render
+
+prompt:
+Render the given version pieces into the requested style.
+
+steps:
+
+1. Understand the function's purpose: Render given pieces according to a specified style.
+2. Determine possible input formats for 'pieces' (likely a list of strings) and 'style' (string indicating format).
+3. Consider different style cases (e.g., 'html', 'ansi', 'plain') and how to handle each.
+4. For HTML style: Wrap each piece in div tags and join with newlines.
+5. For ANSI style: Add ANSI color codes around each piece (e.g., red text).
+6. For Plain style: Join pieces with spaces.
+7. Handle unknown styles by defaulting to plain formatting.
+8. Ensure edge cases like empty pieces list are handled gracefully.
+
+
+generate_code:
+
+def render(pieces, style):
+    if style == 'html':
+        return '\n'.join(f'<div>{piece}</div>' for piece in pieces)
+    elif style == 'ansi':
+        return '\033[31m' + '\033[0m \033[31m'.join(pieces) + '\033[0m'
+    elif style == 'plain':
+        return ' '.join(pieces)
+    else:
+        return ' '.join(pieces)
+analyze:
+Implementation details are unclear:
+The form of the requested style is not clearly given, it is not clear what type the variable belongs to, and the implementation details are not clear.
+--------------------------------------------------
