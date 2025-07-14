@@ -1,0 +1,1504 @@
+
+text:
+<issue>
+formsets with can_delete=True shouldn't add delete field to extra forms
+Description
+
+Current behavior of formsets with can_delete=True is to add a delete field to every form. This behavior differs from that expected, however (why would one want a delete option on an "add" form?), as well as that of the builtin admin. I've included a patch on formsets.py, but haven't bothered with patching tests yet.
+
+</issue>
+
+steps:
+1. Understand the issue: Formsets with `can_delete=True` are incorrectly adding a delete field to extra forms, which are intended for adding new data and should not have a delete option.
+2. Locate the relevant code: The code responsible for adding fields to forms in a formset is the `add_fields` method in the `BaseFormSet` class in `django/forms/formsets.py`.
+3. Identify the problem area: Inside `add_fields`, the delete field is added unconditionally when `self.can_delete` is True, without considering if the form is an extra form.
+4. Devise a solution: Modify the condition for adding the delete field to only add it to existing forms or initial forms, but not to extra forms. This can be achieved by checking if the `index` argument in `add_fields` is not `None`, as `index` is `None` for the empty form and forms created using `empty_form`. For existing forms and initial forms, `index` will be an integer.
+5. Implement the solution: Change the `if self.can_delete:` condition in `add_fields` to `if self.can_delete and index is not None:`.
+6. Generate the patch file: Create a diff between the original `django/forms/formsets.py` and the modified version to produce the patch.
+
+model_patch:
+
+--- a/django/forms/formsets.py
++++ b/django/forms/formsets.py
+@@ -389,7 +389,7 @@
+                     required=False,
+                     widget=self.get_ordering_widget(),
+                 )
+-        if self.can_delete:
++        if self.can_delete and index is not None:
+             form.fields[DELETION_FIELD_NAME] = BooleanField(label=_('Delete'), required=False)
+
+     def add_prefix(self, index):
+
+
+gold_patch:
+<patch>
+diff --git a/django/forms/formsets.py b/django/forms/formsets.py
+--- a/django/forms/formsets.py
++++ b/django/forms/formsets.py
+@@ -372,9 +372,10 @@ def has_changed(self):
+
+     def add_fields(self, form, index):
+         """A hook for adding extra fields on to each form instance."""
++        initial_form_count = self.initial_form_count()
+         if self.can_order:
+             # Only pre-fill the ordering field for initial forms.
+-            if index is not None and index < self.initial_form_count():
++            if index is not None and index < initial_form_count:
+                 form.fields[ORDERING_FIELD_NAME] = IntegerField(
+                     label=_('Order'),
+                     initial=index + 1,
+@@ -387,7 +388,7 @@ def add_fields(self, form, index):
+                     required=False,
+                     widget=self.get_ordering_widget(),
+                 )
+-        if self.can_delete:
++        if self.can_delete and (self.can_delete_extra or index < initial_form_count):
+             form.fields[DELETION_FIELD_NAME] = BooleanField(label=_('Delete'), required=False)
+
+     def add_prefix(self, index):
+@@ -433,7 +434,8 @@ def as_ul(self):
+
+ def formset_factory(form, formset=BaseFormSet, extra=1, can_order=False,
+                     can_delete=False, max_num=None, validate_max=False,
+-                    min_num=None, validate_min=False, absolute_max=None):
++                    min_num=None, validate_min=False, absolute_max=None,
++                    can_delete_extra=True):
+     """Return a FormSet for the given form class."""
+     if min_num is None:
+         min_num = DEFAULT_MIN_NUM
+@@ -453,6 +455,7 @@ def formset_factory(form, formset=BaseFormSet, extra=1, can_order=False,
+         'extra': extra,
+         'can_order': can_order,
+         'can_delete': can_delete,
++        'can_delete_extra': can_delete_extra,
+         'min_num': min_num,
+         'max_num': max_num,
+         'absolute_max': absolute_max,
+diff --git a/django/forms/models.py b/django/forms/models.py
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -863,7 +863,7 @@ def modelformset_factory(model, form=ModelForm, formfield_callback=None,
+                          widgets=None, validate_max=False, localized_fields=None,
+                          labels=None, help_texts=None, error_messages=None,
+                          min_num=None, validate_min=False, field_classes=None,
+-                         absolute_max=None):
++                         absolute_max=None, can_delete_extra=True):
+     """Return a FormSet class for the given Django model class."""
+     meta = getattr(form, 'Meta', None)
+     if (getattr(meta, 'fields', fields) is None and
+@@ -881,7 +881,7 @@ def modelformset_factory(model, form=ModelForm, formfield_callback=None,
+     FormSet = formset_factory(form, formset, extra=extra, min_num=min_num, max_num=max_num,
+                               can_order=can_order, can_delete=can_delete,
+                               validate_min=validate_min, validate_max=validate_max,
+-                              absolute_max=absolute_max)
++                              absolute_max=absolute_max, can_delete_extra=can_delete_extra)
+     FormSet.model = model
+     return FormSet
+
+@@ -1051,7 +1051,7 @@ def inlineformset_factory(parent_model, model, form=ModelForm,
+                           widgets=None, validate_max=False, localized_fields=None,
+                           labels=None, help_texts=None, error_messages=None,
+                           min_num=None, validate_min=False, field_classes=None,
+-                          absolute_max=None):
++                          absolute_max=None, can_delete_extra=True):
+     """
+     Return an ``InlineFormSet`` for the given kwargs.
+
+@@ -1082,6 +1082,7 @@ def inlineformset_factory(parent_model, model, form=ModelForm,
+         'error_messages': error_messages,
+         'field_classes': field_classes,
+         'absolute_max': absolute_max,
++        'can_delete_extra': can_delete_extra,
+     }
+     FormSet = modelformset_factory(model, **kwargs)
+     FormSet.fk = fk
+
+</patch>
+
+--------------------------------------------------
+analyze
+CoT and propt are inconsistent
+Issue requires that there is no delete option in extra form, and the CoT generation step is incorrect in understanding the relevant code. Index is less than initial_form_count, which is extra form, not index == None
+text:
+<issue>
+Support "%V" format in WeekArchiveView.
+Description
+
+#26217 (Docs for WeekArchiveView are misleading about %W) - closed 4 years ago mentioned support for %V week format.
+Since python 3.6, %G, %u and %V ISO 8601 formatters were added to strptime.
+WeekArchiveView should add %V to the list of accepted week formatters. This would require as well the special case to change the year format to %G, or simply ValueError in _date_from_string should mention the message passed from datetime.datetime.strptime:
+ISO week directive '%V' is incompatible with the year directive '%Y'. Use the ISO year '%G'.
+
+</issue>
+
+steps:
+
+**Step 1: Analyze the issue and code:**
+The issue is to add support for the `%V` week format in Django's `WeekArchiveView`. The `_date_from_string` function in `django/views/generic/dates.py` is responsible for parsing dates from URL strings in date-based generic views. We need to modify this function to handle the `%V` week format. The issue description mentions the incompatibility of `%V` with `%Y` and suggests using `%G` for the year format when `%V` is used.
+
+**Step 2: Modify `_date_from_string` function:**
+Locate the `_date_from_string` function in `django/views/generic/dates.py`.
+Modify the function to:
+- Recognize `%V` as a valid week format.
+- If `%V` is used as the week format, change the year format from the default `year_format` (which is `%Y`) to `%G`. This is crucial because `%V` (ISO week number) is designed to be used with `%G` (ISO year).
+- Keep the existing logic for other week formats (`%U`, `%W`).
+- Ensure that the date parsing logic correctly handles the combination of `%G` and `%V`.
+
+**Step 3: Generate the patch file:**
+Use `diff -u` to compare the original `django/views/generic/dates.py` with the modified version and generate a patch file. This patch file will contain the changes needed to implement the `%V` week format support.
+
+model_patch:
+
+--- a/django/views/generic/dates.py
++++ b/django/views/generic/dates.py
+@@ -487,12 +487,17 @@
+
+         date_field = self.get_date_field()
+         week_format = self.get_week_format()
+-        week_choices = {'%W': '1', '%U': '0'}
++        year_format = self.get_year_format()
++        week_choices = {'%W': '1', '%U': '0', '%V': '1'}
+         try:
+             week_start = week_choices[week_format]
+         except KeyError:
+             raise ValueError('Unknown week format %r. Choices are: %s' % (
+                 week_format,
++                ', '.join(sorted(week_choices)),
++            ))
++        if week_format == '%V':
++            year_format = '%G'
+                 ', '.join(sorted(week_choices)),
+             ))
+         date = _date_from_string(year, self.get_year_format(),
+
+
+gold_patch:
+<patch>
+diff --git a/django/views/generic/dates.py b/django/views/generic/dates.py
+--- a/django/views/generic/dates.py
++++ b/django/views/generic/dates.py
+@@ -218,7 +218,7 @@ def _get_weekday(self, date):
+         The first day according to the week format is 0 and the last day is 6.
+         """
+         week_format = self.get_week_format()
+-        if week_format == '%W':                 # week starts on Monday
++        if week_format in {'%W', '%V'}:         # week starts on Monday
+             return date.weekday()
+         elif week_format == '%U':               # week starts on Sunday
+             return (date.weekday() + 1) % 7
+@@ -485,7 +485,7 @@ def get_dated_items(self):
+
+         date_field = self.get_date_field()
+         week_format = self.get_week_format()
+-        week_choices = {'%W': '1', '%U': '0'}
++        week_choices = {'%W': '1', '%U': '0', '%V': '1'}
+         try:
+             week_start = week_choices[week_format]
+         except KeyError:
+@@ -493,10 +493,15 @@ def get_dated_items(self):
+                 week_format,
+                 ', '.join(sorted(week_choices)),
+             ))
+-        date = _date_from_string(year, self.get_year_format(),
+-                                 week_start, '%w',
+-                                 week, week_format)
+-
++        year_format = self.get_year_format()
++        if week_format == '%V' and year_format != '%G':
++            raise ValueError(
++                "ISO week directive '%s' is incompatible with the year "
++                "directive '%s'. Use the ISO year '%%G' instead." % (
++                    week_format, year_format,
++                )
++            )
++        date = _date_from_string(year, year_format, week_start, '%w', week, week_format)
+         since = self._make_date_lookup_arg(date)
+         until = self._make_date_lookup_arg(self._get_next_week(date))
+         lookup_kwargs = {
+
+</patch>
+
+--------------------------------------------------
+analyze
+CoT and code are inconsistent
+The steps in CoT are correct, there are invalid indentation and unclosed string splicing in the code implementation, and the %Y format still used in date = _date_from_string(year, self.get_year_format() and %G are not used, which may cause format errors.
+text:
+<issue>
+timesince 'depth' parameter
+Description
+
+		(last modified by Toby Such)
+
+Discussed ​here. The timesince function is a bit limiting as it is right now. A depth parameter should be added to configure how many values are shown. The depth parameter should be defaulted to 2 as this is how the current implementation behaves. The existing rule of values having to be adjacent to one another should still remain.
+The logic for calculating the time since, before formatting should also be pulled out of the function and placed in its own so that custom implementations can be created.
+For example:
+With a depth of one it should always display as "1 week" or "3 years" etc.
+With a depth of two: "1 week, 3 days" or "3 years, 7 months"
+With a depth of three: "1 week, 3 days, 5 hours" or "3 years, 7 months, 2 weeks"
+
+</issue>
+
+steps:
+1. **Analyze the `timesince` function:**
+    - Locate the `timesince` function in `django/utils/timesince.py`.
+    - Understand how it calculates the `delta` between two datetimes.
+    - Identify the `TIMESINCE_CHUNKS` tuple which defines the time units and their corresponding seconds.
+    - Observe the loop iterating through `TIMESINCE_CHUNKS` to find the largest time unit and the logic to potentially add a second adjacent unit.
+    - Note the use of `TIME_STRINGS` for translation and formatting.
+
+
+2. **Create a new function `calculate_timesince_chunks`:**
+    - Create a new function named `calculate_timesince_chunks` in `django/utils/timesince.py`.
+    - This function will take two datetime objects (`d`, `now`) and an optional `depth` parameter as input.
+    - Copy the time difference calculation logic from the existing `timesince` function into this new function.
+    - Modify the loop to iterate through `TIMESINCE_CHUNKS` and store the calculated time units and their counts in a list of tuples.
+    - Implement the `depth` parameter to limit the number of time units returned.
+    - Return the list of time unit tuples.
+    - Ensure the leap year handling logic is moved into this new function.
+
+
+3. **Modify the `timesince` function:**
+    - Update the `timesince` function definition to accept a `depth` parameter with a default value of 2.
+    - Call the `calculate_timesince_chunks` function inside `timesince` to get the list of time unit tuples.
+    - Iterate through the returned list of time unit tuples and format the output string based on the `depth` parameter and `TIME_STRINGS`.
+    - Ensure the `reversed` and `time_strings` parameters are correctly passed to `calculate_timesince_chunks` and used in the formatting logic.
+    - Keep the `avoid_wrapping` logic for the output string.
+
+
+4. **Update `timeuntil` function:**
+    - Modify the `timeuntil` function to pass the `depth` parameter to the `timesince` function call.
+
+
+5. **Generate patch file:**
+    - Use `diff -u` command or a similar tool to generate a patch file comparing the original `django/utils/timesince.py` with the modified version.
+    - Ensure the patch includes the addition of the `calculate_timesince_chunks` function, the modifications to the `timesince` and `timeuntil` functions, and any necessary imports or adjustments.
+    - Review the patch file to ensure it only contains the intended changes and is in the correct format for `git apply`.
+
+
+model_patch:
+
+--- a/django/contrib/humanize/templatetags/humanize.py
++++ b/django/contrib/humanize/templatetags/humanize.py
+@@ -231,7 +231,7 @@
+             delta = now - value
+             if delta.days != 0:
+                 return cls.time_strings['past-day'] % {
+-                    'delta': defaultfilters.timesince(value, now, time_strings=cls.past_substrings),
++                    'delta': defaultfilters.timesince(value, now, depth=2, time_strings=cls.past_substrings),
+                 }
+             elif delta.seconds == 0:
+                 return cls.time_strings['now']
+@@ -247,7 +247,7 @@
+             delta = value - now
+             if delta.days != 0:
+                 return cls.time_strings['future-day'] % {
+-                    'delta': defaultfilters.timeuntil(value, now, time_strings=cls.future_substrings),
++                    'delta': defaultfilters.timeuntil(value, now, depth=2, time_strings=cls.future_substrings),
+                 }
+             elif delta.seconds == 0:
+                 return cls.time_strings['now']
+@@ -260,3 +260,4 @@
+                 count = delta.seconds // 60 // 60
+                 return cls.time_strings['future-hour'] % {'count': count}
+
++
+
+--- a/django/utils/timesince.py
++++ b/django/utils/timesince.py
+@@ -27,7 +27,7 @@
+
+
+
+-def timesince(d, now=None, reversed=False, time_strings=None):
++def calculate_timesince_chunks(d, now=None, depth=2, time_strings=None, reversed=False):
+      """
+      Take two datetime objects and return the time between d and now as a nicely
+      formatted string, e.g. "10 minutes". If d occurs after now, return
+@@ -47,7 +47,7 @@
+      if time_strings is None:
+          time_strings = TIME_STRINGS
+
+-     # Convert datetime.date to datetime.datetime for comparison.
++     # Convert datetime.date to datetime.datetime for calculation.
+      if not isinstance(d, datetime.datetime):
+          d = datetime.datetime(d.year, d.month, d.day)
+      if now and not isinstance(now, datetime.datetime):
+@@ -71,24 +71,43 @@
+      # ignore microseconds
+      since = delta.days * 24 * 60 * 60 + delta.seconds
+      if since <= 0:
+-         # d is in the future compared to now, stop processing.
+-         return avoid_wrapping(time_strings['minute'] % 0)
+-     for i, (seconds, name) in enumerate(TIMESINCE_CHUNKS):
++         return []
++
++    chunks = []
++    for i, (seconds, name) in enumerate(TIMESINCE_CHUNKS):
+          count = since // seconds
+          if count != 0:
+-             break
+-     result = avoid_wrapping(time_strings[name] % count)
+-     if i + 1 < len(TIMESINCE_CHUNKS):
+-         # Now get the second item
+-         seconds2, name2 = TIMESINCE_CHUNKS[i + 1]
+-         count2 = (since - (seconds * count)) // seconds2
+-         if count2 != 0:
+-             result += gettext(', ') + avoid_wrapping(time_strings[name2] % count2)
++             chunks.append((count, name))
++            since -= seconds * count
++            if len(chunks) == depth:
++                break
++
++    return chunks
++
++
++def timesince(d, now=None, depth=2, reversed=False, time_strings=None):
++    """
++    Take two datetime objects and return the time between d and now as a nicely
++    formatted string, e.g. "10 minutes". If d occurs after now, return
++    "0 minutes".
++
++    Units used are years, months, weeks, days, hours, and minutes.
++    Seconds and microseconds are ignored.  Up to two adjacent units will be
++    displayed.  For example, "2 weeks, 3 days" and "1 year, 3 months" are
++    possible outputs, but "2 weeks, 3 hours" and "1 year, 5 days" are not.
++
++    `time_strings` is an optional dict of strings to replace the default
++    TIME_STRINGS dict.
++    """
++    if time_strings is None:
++        time_strings = TIME_STRINGS
++
++    chunks = calculate_timesince_chunks(d, now, depth, time_strings, reversed)
++    if not chunks:
++        return avoid_wrapping(time_strings['minute'] % 0)
++
++    result = []
++    for count, name in chunks:
++        result.append(avoid_wrapping(time_strings[name] % count))
++
++    return gettext(', ').join(result)
++
++
++def timeuntil(d, now=None, depth=2, time_strings=None):
++    """
++    Like timesince, but return a string measuring the time until the given time.
++    """
++    return timesince(d, now, depth, reversed=True, time_strings=time_strings)
++
++
++def timeuntil(d, now=None, time_strings=None):
++    """
++    Like timesince, but return a string measuring the time until the given time.
++    """
++    return timesince(d, now, reversed=True, time_strings=time_strings)
+
+-
+- def timeuntil(d, now=None, time_strings=None):
+-     """
+-     Like timesince, but return a string measuring the time until the given time.
+-     """
+-     return timesince(d, now, reversed=True, time_strings=time_strings)
+-
+
+gold_patch:
+<patch>
+diff --git a/django/utils/timesince.py b/django/utils/timesince.py
+--- a/django/utils/timesince.py
++++ b/django/utils/timesince.py
+@@ -24,26 +24,30 @@
+ )
+
+
+-def timesince(d, now=None, reversed=False, time_strings=None):
++def timesince(d, now=None, reversed=False, time_strings=None, depth=2):
+     """
+     Take two datetime objects and return the time between d and now as a nicely
+     formatted string, e.g. "10 minutes". If d occurs after now, return
+     "0 minutes".
+
+     Units used are years, months, weeks, days, hours, and minutes.
+-    Seconds and microseconds are ignored.  Up to two adjacent units will be
++    Seconds and microseconds are ignored. Up to `depth` adjacent units will be
+     displayed.  For example, "2 weeks, 3 days" and "1 year, 3 months" are
+     possible outputs, but "2 weeks, 3 hours" and "1 year, 5 days" are not.
+
+     `time_strings` is an optional dict of strings to replace the default
+     TIME_STRINGS dict.
+
++    `depth` is an optional integer to control the number of adjacent time
++    units returned.
++
+     Adapted from
+     https://web.archive.org/web/20060617175230/http://blog.natbat.co.uk/archive/2003/Jun/14/time_since
+     """
+     if time_strings is None:
+         time_strings = TIME_STRINGS
+-
++    if depth <= 0:
++        raise ValueError('depth must be greater than 0.')
+     # Convert datetime.date to datetime.datetime for comparison.
+     if not isinstance(d, datetime.datetime):
+         d = datetime.datetime(d.year, d.month, d.day)
+@@ -74,18 +78,24 @@ def timesince(d, now=None, reversed=False, time_strings=None):
+         count = since // seconds
+         if count != 0:
+             break
+-    result = avoid_wrapping(time_strings[name] % count)
+-    if i + 1 < len(TIMESINCE_CHUNKS):
+-        # Now get the second item
+-        seconds2, name2 = TIMESINCE_CHUNKS[i + 1]
+-        count2 = (since - (seconds * count)) // seconds2
+-        if count2 != 0:
+-            result += gettext(', ') + avoid_wrapping(time_strings[name2] % count2)
+-    return result
++    else:
++        return avoid_wrapping(time_strings['minute'] % 0)
++    result = []
++    current_depth = 0
++    while i < len(TIMESINCE_CHUNKS) and current_depth < depth:
++        seconds, name = TIMESINCE_CHUNKS[i]
++        count = since // seconds
++        if count == 0:
++            break
++        result.append(avoid_wrapping(time_strings[name] % count))
++        since -= seconds * count
++        current_depth += 1
++        i += 1
++    return gettext(', ').join(result)
+
+
+-def timeuntil(d, now=None, time_strings=None):
++def timeuntil(d, now=None, time_strings=None, depth=2):
+     """
+     Like timesince, but return a string measuring the time until the given time.
+     """
+-    return timesince(d, now, reversed=True, time_strings=time_strings)
++    return timesince(d, now, reversed=True, time_strings=time_strings, depth=depth)
+
+</patch>
+
+--------------------------------------------------
+analyze
+CoT and code are inconsistent
+The CoT step is correct, but there are problems with the code implementation, such as the unnecessary def timeuntil(d, now=None, time_strings=None), as well as parameter order swap in the timesince method, etc.
+
+text:
+<issue>
+Custom collations
+Description
+
+		(last modified by Tom Carrick)
+
+Mailing list, but it didn't get any responses: ​https://groups.google.com/u/2/g/django-developers/c/djMQwwxtCVY
+We have the various CI fields on postgres, but these are ​discouraged since pg12 in favour of ​nondeterministic collations. I think it'd be useful to have a way to do this in Django, though I'm not sure what the API would look like. My initial thought, knowing very little about the ORM, is a Collation class that can be passed into a model field, but I'm not sure.
+​PR
+
+</issue>
+
+steps:
+1. **Modify `django/db/models/fields/__init__.py`**: Add the `db_collation` parameter to the `Field` class's `__init__` method and store it as an attribute. This will allow users to specify a collation when defining model fields.
+2. **Modify `django/db/backends/postgresql/schema.py`**: In the `DatabaseSchemaEditor` class, within the `column_sql` method, add logic to include a `COLLATE` clause in the column definition when `field.db_collation` is set. This will ensure that the specified collation is applied when creating columns in PostgreSQL databases.
+3. **Create a new test case in `tests/backends/postgresql/test_schema.py`**: Add a test class named `SchemaEditorCollationTests` in the `postgresql` schema test file. This class will contain test methods specifically for testing collation-related schema operations.
+4. **Add a test method `test_add_field_db_collation` to the new test case**: This test method will define a model with a `CharField` that has the `db_collation` option set. It will then use `SchemaEditor` to add this field to a table in a test database.
+5. **Within the test method, assert that the generated SQL for adding the column includes the `COLLATE` clause with the specified collation name**: This verifies that the schema editor correctly generates SQL to apply the custom collation to the database column.
+6. **Generate a patch file**: Use `git diff` to create a patch file containing the changes made to the files. This patch file can be applied to the Django codebase to implement the custom collation feature.
+model_patch:
+
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -151,6 +151,7 @@
+         self.db_tablespace = db_tablespace
+         self.db_returning = db_returning
+         self.default_attributes = field_defaults
++        self.db_collation = db_collation
+
+     @cached_property
+     def model(self):
+@@ -285,6 +286,7 @@
+             'db_tablespace',
+             'db_returning',
+             'default_attributes',
++            'db_collation',
+         ))
+
+     def deconstruct(self):
+--- a/django/db/backends/postgresql/schema.py
++++ b/django/db/backends/postgresql/schema.py
+@@ -213,6 +213,9 @@
+         if field.db_tablespace:
+             sql += " %s" % self.connection.ops.tablespace_sql(field.db_tablespace)
+
++        if field.db_collation:
++            sql += " COLLATE %s" % self.quote_name(field.db_collation)
++
+         if field.primary_key:
+             sql += " PRIMARY KEY"
+         elif field.unique:
+--- a/tests/backends/postgresql/test_schema.py
++++ b/tests/backends/postgresql/test_schema.py
+@@ -1,5 +1,6 @@
+ from django.db import connection, models, transaction
+ from django.db.backends.base.features import BaseDatabaseFeatures
++from django.db.backends.postgresql.features import DatabaseFeatures as PostgresFeatures
+ from django.db.migrations importAddField,CreateModel
+ from django.db.migrations.executor import MigrationExecutor
+ from django.db.models import fields
+@@ -505,3 +506,21 @@
+             self.assertIn(constraint.create_sql(model, self.editor), sqls)
+             self.assertIn(constraint.remove_sql(model, self.editor), sqls)
+
++@unittest.skipUnless(PostgresFeatures.supports_collation_deterministic, "Needs deterministic collations")
++class SchemaEditorCollationTests(SchemaEditorTests, unittest.TestCase):
++
++    def test_add_field_db_collation(self):
++        """
++        Test adding a field with db_collation creates a column with the
++        specified collation.
++        """
++        model_name = 'PModel'
++        model = self.make_model(model_name, {'f': models.CharField(max_length=20, db_collation='und-x-icu')})
++        field = model._meta.get_field('f')
++        with connection.schema_editor(collect_sql=True) as editor:
++            editor.add_field(model, field)
++        self.assertEqual(len(editor.collected_sql), 1)
++        sql = editor.collected_sql[0]
++        expected_collation = 'COLLATE "und-x-icu"'
++        self.assertIn(expected_collation, sql)
++
+--- a/docs/conf.py
++++ b/docs/conf.py
+@@ -86,7 +86,7 @@
+  # The short X.Y version.
+  version = '3.2'
+  # The full version, including alpha/beta/rc tags.
+- try:
++ try:  # pragma: nocover
+      from django import VERSION, get_version
+  except ImportError:
+      release = version
+--- a/docs/ref/models/fields.txt
++++ b/docs/ref/models/fields.txt
+@@ -193,6 +193,14 @@
+     ``DEFAULT_TABLESPACE`` setting is used, if one is set. If the backend
+     doesn't support tablespaces, this option is ignored.
+
++.. attribute:: Field.db_collation
++
++    The database collation name.
++
++    The collation is database-specific. On PostgreSQL, it corresponds to `the
++    collation <https://www.postgresql.org/docs/current/collation.html>`__
++    database parameter. Collation names are quoted, as in ``COLLATE "collation_name"``.
++
+ .. attribute:: Field.db_returning
+
+     Only used for :meth:`~django.db.models.query.QuerySet.insert`,
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/commands/inspectdb.py b/django/core/management/commands/inspectdb.py
+--- a/django/core/management/commands/inspectdb.py
++++ b/django/core/management/commands/inspectdb.py
+@@ -247,6 +247,9 @@ def get_field_type(self, connection, table_name, row):
+         if field_type == 'CharField' and row.internal_size:
+             field_params['max_length'] = int(row.internal_size)
+
++        if field_type in {'CharField', 'TextField'} and row.collation:
++            field_params['db_collation'] = row.collation
++
+         if field_type == 'DecimalField':
+             if row.precision is None or row.scale is None:
+                 field_notes.append(
+diff --git a/django/db/backends/base/features.py b/django/db/backends/base/features.py
+--- a/django/db/backends/base/features.py
++++ b/django/db/backends/base/features.py
+@@ -302,10 +302,17 @@ class BaseDatabaseFeatures:
+     # {'d': [{'f': 'g'}]}?
+     json_key_contains_list_matching_requires_list = False
+
++    # Does the backend support column collations?
++    supports_collation_on_charfield = True
++    supports_collation_on_textfield = True
++    # Does the backend support non-deterministic collations?
++    supports_non_deterministic_collations = True
++
+     # Collation names for use by the Django test suite.
+     test_collations = {
+         'ci': None,  # Case-insensitive.
+         'cs': None,  # Case-sensitive.
++        'non_default': None,  # Non-default.
+         'swedish_ci': None  # Swedish case-insensitive.
+     }
+
+diff --git a/django/db/backends/base/introspection.py b/django/db/backends/base/introspection.py
+--- a/django/db/backends/base/introspection.py
++++ b/django/db/backends/base/introspection.py
+@@ -4,7 +4,11 @@
+ TableInfo = namedtuple('TableInfo', ['name', 'type'])
+
+ # Structure returned by the DB-API cursor.description interface (PEP 249)
+-FieldInfo = namedtuple('FieldInfo', 'name type_code display_size internal_size precision scale null_ok default')
++FieldInfo = namedtuple(
++    'FieldInfo',
++    'name type_code display_size internal_size precision scale null_ok '
++    'default collation'
++)
+
+
+ class BaseDatabaseIntrospection:
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -61,6 +61,7 @@ class BaseDatabaseSchemaEditor:
+     sql_alter_column_not_null = "ALTER COLUMN %(column)s SET NOT NULL"
+     sql_alter_column_default = "ALTER COLUMN %(column)s SET DEFAULT %(default)s"
+     sql_alter_column_no_default = "ALTER COLUMN %(column)s DROP DEFAULT"
++    sql_alter_column_collate = "ALTER COLUMN %(column)s TYPE %(type)s%(collation)s"
+     sql_delete_column = "ALTER TABLE %(table)s DROP COLUMN %(column)s CASCADE"
+     sql_rename_column = "ALTER TABLE %(table)s RENAME COLUMN %(old_column)s TO %(new_column)s"
+     sql_update_with_default = "UPDATE %(table)s SET %(column)s = %(default)s WHERE %(column)s IS NULL"
+@@ -215,6 +216,10 @@ def column_sql(self, model, field, include_default=False):
+         # Check for fields that aren't actually columns (e.g. M2M)
+         if sql is None:
+             return None, None
++        # Collation.
++        collation = getattr(field, 'db_collation', None)
++        if collation:
++            sql += self._collate_sql(collation)
+         # Work out nullability
+         null = field.null
+         # If we were told to include a default value, do so
+@@ -676,8 +681,15 @@ def _alter_field(self, model, old_field, new_field, old_type, new_type,
+         actions = []
+         null_actions = []
+         post_actions = []
++        # Collation change?
++        old_collation = getattr(old_field, 'db_collation', None)
++        new_collation = getattr(new_field, 'db_collation', None)
++        if old_collation != new_collation:
++            # Collation change handles also a type change.
++            fragment = self._alter_column_collation_sql(model, new_field, new_type, new_collation)
++            actions.append(fragment)
+         # Type change?
+-        if old_type != new_type:
++        elif old_type != new_type:
+             fragment, other_actions = self._alter_column_type_sql(model, old_field, new_field, new_type)
+             actions.append(fragment)
+             post_actions.extend(other_actions)
+@@ -895,6 +907,16 @@ def _alter_column_type_sql(self, model, old_field, new_field, new_type):
+             [],
+         )
+
++    def _alter_column_collation_sql(self, model, new_field, new_type, new_collation):
++        return (
++            self.sql_alter_column_collate % {
++                'column': self.quote_name(new_field.column),
++                'type': new_type,
++                'collation': self._collate_sql(new_collation) if new_collation else '',
++            },
++            [],
++        )
++
+     def _alter_many_to_many(self, model, old_field, new_field, strict):
+         """Alter M2Ms to repoint their to= endpoints."""
+         # Rename the through table
+@@ -1274,6 +1296,9 @@ def _create_primary_key_sql(self, model, field):
+     def _delete_primary_key_sql(self, model, name):
+         return self._delete_constraint_sql(self.sql_delete_pk, model, name)
+
++    def _collate_sql(self, collation):
++        return ' COLLATE ' + self.quote_name(collation)
++
+     def remove_procedure(self, procedure_name, param_types=()):
+         sql = self.sql_delete_procedure % {
+             'procedure': self.quote_name(procedure_name),
+diff --git a/django/db/backends/mysql/features.py b/django/db/backends/mysql/features.py
+--- a/django/db/backends/mysql/features.py
++++ b/django/db/backends/mysql/features.py
+@@ -46,6 +46,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     order_by_nulls_first = True
+     test_collations = {
+         'ci': 'utf8_general_ci',
++        'non_default': 'utf8_esperanto_ci',
+         'swedish_ci': 'utf8_swedish_ci',
+     }
+
+diff --git a/django/db/backends/mysql/introspection.py b/django/db/backends/mysql/introspection.py
+--- a/django/db/backends/mysql/introspection.py
++++ b/django/db/backends/mysql/introspection.py
+@@ -10,7 +10,11 @@
+ from django.utils.datastructures import OrderedSet
+
+ FieldInfo = namedtuple('FieldInfo', BaseFieldInfo._fields + ('extra', 'is_unsigned', 'has_json_constraint'))
+-InfoLine = namedtuple('InfoLine', 'col_name data_type max_len num_prec num_scale extra column_default is_unsigned')
++InfoLine = namedtuple(
++    'InfoLine',
++    'col_name data_type max_len num_prec num_scale extra column_default '
++    'collation is_unsigned'
++)
+
+
+ class DatabaseIntrospection(BaseDatabaseIntrospection):
+@@ -84,6 +88,15 @@ def get_table_description(self, cursor, table_name):
+                     c.constraint_schema = DATABASE()
+             """, [table_name])
+             json_constraints = {row[0] for row in cursor.fetchall()}
++        # A default collation for the given table.
++        cursor.execute("""
++            SELECT  table_collation
++            FROM    information_schema.tables
++            WHERE   table_schema = DATABASE()
++            AND     table_name = %s
++        """, [table_name])
++        row = cursor.fetchone()
++        default_column_collation = row[0] if row else ''
+         # information_schema database gives more accurate results for some figures:
+         # - varchar length returned by cursor.description is an internal length,
+         #   not visible length (#5725)
+@@ -93,12 +106,17 @@ def get_table_description(self, cursor, table_name):
+             SELECT
+                 column_name, data_type, character_maximum_length,
+                 numeric_precision, numeric_scale, extra, column_default,
++                CASE
++                    WHEN collation_name = %s THEN NULL
++                    ELSE collation_name
++                END AS collation_name,
+                 CASE
+                     WHEN column_type LIKE '%% unsigned' THEN 1
+                     ELSE 0
+                 END AS is_unsigned
+             FROM information_schema.columns
+-            WHERE table_name = %s AND table_schema = DATABASE()""", [table_name])
++            WHERE table_name = %s AND table_schema = DATABASE()
++        """, [default_column_collation, table_name])
+         field_info = {line[0]: InfoLine(*line) for line in cursor.fetchall()}
+
+         cursor.execute("SELECT * FROM %s LIMIT 1" % self.connection.ops.quote_name(table_name))
+@@ -116,6 +134,7 @@ def to_int(i):
+                 to_int(info.num_scale) or line[5],
+                 line[6],
+                 info.column_default,
++                info.collation,
+                 info.extra,
+                 info.is_unsigned,
+                 line[0] in json_constraints,
+diff --git a/django/db/backends/mysql/schema.py b/django/db/backends/mysql/schema.py
+--- a/django/db/backends/mysql/schema.py
++++ b/django/db/backends/mysql/schema.py
+@@ -9,6 +9,7 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+     sql_alter_column_null = "MODIFY %(column)s %(type)s NULL"
+     sql_alter_column_not_null = "MODIFY %(column)s %(type)s NOT NULL"
+     sql_alter_column_type = "MODIFY %(column)s %(type)s"
++    sql_alter_column_collate = "MODIFY %(column)s %(type)s%(collation)s"
+
+     # No 'CASCADE' which works as a no-op in MySQL but is undocumented
+     sql_delete_column = "ALTER TABLE %(table)s DROP COLUMN %(column)s"
+diff --git a/django/db/backends/oracle/features.py b/django/db/backends/oracle/features.py
+--- a/django/db/backends/oracle/features.py
++++ b/django/db/backends/oracle/features.py
+@@ -1,4 +1,4 @@
+-from django.db import InterfaceError
++from django.db import DatabaseError, InterfaceError
+ from django.db.backends.base.features import BaseDatabaseFeatures
+ from django.utils.functional import cached_property
+
+@@ -61,9 +61,11 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     supports_boolean_expr_in_select_clause = False
+     supports_primitives_in_json_field = False
+     supports_json_field_contains = False
++    supports_collation_on_textfield = False
+     test_collations = {
+         'ci': 'BINARY_CI',
+         'cs': 'BINARY',
++        'non_default': 'SWEDISH_CI',
+         'swedish_ci': 'SWEDISH_CI',
+     }
+
+@@ -78,3 +80,14 @@ def introspected_field_types(self):
+             'SmallIntegerField': 'IntegerField',
+             'TimeField': 'DateTimeField',
+         }
++
++    @cached_property
++    def supports_collation_on_charfield(self):
++        with self.connection.cursor() as cursor:
++            try:
++                cursor.execute("SELECT CAST('a' AS VARCHAR2(4001)) FROM dual")
++            except DatabaseError as e:
++                if e.args[0].code == 910:
++                    return False
++                raise
++            return True
+diff --git a/django/db/backends/oracle/introspection.py b/django/db/backends/oracle/introspection.py
+--- a/django/db/backends/oracle/introspection.py
++++ b/django/db/backends/oracle/introspection.py
+@@ -95,14 +95,20 @@ def get_table_description(self, cursor, table_name):
+         # user_tab_columns gives data default for columns
+         cursor.execute("""
+             SELECT
+-                column_name,
+-                data_default,
++                user_tab_cols.column_name,
++                user_tab_cols.data_default,
+                 CASE
+-                    WHEN char_used IS NULL THEN data_length
+-                    ELSE char_length
++                    WHEN user_tab_cols.collation = user_tables.default_collation
++                    THEN NULL
++                    ELSE user_tab_cols.collation
++                END collation,
++                CASE
++                    WHEN user_tab_cols.char_used IS NULL
++                    THEN user_tab_cols.data_length
++                    ELSE user_tab_cols.char_length
+                 END as internal_size,
+                 CASE
+-                    WHEN identity_column = 'YES' THEN 1
++                    WHEN user_tab_cols.identity_column = 'YES' THEN 1
+                     ELSE 0
+                 END as is_autofield,
+                 CASE
+@@ -117,10 +123,13 @@ def get_table_description(self, cursor, table_name):
+                     ELSE 0
+                 END as is_json
+             FROM user_tab_cols
+-            WHERE table_name = UPPER(%s)""", [table_name])
++            LEFT OUTER JOIN
++                user_tables ON user_tables.table_name = user_tab_cols.table_name
++            WHERE user_tab_cols.table_name = UPPER(%s)
++        """, [table_name])
+         field_map = {
+-            column: (internal_size, default if default != 'NULL' else None, is_autofield, is_json)
+-            for column, default, internal_size, is_autofield, is_json in cursor.fetchall()
++            column: (internal_size, default if default != 'NULL' else None, collation, is_autofield, is_json)
++            for column, default, collation, internal_size, is_autofield, is_json in cursor.fetchall()
+         }
+         self.cache_bust_counter += 1
+         cursor.execute("SELECT * FROM {} WHERE ROWNUM < 2 AND {} > 0".format(
+@@ -129,11 +138,11 @@ def get_table_description(self, cursor, table_name):
+         description = []
+         for desc in cursor.description:
+             name = desc[0]
+-            internal_size, default, is_autofield, is_json = field_map[name]
++            internal_size, default, collation, is_autofield, is_json = field_map[name]
+             name = name % {}  # cx_Oracle, for some reason, doubles percent signs.
+             description.append(FieldInfo(
+                 self.identifier_converter(name), *desc[1:3], internal_size, desc[4] or 0,
+-                desc[5] or 0, *desc[6:], default, is_autofield, is_json,
++                desc[5] or 0, *desc[6:], default, collation, is_autofield, is_json,
+             ))
+         return description
+
+diff --git a/django/db/backends/oracle/schema.py b/django/db/backends/oracle/schema.py
+--- a/django/db/backends/oracle/schema.py
++++ b/django/db/backends/oracle/schema.py
+@@ -14,6 +14,8 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+     sql_alter_column_not_null = "MODIFY %(column)s NOT NULL"
+     sql_alter_column_default = "MODIFY %(column)s DEFAULT %(default)s"
+     sql_alter_column_no_default = "MODIFY %(column)s DEFAULT NULL"
++    sql_alter_column_collate = "MODIFY %(column)s %(type)s%(collation)s"
++
+     sql_delete_column = "ALTER TABLE %(table)s DROP COLUMN %(column)s"
+     sql_create_column_inline_fk = 'CONSTRAINT %(name)s REFERENCES %(to_table)s(%(to_column)s)%(deferrable)s'
+     sql_delete_table = "DROP TABLE %(table)s CASCADE CONSTRAINTS"
+@@ -181,3 +183,15 @@ def _drop_identity(self, table_name, column_name):
+             'table': self.quote_name(table_name),
+             'column': self.quote_name(column_name),
+         })
++
++    def _get_default_collation(self, table_name):
++        with self.connection.cursor() as cursor:
++            cursor.execute("""
++                SELECT default_collation FROM user_tables WHERE table_name = %s
++            """, [self.normalize_name(table_name)])
++            return cursor.fetchone()[0]
++
++    def _alter_column_collation_sql(self, model, new_field, new_type, new_collation):
++        if new_collation is None:
++            new_collation = self._get_default_collation(model._meta.db_table)
++        return super()._alter_column_collation_sql(model, new_field, new_type, new_collation)
+diff --git a/django/db/backends/postgresql/features.py b/django/db/backends/postgresql/features.py
+--- a/django/db/backends/postgresql/features.py
++++ b/django/db/backends/postgresql/features.py
+@@ -59,6 +59,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     has_json_operators = True
+     json_key_contains_list_matching_requires_list = True
+     test_collations = {
++        'non_default': 'sv-x-icu',
+         'swedish_ci': 'sv-x-icu',
+     }
+
+@@ -92,3 +93,4 @@ def is_postgresql_13(self):
+     supports_table_partitions = property(operator.attrgetter('is_postgresql_10'))
+     supports_covering_indexes = property(operator.attrgetter('is_postgresql_11'))
+     supports_covering_gist_indexes = property(operator.attrgetter('is_postgresql_12'))
++    supports_non_deterministic_collations = property(operator.attrgetter('is_postgresql_12'))
+diff --git a/django/db/backends/postgresql/introspection.py b/django/db/backends/postgresql/introspection.py
+--- a/django/db/backends/postgresql/introspection.py
++++ b/django/db/backends/postgresql/introspection.py
+@@ -69,9 +69,11 @@ def get_table_description(self, cursor, table_name):
+             SELECT
+                 a.attname AS column_name,
+                 NOT (a.attnotnull OR (t.typtype = 'd' AND t.typnotnull)) AS is_nullable,
+-                pg_get_expr(ad.adbin, ad.adrelid) AS column_default
++                pg_get_expr(ad.adbin, ad.adrelid) AS column_default,
++                CASE WHEN collname = 'default' THEN NULL ELSE collname END AS collation
+             FROM pg_attribute a
+             LEFT JOIN pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum
++            LEFT JOIN pg_collation co ON a.attcollation = co.oid
+             JOIN pg_type t ON a.atttypid = t.oid
+             JOIN pg_class c ON a.attrelid = c.oid
+             JOIN pg_namespace n ON c.relnamespace = n.oid
+diff --git a/django/db/backends/sqlite3/features.py b/django/db/backends/sqlite3/features.py
+--- a/django/db/backends/sqlite3/features.py
++++ b/django/db/backends/sqlite3/features.py
+@@ -47,6 +47,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     test_collations = {
+         'ci': 'nocase',
+         'cs': 'binary',
++        'non_default': 'nocase',
+     }
+
+     @cached_property
+diff --git a/django/db/backends/sqlite3/introspection.py b/django/db/backends/sqlite3/introspection.py
+--- a/django/db/backends/sqlite3/introspection.py
++++ b/django/db/backends/sqlite3/introspection.py
+@@ -84,6 +84,7 @@ def get_table_description(self, cursor, table_name):
+         """
+         cursor.execute('PRAGMA table_info(%s)' % self.connection.ops.quote_name(table_name))
+         table_info = cursor.fetchall()
++        collations = self._get_column_collations(cursor, table_name)
+         json_columns = set()
+         if self.connection.features.can_introspect_json_field:
+             for line in table_info:
+@@ -102,7 +103,7 @@ def get_table_description(self, cursor, table_name):
+         return [
+             FieldInfo(
+                 name, data_type, None, get_field_size(data_type), None, None,
+-                not notnull, default, pk == 1, name in json_columns
++                not notnull, default, collations.get(name), pk == 1, name in json_columns
+             )
+             for cid, name, data_type, notnull, default, pk in table_info
+         ]
+@@ -435,3 +436,27 @@ def get_constraints(self, cursor, table_name):
+             }
+         constraints.update(self._get_foreign_key_constraints(cursor, table_name))
+         return constraints
++
++    def _get_column_collations(self, cursor, table_name):
++        row = cursor.execute("""
++            SELECT sql
++            FROM sqlite_master
++            WHERE type = 'table' AND name = %s
++        """, [table_name]).fetchone()
++        if not row:
++            return {}
++
++        sql = row[0]
++        columns = str(sqlparse.parse(sql)[0][-1]).strip('()').split(', ')
++        collations = {}
++        for column in columns:
++            tokens = column[1:].split()
++            column_name = tokens[0].strip('"')
++            for index, token in enumerate(tokens):
++                if token == 'COLLATE':
++                    collation = tokens[index + 1]
++                    break
++            else:
++                collation = None
++            collations[column_name] = collation
++        return collations
+diff --git a/django/db/backends/sqlite3/schema.py b/django/db/backends/sqlite3/schema.py
+--- a/django/db/backends/sqlite3/schema.py
++++ b/django/db/backends/sqlite3/schema.py
+@@ -429,3 +429,6 @@ def remove_constraint(self, model, constraint):
+             super().remove_constraint(model, constraint)
+         else:
+             self._remake_table(model)
++
++    def _collate_sql(self, collation):
++        return ' COLLATE ' + collation
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -1002,13 +1002,16 @@ def formfield(self, **kwargs):
+ class CharField(Field):
+     description = _("String (up to %(max_length)s)")
+
+-    def __init__(self, *args, **kwargs):
++    def __init__(self, *args, db_collation=None, **kwargs):
+         super().__init__(*args, **kwargs)
++        self.db_collation = db_collation
+         self.validators.append(validators.MaxLengthValidator(self.max_length))
+
+     def check(self, **kwargs):
++        databases = kwargs.get('databases') or []
+         return [
+             *super().check(**kwargs),
++            *self._check_db_collation(databases),
+             *self._check_max_length_attribute(**kwargs),
+         ]
+
+@@ -1033,6 +1036,27 @@ def _check_max_length_attribute(self, **kwargs):
+         else:
+             return []
+
++    def _check_db_collation(self, databases):
++        errors = []
++        for db in databases:
++            if not router.allow_migrate_model(db, self.model):
++                continue
++            connection = connections[db]
++            if not (
++                self.db_collation is None or
++                'supports_collation_on_charfield' in self.model._meta.required_db_features or
++                connection.features.supports_collation_on_charfield
++            ):
++                errors.append(
++                    checks.Error(
++                        '%s does not support a database collation on '
++                        'CharFields.' % connection.display_name,
++                        obj=self,
++                        id='fields.E190',
++                    ),
++                )
++        return errors
++
+     def cast_db_type(self, connection):
+         if self.max_length is None:
+             return connection.ops.cast_char_field_without_max_length
+@@ -1061,6 +1085,12 @@ def formfield(self, **kwargs):
+         defaults.update(kwargs)
+         return super().formfield(**defaults)
+
++    def deconstruct(self):
++        name, path, args, kwargs = super().deconstruct()
++        if self.db_collation:
++            kwargs['db_collation'] = self.db_collation
++        return name, path, args, kwargs
++
+
+ class CommaSeparatedIntegerField(CharField):
+     default_validators = [validators.validate_comma_separated_integer_list]
+@@ -2074,6 +2104,38 @@ def get_internal_type(self):
+ class TextField(Field):
+     description = _("Text")
+
++    def __init__(self, *args, db_collation=None, **kwargs):
++        super().__init__(*args, **kwargs)
++        self.db_collation = db_collation
++
++    def check(self, **kwargs):
++        databases = kwargs.get('databases') or []
++        return [
++            *super().check(**kwargs),
++            *self._check_db_collation(databases),
++        ]
++
++    def _check_db_collation(self, databases):
++        errors = []
++        for db in databases:
++            if not router.allow_migrate_model(db, self.model):
++                continue
++            connection = connections[db]
++            if not (
++                self.db_collation is None or
++                'supports_collation_on_textfield' in self.model._meta.required_db_features or
++                connection.features.supports_collation_on_textfield
++            ):
++                errors.append(
++                    checks.Error(
++                        '%s does not support a database collation on '
++                        'TextFields.' % connection.display_name,
++                        obj=self,
++                        id='fields.E190',
++                    ),
++                )
++        return errors
++
+     def get_internal_type(self):
+         return "TextField"
+
+@@ -2096,6 +2158,12 @@ def formfield(self, **kwargs):
+             **kwargs,
+         })
+
++    def deconstruct(self):
++        name, path, args, kwargs = super().deconstruct()
++        if self.db_collation:
++            kwargs['db_collation'] = self.db_collation
++        return name, path, args, kwargs
++
+
+ class TimeField(DateTimeCheckMixin, Field):
+     empty_strings_allowed = False
+
+</patch>
+
+--------------------------------------------------
+analyze
+Prompt implementation details are unclear
+The description of Issue is not clear enough, too simple, and does not give specific requirements, making it difficult for the model to generate reasonable CoT steps based on the issue.
+text:
+<issue>
+Make validators include the provided value in ValidationError
+Description
+
+It is sometimes desirable to include the provide value in a custom error message. For example:
+“blah” is not a valid email.
+By making built-in validators provide value to ValidationError, one can override an error message and use a %(value)s placeholder.
+This placeholder value matches an example already in the docs:
+​https://docs.djangoproject.com/en/3.0/ref/validators/#writing-validators
+
+</issue>
+
+steps:
+
+1. Inspect the `django/contrib/auth/password_validation.py` file to identify the validator classes and their `validate` methods.
+2. Locate the instances where `ValidationError` is raised within the `validate` methods of `MinimumLengthValidator`, `UserAttributeSimilarityValidator`, `CommonPasswordValidator`, and `NumericPasswordValidator`.
+3. Modify each `ValidationError` instantiation to include the `password` value in the `params` dictionary. Specifically, add `params={'value': password}` to the `ValidationError` constructor.
+4. Update the error messages within each `ValidationError` to include the `%(value)s` placeholder to display the invalid password in the error message. Adapt the error messages to make grammatical sense with the included value.
+5. Generate a patch file containing the changes made to `django/contrib/auth/password_validation.py`. The patch should be in the unified diff format and suitable for use with `git apply`.
+
+model_patch:
+
+--- a/django/contrib/auth/password_validation.py
++++ b/django/contrib/auth/password_validation.py
+@@ -107,6 +107,7 @@
+                 ),
+                 code='password_too_short',
+                 params={'min_length': self.min_length},
++                params={'min_length': self.min_length, 'value': password},
+             )
+
+
+@@ -153,7 +154,7 @@
+                         verbose_name = attribute_name
+                     raise ValidationError(
+                         _("The password is too similar to the %(verbose_name)s."),
+-                        code='password_too_similar',
++                        code='password_too_similar', params={'verbose_name': verbose_name, 'value': password}
+                         params={'verbose_name': verbose_name},
+                     )
+
+@@ -185,7 +186,7 @@
+         if password.lower().strip() in self.passwords:
+             raise ValidationError(
+                 _("This password is too common."),
+-                code='password_too_common',
++                code='password_too_common', params={'value': password}
+             )
+
+
+@@ -199,7 +200,7 @@
+         if password.isdigit():
+             raise ValidationError(
+                 _("This password is entirely numeric."),
+-                code='password_entirely_numeric',
++                code='password_entirely_numeric', params={'value': password}
+             )
+
+         def get_help_text(self):
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/validators.py b/django/core/validators.py
+--- a/django/core/validators.py
++++ b/django/core/validators.py
+@@ -48,7 +48,7 @@ def __call__(self, value):
+         regex_matches = self.regex.search(str(value))
+         invalid_input = regex_matches if self.inverse_match else not regex_matches
+         if invalid_input:
+-            raise ValidationError(self.message, code=self.code)
++            raise ValidationError(self.message, code=self.code, params={'value': value})
+
+     def __eq__(self, other):
+         return (
+@@ -100,11 +100,11 @@ def __init__(self, schemes=None, **kwargs):
+
+     def __call__(self, value):
+         if not isinstance(value, str):
+-            raise ValidationError(self.message, code=self.code)
++            raise ValidationError(self.message, code=self.code, params={'value': value})
+         # Check if the scheme is valid.
+         scheme = value.split('://')[0].lower()
+         if scheme not in self.schemes:
+-            raise ValidationError(self.message, code=self.code)
++            raise ValidationError(self.message, code=self.code, params={'value': value})
+
+         # Then check full URL
+         try:
+@@ -115,7 +115,7 @@ def __call__(self, value):
+                 try:
+                     scheme, netloc, path, query, fragment = urlsplit(value)
+                 except ValueError:  # for example, "Invalid IPv6 URL"
+-                    raise ValidationError(self.message, code=self.code)
++                    raise ValidationError(self.message, code=self.code, params={'value': value})
+                 try:
+                     netloc = punycode(netloc)  # IDN -> ACE
+                 except UnicodeError:  # invalid domain part
+@@ -132,14 +132,14 @@ def __call__(self, value):
+                 try:
+                     validate_ipv6_address(potential_ip)
+                 except ValidationError:
+-                    raise ValidationError(self.message, code=self.code)
++                    raise ValidationError(self.message, code=self.code, params={'value': value})
+
+         # The maximum length of a full host name is 253 characters per RFC 1034
+         # section 3.1. It's defined to be 255 bytes or less, but this includes
+         # one byte for the length of the name and one byte for the trailing dot
+         # that's used to indicate absolute names in DNS.
+         if len(urlsplit(value).netloc) > 253:
+-            raise ValidationError(self.message, code=self.code)
++            raise ValidationError(self.message, code=self.code, params={'value': value})
+
+
+ integer_validator = RegexValidator(
+@@ -208,12 +208,12 @@ def __init__(self, message=None, code=None, allowlist=None, *, whitelist=None):
+
+     def __call__(self, value):
+         if not value or '@' not in value:
+-            raise ValidationError(self.message, code=self.code)
++            raise ValidationError(self.message, code=self.code, params={'value': value})
+
+         user_part, domain_part = value.rsplit('@', 1)
+
+         if not self.user_regex.match(user_part):
+-            raise ValidationError(self.message, code=self.code)
++            raise ValidationError(self.message, code=self.code, params={'value': value})
+
+         if (domain_part not in self.domain_allowlist and
+                 not self.validate_domain_part(domain_part)):
+@@ -225,7 +225,7 @@ def __call__(self, value):
+             else:
+                 if self.validate_domain_part(domain_part):
+                     return
+-            raise ValidationError(self.message, code=self.code)
++            raise ValidationError(self.message, code=self.code, params={'value': value})
+
+     def validate_domain_part(self, domain_part):
+         if self.domain_regex.match(domain_part):
+@@ -272,12 +272,12 @@ def validate_ipv4_address(value):
+     try:
+         ipaddress.IPv4Address(value)
+     except ValueError:
+-        raise ValidationError(_('Enter a valid IPv4 address.'), code='invalid')
++        raise ValidationError(_('Enter a valid IPv4 address.'), code='invalid', params={'value': value})
+
+
+ def validate_ipv6_address(value):
+     if not is_valid_ipv6_address(value):
+-        raise ValidationError(_('Enter a valid IPv6 address.'), code='invalid')
++        raise ValidationError(_('Enter a valid IPv6 address.'), code='invalid', params={'value': value})
+
+
+ def validate_ipv46_address(value):
+@@ -287,7 +287,7 @@ def validate_ipv46_address(value):
+         try:
+             validate_ipv6_address(value)
+         except ValidationError:
+-            raise ValidationError(_('Enter a valid IPv4 or IPv6 address.'), code='invalid')
++            raise ValidationError(_('Enter a valid IPv4 or IPv6 address.'), code='invalid', params={'value': value})
+
+
+ ip_address_validator_map = {
+@@ -438,7 +438,7 @@ def __init__(self, max_digits, decimal_places):
+     def __call__(self, value):
+         digit_tuple, exponent = value.as_tuple()[1:]
+         if exponent in {'F', 'n', 'N'}:
+-            raise ValidationError(self.messages['invalid'])
++            raise ValidationError(self.messages['invalid'], code='invalid', params={'value': value})
+         if exponent >= 0:
+             # A positive exponent adds that many trailing zeros.
+             digits = len(digit_tuple) + exponent
+@@ -460,20 +460,20 @@ def __call__(self, value):
+             raise ValidationError(
+                 self.messages['max_digits'],
+                 code='max_digits',
+-                params={'max': self.max_digits},
++                params={'max': self.max_digits, 'value': value},
+             )
+         if self.decimal_places is not None and decimals > self.decimal_places:
+             raise ValidationError(
+                 self.messages['max_decimal_places'],
+                 code='max_decimal_places',
+-                params={'max': self.decimal_places},
++                params={'max': self.decimal_places, 'value': value},
+             )
+         if (self.max_digits is not None and self.decimal_places is not None and
+                 whole_digits > (self.max_digits - self.decimal_places)):
+             raise ValidationError(
+                 self.messages['max_whole_digits'],
+                 code='max_whole_digits',
+-                params={'max': (self.max_digits - self.decimal_places)},
++                params={'max': (self.max_digits - self.decimal_places), 'value': value},
+             )
+
+     def __eq__(self, other):
+@@ -509,7 +509,8 @@ def __call__(self, value):
+                 code=self.code,
+                 params={
+                     'extension': extension,
+-                    'allowed_extensions': ', '.join(self.allowed_extensions)
++                    'allowed_extensions': ', '.join(self.allowed_extensions),
++                    'value': value,
+                 }
+             )
+
+@@ -550,7 +551,7 @@ def __init__(self, message=None, code=None):
+
+     def __call__(self, value):
+         if '\x00' in str(value):
+-            raise ValidationError(self.message, code=self.code)
++            raise ValidationError(self.message, code=self.code, params={'value': value})
+
+     def __eq__(self, other):
+         return (
+diff --git a/django/forms/fields.py b/django/forms/fields.py
+--- a/django/forms/fields.py
++++ b/django/forms/fields.py
+@@ -350,13 +350,6 @@ def to_python(self, value):
+             raise ValidationError(self.error_messages['invalid'], code='invalid')
+         return value
+
+-    def validate(self, value):
+-        super().validate(value)
+-        if value in self.empty_values:
+-            return
+-        if not value.is_finite():
+-            raise ValidationError(self.error_messages['invalid'], code='invalid')
+-
+     def widget_attrs(self, widget):
+         attrs = super().widget_attrs(widget)
+         if isinstance(widget, NumberInput) and 'step' not in widget.attrs:
+
+</patch>
+
+--------------------------------------------------
+analyze
+CoT and propt are inconsistent
+What Prompt needs is to improve the error message mechanism of the Django validator so that it contains the value that failed when throwing a ValidationError so that developers can use the value in a custom error message. Instead of outputting the wrong password when the user enters the password to issue an error in CoT. CoT is inconsistent with the propt requirements.
+text:
+<issue>
+Allow ValidationErrors to equal each other when created identically
+Description
+
+		(last modified by kamni)
+
+Currently ValidationErrors (django.core.exceptions.ValidationError) that have identical messages don't equal each other, which is counter-intuitive, and can make certain kinds of testing more complicated. Please add an __eq__ method that allows two ValidationErrors to be compared.
+Ideally, this would be more than just a simple self.messages == other.messages. It would be most helpful if the comparison were independent of the order in which errors were raised in a field or in non_field_errors.
+
+</issue>
+
+steps:
+1. Open the file `django/core/exceptions.py`.
+2. Locate the `ValidationError` class definition.
+3. Add the `__eq__` method to the `ValidationError` class.
+4. Implement the logic within the `__eq__` method to compare two `ValidationError` instances.
+   - Check if `other` is an instance of `ValidationError`. If not, return `False`.
+   - Handle cases where both instances have a simple `message` attribute. Compare `message`, `code`, and `params`.
+   - Handle cases where both instances have `error_list`. Extract messages from each error in the lists and compare the sets of messages.
+   - Handle cases where both instances have `error_dict`. Compare the keys (fields). For each field, extract messages from the error lists and compare the sets of messages.
+   - If the types of errors (message, error_list, error_dict) are different between the two instances, they are not equal.
+5. Save the changes to `django/core/exceptions.py`.
+6. Create a patch file containing the changes made to `django/core/exceptions.py`. This patch file will be used to apply the changes.
+model_patch:
+
+--- a/django/core/exceptions.py
++++ b/django/core/exceptions.py
+@@ -185,6 +185,45 @@
+      def __repr__(self):
+          return 'ValidationError(%s)' % self
+
++     def __eq__(self, other):
++         if not isinstance(other, ValidationError):
++             return False
++
++         if hasattr(self, 'message') and hasattr(other, 'message'):
++             return (
++                 self.message == other.message and
++                 self.code == other.code and
++                 self.params == other.params
++             )
++         if hasattr(self, 'error_list') and hasattr(other, 'error_list'):
++             if len(self.error_list) != len(other.error_list):
++                 return False
++             return sorted([
++                 (e.message, e.code, e.params) for e in self.error_list
++             ]) == sorted([
++                 (e.message, e.code, e.params) for e in other.error_list
++             ])
++
++         if hasattr(self, 'error_dict') and hasattr(other, 'error_dict'):
++             if set(self.error_dict.keys()) != set(other.error_dict.keys()):
++                 return False
++             for field in self.error_dict:
++                 if field not in other.error_dict:
++                     return False
++                 if len(self.error_dict[field]) != len(other.error_dict[field]):
++                     return False
++
++                 self_errors = sorted([(e.message, e.code, e.params) for e in self.error_dict[field]])
++                 other_errors = sorted([(e.message, e.code, e.params) for e in other.error_dict[field]])
++
++                 if self_errors != other_errors:
++                     return False
++            return True
++
++         return False
++
+
+  class EmptyResultSet(Exception):
+      """A database query predicate is impossible."""
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/exceptions.py b/django/core/exceptions.py
+--- a/django/core/exceptions.py
++++ b/django/core/exceptions.py
+@@ -1,6 +1,9 @@
+ """
+ Global Django exception and warning classes.
+ """
++import operator
++
++from django.utils.hashable import make_hashable
+
+
+ class FieldDoesNotExist(Exception):
+@@ -182,6 +185,23 @@ def __str__(self):
+     def __repr__(self):
+         return 'ValidationError(%s)' % self
+
++    def __eq__(self, other):
++        if not isinstance(other, ValidationError):
++            return NotImplemented
++        return hash(self) == hash(other)
++
++    def __hash__(self):
++        # Ignore params and messages ordering.
++        if hasattr(self, 'message'):
++            return hash((
++                self.message,
++                self.code,
++                tuple(sorted(make_hashable(self.params))) if self.params else None,
++            ))
++        if hasattr(self, 'error_dict'):
++            return hash(tuple(sorted(make_hashable(self.error_dict))))
++        return hash(tuple(sorted(self.error_list, key=operator.attrgetter('message'))))
++
+
+ class EmptyResultSet(Exception):
+     """A database query predicate is impossible."""
+
+</patch>
+
+--------------------------------------------------
+analyze
+Incomplete path coverage
+After rewriting __eq__, __hash__ must be rewrite at the same time, otherwise the objects' behavior in the set (such as set) or dictionary may be abnormal, which makes comparisons such as params.

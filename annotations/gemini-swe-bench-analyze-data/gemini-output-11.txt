@@ -1,0 +1,500 @@
+
+================================gemini==============================
+text:
+<issue>
+Allow calling reversed() on an OrderedSet
+Description
+
+Currently, ​OrderedSet isn't reversible (i.e. allowed to be passed as an argument to Python's ​reversed()). This would be natural to support given that OrderedSet is ordered. This should be straightforward to add by adding a __reversed__() method to OrderedSet.
+
+</issue>
+
+steps:
+
+1.  **Locate the `OrderedSet` class definition.** Although the provided code snippets do not include the `OrderedSet` class itself, based on Django's codebase and import statements in the provided files (`django/db/backends/mysql/introspection.py` and `django/db/models/options.py`), the `OrderedSet` class is located in `django/utils/datastructures.py`. We will assume this file exists and contains the `OrderedSet` implementation.
+2.  **Open the `django/utils/datastructures.py` file.**  We need to edit this file to add the `__reversed__` method to the `OrderedSet` class.
+3.  **Implement the `__reversed__` method within the `OrderedSet` class.**  The `__reversed__` method should return an iterator that yields the elements of the `OrderedSet` in reverse order. Assuming `OrderedSet` maintains its elements in a list called `_items`, we can use the built-in `reversed()` function on this list to create the reverse iterator. The method should look like this:
+
+    ```python
+    def __reversed__(self):
+        return reversed(self._items)
+    ```
+    or if `OrderedSet` is implemented differently, adapt the method to iterate in reverse order based on its internal data structure.
+4.  **Save the modified `django/utils/datastructures.py` file.**
+5.  **Create a patch file.** Use a diff tool (like `diff` in Unix-like systems or a Git diff) to compare the original `django/utils/datastructures.py` (before modification) with the modified version (after adding `__reversed__`). This will generate a patch file that represents the changes made.  The command `diff -u original_django/utils/datastructures.py modified_django/utils/datastructures.py` can be used to generate a unified diff.
+6.  **Format the patch file.**  Ensure the generated patch file is in the requested format:
+    *   Remove line numbers from the patch output.
+    *   Keep only the lines starting with `+`, `-`, or `@@`.
+    *   Enclose the entire patch content within `<patch> </patch>` tags.
+
+This process will create a patch file that adds the `__reversed__` method to the `OrderedSet` class, enabling the use of `reversed()` on `OrderedSet` instances in Django.
+
+model_patch:
+
+--- a/django/utils/datastructures.py
++++ b/django/utils/datastructures.py
+@@ -142,6 +142,9 @@
+     def __iter__(self):
+         return iter(self._items)
+
++    def __reversed__(self):
++        return reversed(self._items)
++
+     def clear(self):
+         self._items.clear()
+         self._map.clear()
+
+
+gold_patch:
+<patch>
+diff --git a/django/utils/datastructures.py b/django/utils/datastructures.py
+--- a/django/utils/datastructures.py
++++ b/django/utils/datastructures.py
+@@ -25,6 +25,9 @@ def discard(self, item):
+     def __iter__(self):
+         return iter(self.dict)
+
++    def __reversed__(self):
++        return reversed(self.dict)
++
+     def __contains__(self, item):
+         return item in self.dict
+
+
+</patch>
+
+--------------------------------------------------
+analyze
+text:
+<issue>
+Change automatic migration naming from date-based to operation-based
+Description
+
+Following #31468 and a ​discussion on django-developers with broad consensus, change the way migrations are automatically named from date-based to operation-based. That is never name migrations based upon the current date (auto_YYYYMMDD) and instead always based on the operations they contain, rather than the current behaviour which uses either style.
+
+</issue>
+
+steps:
+
+1. Open the file `django/db/migrations/migration.py`.
+2. Locate the `suggest_name` method within the `Migration` class.
+3. Identify the line within `suggest_name` that generates the date-based migration name: `name = 'auto_%s' % get_migration_name_timestamp()`.
+4. Modify this line to generate a generic operation-based name when no specific name can be derived from the operations. Change it to: `name = 'auto'`.
+5. Save the changes to `django/db/migrations/migration.py`.
+6. Create a patch file that captures these changes.
+
+model_patch:
+
+--- a/django/db/migrations/migration.py
++++ b/django/db/migrations/migration.py
+@@ -1,5 +1,4 @@
+ from django.db.migrations import operations
+-from django.db.migrations.utils import get_migration_name_timestamp
+ from django.db.transaction import atomic
+
+ from .exceptions import IrreversibleError
+@@ -197,7 +196,7 @@
+         ):
+             name = '_'.join(sorted(o.migration_name_fragment for o in self.operations))
+         if name is None:
+-            name = 'auto_%s' % get_migration_name_timestamp()
++            name = 'auto'
+         return name
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/migrations/migration.py b/django/db/migrations/migration.py
+--- a/django/db/migrations/migration.py
++++ b/django/db/migrations/migration.py
+@@ -1,4 +1,3 @@
+-from django.db.migrations import operations
+ from django.db.migrations.utils import get_migration_name_timestamp
+ from django.db.transaction import atomic
+
+@@ -186,16 +185,19 @@ def suggest_name(self):
+         if self.initial:
+             return 'initial'
+
+-        name = None
+-        if len(self.operations) == 1:
+-            name = self.operations[0].migration_name_fragment
+-        elif (
+-            len(self.operations) > 1 and
+-            all(isinstance(o, operations.CreateModel) for o in self.operations)
+-        ):
+-            name = '_'.join(sorted(o.migration_name_fragment for o in self.operations))
+-        if name is None:
+-            name = 'auto_%s' % get_migration_name_timestamp()
++        raw_fragments = [op.migration_name_fragment for op in self.operations]
++        fragments = [name for name in raw_fragments if name]
++
++        if not fragments or len(fragments) != len(self.operations):
++            return 'auto_%s' % get_migration_name_timestamp()
++
++        name = fragments[0]
++        for fragment in fragments[1:]:
++            new_name = f'{name}_{fragment}'
++            if len(new_name) > 52:
++                name = f'{name}_and_more'
++                break
++            name = new_name
+         return name
+
+
+
+</patch>
+
+--------------------------------------------------
+analyze
+……
+In many ways gold_patch adopts more complex strategies
+
+text:
+<issue>
+Add support for precision argument to Round
+Description
+
+Django's Round function currently only supports rounding to the nearest integer. If you need to round to a more specific precision you need to roll out your own solution.
+But as far as I can tell, all backends natively supported by Django support a second argument to Round:
+Postgres: ​https://www.postgresql.org/docs/12/functions-math.html#FUNCTIONS-MATH-FUNC-TABLE
+Sqlite: ​https://sqlite.org/lang_corefunc.html#round
+MySQL: ​https://dev.mysql.com/doc/refman/8.0/en/mathematical-functions.html#function_round
+Oracle: ​https://docs.oracle.com/cd/B19306_01/server.102/b14200/functions135.htm
+In my project (postgres only) my work around was to declare my own custom function:
+class Round(Func):
+	function = 'ROUND'
+	arity = 2
+But having this built-in would be quite useful.
+
+</issue>
+
+steps:
+
+1. Open the file `django/db/models/functions/math.py`.
+2. Modify the `Round` class to accept an optional `precision` argument in the `__init__` method. Store this argument as an instance attribute.
+3. Update the `as_sql` method in the `Round` class to include the precision argument in the SQL `ROUND` function call if the `precision` attribute is set. If `precision` is not set, the SQL `ROUND` function call should only have one argument (the expression to be rounded).
+4. Save the changes to `django/db/models/functions/math.py`.
+5. Create a patch file containing these changes.
+
+model_patch:
+
+--- a/django/db/models/functions/math.py
++++ b/django/db/models/functions/math.py
+@@ -161,9 +161,18 @@
+- class Round(Transform):
++ class Round(FixDecimalInputMixin, Transform):
+      function = 'ROUND'
+      lookup_name = 'round'
++
++    def __init__(self, expression, precision=0, **extra):
++        if not isinstance(precision, int):
++            raise ValueError('Precision must be an integer.')
++        super().__init__(expression, precision, **extra)
++
++    def as_sql(self, compiler, connection, **extra_context):
++        precision = self.get_source_expressions()[1]
++        return super().as_sql(compiler, connection, function=self.function, arity=2 if precision != 0 else 1, **extra_context)
+
+
+  class Sign(Transform):
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/sqlite3/features.py b/django/db/backends/sqlite3/features.py
+--- a/django/db/backends/sqlite3/features.py
++++ b/django/db/backends/sqlite3/features.py
+@@ -65,6 +65,12 @@ def django_test_skips(self):
+             "SQLite doesn't have a constraint.": {
+                 'model_fields.test_integerfield.PositiveIntegerFieldTests.test_negative_values',
+             },
++            "SQLite doesn't support negative precision for ROUND().": {
++                'db_functions.math.test_round.RoundTests.test_null_with_negative_precision',
++                'db_functions.math.test_round.RoundTests.test_decimal_with_negative_precision',
++                'db_functions.math.test_round.RoundTests.test_float_with_negative_precision',
++                'db_functions.math.test_round.RoundTests.test_integer_with_negative_precision',
++            },
+         }
+         if Database.sqlite_version_info < (3, 27):
+             skips.update({
+diff --git a/django/db/models/functions/math.py b/django/db/models/functions/math.py
+--- a/django/db/models/functions/math.py
++++ b/django/db/models/functions/math.py
+@@ -1,6 +1,6 @@
+ import math
+
+-from django.db.models.expressions import Func
++from django.db.models.expressions import Func, Value
+ from django.db.models.fields import FloatField, IntegerField
+ from django.db.models.functions import Cast
+ from django.db.models.functions.mixins import (
+@@ -158,9 +158,23 @@ def get_group_by_cols(self, alias=None):
+         return []
+
+
+-class Round(Transform):
++class Round(FixDecimalInputMixin, Transform):
+     function = 'ROUND'
+     lookup_name = 'round'
++    arity = None  # Override Transform's arity=1 to enable passing precision.
++
++    def __init__(self, expression, precision=0, **extra):
++        super().__init__(expression, precision, **extra)
++
++    def as_sqlite(self, compiler, connection, **extra_context):
++        precision = self.get_source_expressions()[1]
++        if isinstance(precision, Value) and precision.value < 0:
++            raise ValueError('SQLite does not support negative precision.')
++        return super().as_sqlite(compiler, connection, **extra_context)
++
++    def _resolve_output_field(self):
++        source = self.get_source_expressions()[0]
++        return source.output_field
+
+
+ class Sign(Transform):
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+The original issue did not explicitly specify that the accuracy parameter compatibility of different database backends needs to be handled (for example, SQLite does not support negative precision).
+It is mentioned only that "all backends support the second parameter", but it is not clear whether negative number accuracy is allowed (PostgreSQL allows, SQLite does not).
+No mention of the need to implement differentiated error handling for different databases (such as negative precision checks for SQLite in gold_patch).
+
+
+
+
+
+text:
+<issue>
+Allow autoreloading of `python -m custom_module runserver`
+Description
+
+		(last modified by Mariusz Felisiak)
+
+The original fix [1] only attempted to deal with -m foo.bar where bar is a package and __main__.py exists under foo/bar.
+When a dotted name for a module (for example, foo.bar.baz where baz.py resides under foo/bar) is specified like -m foo.bar.baz, the resulting arguments end up being -m foo.bar, which is uncalled for.
+[1] ​https://github.com/django/django/commit/ec6d2531c59466924b645f314ac33f54470d7ac3
+Fixed detection when started non-django modules with "python -m" in autoreloader.
+
+</issue>
+
+steps:
+1. Identify the relevant code in `django/utils/autoreload.py` responsible for constructing the child process arguments during autoreload, specifically the `get_child_arguments` function.
+2. Analyze the existing logic within `get_child_arguments` that handles the `-m` invocation, focusing on how it extracts and uses module names from `__main__.__spec__`.
+3. Recognize that the current code `args += ['-m', __main__.__spec__.parent]` in `get_child_arguments` is incorrectly using `__spec__.parent` which leads to truncation of dotted module names.
+4. Modify `get_child_arguments` to correctly reconstruct the full dotted module name by using `__main__.__spec__.name` and `__main__.__package__` if available, or just `__main__.__spec__.name` if `__main__.__package__` is not set.
+5. Update the code to use the reconstructed `module_name` in the arguments for the child process: `args += ['-m', module_name]`, ensuring the complete module path is passed.
+6. Generate a patch file containing the changes made to `django/utils/autoreload.py` using `git diff`.
+7. Test the generated patch by applying it to a Django project and verifying that autoreloading works correctly when running `python -m custom.module.path runserver`. Create a test case with a nested module structure to confirm the fix.
+model_patch:
+
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -226,9 +226,12 @@
+     # __spec__ is set when the server was started with the `-m` option,
+     # see https://docs.python.org/3/reference/import.html#main-spec
+     # __spec__ may not exist, e.g. when running in a Conda env.
+-    if getattr(__main__, '__spec__', None) is not None and __main__.__spec__.parent:
+-        args += ['-m', __main__.__spec__.parent]
+-        args += sys.argv[1:]
++    if getattr(__main__, '__spec__', None) is not None and __main__.__spec__.name:
++        if __main__.__package__:
++            module_name = f"{__main__.__package__}.{__main__.__spec__.name}"
++        else:
++            module_name = __main__.__spec__.name
++        args += ['-m', module_name] + sys.argv[1:]
+     elif not py_script.exists():
+         # sys.argv[0] may not exist for several reasons on Windows.
+         # It may exist with a .exe extension or have a -script.py suffix.
+
+
+gold_patch:
+<patch>
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -223,8 +223,13 @@ def get_child_arguments():
+     # __spec__ is set when the server was started with the `-m` option,
+     # see https://docs.python.org/3/reference/import.html#main-spec
+     # __spec__ may not exist, e.g. when running in a Conda env.
+-    if getattr(__main__, '__spec__', None) is not None and __main__.__spec__.parent:
+-        args += ['-m', __main__.__spec__.parent]
++    if getattr(__main__, '__spec__', None) is not None:
++        spec = __main__.__spec__
++        if (spec.name == '__main__' or spec.name.endswith('.__main__')) and spec.parent:
++            name = spec.parent
++        else:
++            name = spec.name
++        args += ['-m', name]
+         args += sys.argv[1:]
+     elif not py_script.exists():
+         # sys.argv[0] may not exist for several reasons on Windows.
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+Fuzzy exists:
+The original issue did not explicitly specify that the ** module needs to be processed as a scenario where __main__.py** in the package (i.e., the module in python -m package.module is a package containing __main__.py).
+Only the "truncation problem" is mentioned, but it is not clear that the difference between the ordinary module and the __main__.py in the package is not needed.
+
+
+text:
+<issue>
+Make Sitemap's protocol default to "https".
+Description
+
+I think it is time to change the default of Sitemap.protocol to https.
+​https://docs.djangoproject.com/en/3.1/ref/contrib/sitemaps/#django.contrib.sitemaps.Sitemap.protocol
+Of course slowly with a clear deprecation timeline.
+What do you think?
+
+</issue>
+
+steps:
+
+1. Open the file `django/contrib/sitemaps/__init__.py`.
+2. Locate the `Sitemap` class definition.
+3. Find the line `protocol = None` within the `Sitemap` class.
+4. Change this line to `protocol = "https"`.
+5. Save the changes to `django/contrib/sitemaps/__init__.py`.
+6. Generate a patch file using `diff -u` to compare the original file with the modified file.
+
+model_patch:
+
+--- a/django/contrib/sitemaps/__init__.py
++++ b/django/contrib/sitemaps/__init__.py
+@@ -58,7 +58,7 @@
+
+     # If protocol is None, the URLs in the sitemap will use the protocol
+     # with which the sitemap was requested.
+-    protocol = None
++    protocol = "https"
+
+     # Enables generating URLs for all languages.
+     i18n = False
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/sitemaps/__init__.py b/django/contrib/sitemaps/__init__.py
+--- a/django/contrib/sitemaps/__init__.py
++++ b/django/contrib/sitemaps/__init__.py
+@@ -1,3 +1,4 @@
++import warnings
+ from urllib.parse import urlencode
+ from urllib.request import urlopen
+
+@@ -7,6 +8,7 @@
+ from django.core.exceptions import ImproperlyConfigured
+ from django.urls import NoReverseMatch, reverse
+ from django.utils import translation
++from django.utils.deprecation import RemovedInDjango50Warning
+
+ PING_URL = "https://www.google.com/webmasters/tools/ping"
+
+@@ -122,6 +124,16 @@ def location(self, item):
+
+     def get_protocol(self, protocol=None):
+         # Determine protocol
++        if self.protocol is None and protocol is None:
++            warnings.warn(
++                "The default sitemap protocol will be changed from 'http' to "
++                "'https' in Django 5.0. Set Sitemap.protocol to silence this "
++                "warning.",
++                category=RemovedInDjango50Warning,
++                stacklevel=2,
++            )
++        # RemovedInDjango50Warning: when the deprecation ends, replace 'http'
++        # with 'https'.
+         return self.protocol or protocol or 'http'
+
+     def get_domain(self, site=None):
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+Prompt fuzzy --- Implementing details fuzzy --- Data level --- Default value processing fuzzy
+The original issue requires "gradual deprecation of the old default value", but it does not specify how to implement a compatibility transition (such as adding deprecation warnings and retaining the old behavior option).
+It only states "change the default value to https", but it does not state whether the old version compatibility logic needs to be preserved (such as step-by-step transition through warnings in gold_patch).
+
+
+text:
+<issue>
+adding support for self closing tags in syndication feeds
+Description
+
+the code for syndication feeds was written in a time where self closing tags didn't exist. but today, if an element has no text between the tags, the standard is that it should be a self closing tag. python added this functionality in 3.2 to XMLGenerator but django still doesn't use this in generating syndication feeds. this is the matter of passing a single argument to the SimplerXMLGenerator that django uses for generating feeds. since SimplerXMLGenerator directly inherits from pythons XMLGenrator, passing the arguments works with this class too .
+this is my attempt at making it right
+​https://github.com/django/django/pull/14451
+
+</issue>
+
+steps:
+1. Identify the file to modify: Based on the issue description and code context, the file to modify is `django/utils/feedgenerator.py`. This is where `SimplerXMLGenerator` is used to generate syndication feeds.
+2. Locate `SimplerXMLGenerator` instantiation: Find the lines in `django/utils/feedgenerator.py` where `SimplerXMLGenerator` is instantiated. These are within the `write` methods of `RssFeed` and `Atom1Feed` classes.
+3. Add `short_empty_elements` argument: Modify the instantiation of `SimplerXMLGenerator` in both `RssFeed.write` and `Atom1Feed.write` to include the `short_empty_elements=True` argument.
+4. Generate patch file: Create a patch file in the unified diff format that includes the changes made to `django/utils/feedgenerator.py`. The patch should omit line numbers and only include the diff content with `+` and `-` signs.
+
+model_patch:
+
+--- a/django/utils/feedgenerator.py
++++ b/django/utils/feedgenerator.py
+@@ -189,7 +189,7 @@
+      content_type = 'application/rss+xml; charset=utf-8'
+
+      def write(self, outfile, encoding):
+-         handler = SimplerXMLGenerator(outfile, encoding)
++         handler = SimplerXMLGenerator(outfile, encoding, short_empty_elements=True)
+          handler.startDocument()
+          handler.startElement("rss", self.rss_attributes())
+          handler.startElement("channel", self.root_attributes())
+@@ -297,7 +297,7 @@
+      ns = "http://www.w3.org/2005/Atom"
+
+      def write(self, outfile, encoding):
+-         handler = SimplerXMLGenerator(outfile, encoding)
++         handler = SimplerXMLGenerator(outfile, encoding, short_empty_elements=True)
+          handler.startDocument()
+          handler.startElement('feed', self.root_attributes())
+          self.add_root_elements(handler)
+
+
+gold_patch:
+<patch>
+diff --git a/django/utils/feedgenerator.py b/django/utils/feedgenerator.py
+--- a/django/utils/feedgenerator.py
++++ b/django/utils/feedgenerator.py
+@@ -187,7 +187,7 @@ class RssFeed(SyndicationFeed):
+     content_type = 'application/rss+xml; charset=utf-8'
+
+     def write(self, outfile, encoding):
+-        handler = SimplerXMLGenerator(outfile, encoding)
++        handler = SimplerXMLGenerator(outfile, encoding, short_empty_elements=True)
+         handler.startDocument()
+         handler.startElement("rss", self.rss_attributes())
+         handler.startElement("channel", self.root_attributes())
+@@ -296,7 +296,7 @@ class Atom1Feed(SyndicationFeed):
+     ns = "http://www.w3.org/2005/Atom"
+
+     def write(self, outfile, encoding):
+-        handler = SimplerXMLGenerator(outfile, encoding)
++        handler = SimplerXMLGenerator(outfile, encoding, short_empty_elements=True)
+         handler.startDocument()
+         handler.startElement('feed', self.root_attributes())
+         self.add_root_elements(handler)
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+
+

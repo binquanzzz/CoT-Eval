@@ -1,0 +1,32 @@
+
+Statistical results
+
+Id: django__django-13341
+analyze:
+
+The main reason is that in the TemplateView.get() method, the error patch calls self.get_context_data() directly, completely removing the kwargs pass. The correct patch should use self.get_context_data(**kwargs) to ensure that the URL keyword parameters can be correctly passed to the template context.
+
+Id: django__django-13363
+analyze:
+model_patch did not change the class definition part of TruncDate and TruncTime, and did not give a complete class definition for TruncDate and TruncTime. The problem was only fixed in the as_sql method.
+
+Id: django__django-13447
+analyze:
+CoT changed the access permissions of the method
+The modification of model_patch renames the _build_app_dict method to build_app_dict, and changes in access rights of the build_app_dict method may cause some functions to fail to work properly, especially in view rendering, data loading, etc.
+
+Id: django__django-13512
+analyze:
+Step 2 in CoT: Modify the json.dumps call: The fixing step clearly states that you want to modify the json.dumps call to add ensure_ascii=False parameter to prevent ASCII escaping. This is done in the rendering method of the Django form widget. It is not modified in model_patch.
+
+
+Id: django__django-13528
+analyze:
+The CoT logic is too simple, and the generated code sanitize_separators(value) cannot correctly personalize the formatted input required by propt.
+
+Id: django__django-13578
+analyze:
+model_patch changed the error message format of ValidationError
+Changes may cause the ValidationError to change the format of the error message, causing some tests that rely on the original error message to fail. Form.errors.as_text() may return error text containing line breaks or additional tags, causing the ValidationError message format to not meet expectations.
+
+

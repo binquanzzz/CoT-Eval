@@ -1,0 +1,480 @@
+
+==================== 62ece4992e6aefcf4aabbd83 ====================
+file_path: makeprojects/core.py
+project: burgerbecky/makeprojects
+name: run_command
+
+prompt:
+Call the given command(s).
+
+steps:
+1. Step 1: Construct the command list to be executed by `subprocess.Popen`. This involves combining the `commands` list and the `args` list into a single list.
+2. Step 2: Prepare the arguments for `subprocess.Popen`. This includes setting the `cwd` (current working directory), `env` (environment variables), `stdout` (standard output), and `stderr` (standard error) based on the function's input parameters.
+3. Step 3: Handle standard output and standard error streams. Set `stdout=subprocess.PIPE` to capture the standard output. For standard error, if `hide_stderr` is True, redirect it to `/dev/null` using `subprocess.DEVNULL`; otherwise, redirect it to `subprocess.PIPE` to capture it, or potentially leave it as default to inherit from the parent process. For simplicity and based on the problem description to return result (stdout and returncode), we will capture stderr as well and decide later if we want to hide it from the returned result, but in this case, 'hide\_stderr' seems to be more about suppressing the display during execution rather than in the return. Based on description and common practice, 'hide\_stderr' usually means to silence stderr output, thus redirecting to `subprocess.DEVNULL` if true and capturing it if false.
+4. Step 4: Execute the command using `subprocess.Popen`.
+5. Step 5: If `verbose` is True, print the command being executed before running it. Construct the command string from the list of command and args for printing.
+6. Step 6: Wait for the subprocess to complete and get the standard output, standard error, and return code. Use `process.communicate()` to get stdout and stderr, and `process.returncode` to get the return code.
+7. Step 7: Decode the standard output (and standard error if captured) from bytes to string, assuming UTF-8 encoding.
+8. Step 8: Return the standard output and the return code.
+
+generate_code:
+import subprocess
+import os
+
+def run_command(commands, args, cwd=None, verbose=False, hide_stderr=False, env=None):
+	"""
+	A list of command is given. Run the given command(s) with the given arguments use a subprocess. Return the running result (stdout and returncode)
+	"""
+	full_command = commands + args
+	if verbose:
+		print("Running command: {}".format(" ".join(full_command)))
+
+	process_env = os.environ.copy()
+	if env:
+		process_env.update(env)
+
+	stderr_dest = subprocess.DEVNULL if hide_stderr else subprocess.PIPE
+
+	process = subprocess.Popen(
+		full_command,
+		cwd=cwd,
+		env=process_env,
+		stdout=subprocess.PIPE,
+		stderr=stderr_dest
+	)
+	stdout, stderr_output = process.communicate()
+	returncode = process.returncode
+
+	decoded_stdout = stdout.decode('utf-8') if stdout else ""
+
+	return decoded_stdout, returncode
+
+
+==================== 62ece4992e6aefcf4aabbd87 ====================
+file_path: apphelpers/loggers.py
+project: scrolltech/apphelpers
+name: build_app_logger
+
+prompt:
+General purpose application logger. Useful mainly for debugging
+
+steps:
+1. Import the `logging` module, which is essential for logging functionalities in Python.
+2. Create a logger instance using `logging.getLogger(name)`. This creates or retrieves a logger with the specified name.
+3. Set the logging level. If the `debug` argument is True, set the logger level to `logging.DEBUG`. Otherwise, set it to `logging.INFO` to capture less verbose information.
+4. Create a file handler using `logging.FileHandler(logfile)` to direct log messages to the specified log file.
+5. Create a formatter using `logging.Formatter(...)` to define the format of log messages. Include elements like timestamp, logger name, log level, and the message itself.
+6. Add the formatter to the file handler using `file_handler.setFormatter(formatter)` to apply the defined format to the log entries written to the file.
+7. Add the file handler to the logger using `logger.addHandler(file_handler)` to instruct the logger to send its messages to the file handler, and thus to the log file.
+8. Return the configured logger object so it can be used to log messages throughout the application.
+
+generate_code:
+import logging
+
+def build_app_logger(name='app', logfile='app.log', debug=True):
+	"""
+	General purpose application logger. Useful mainly for debugging
+    Args:
+        name: The name of logger
+        logfile: The log file need to save
+        debug: is need to debug
+
+    Returns:
+        Returns an instantiated logger object
+	"""
+	logger = logging.getLogger(name)
+	if debug:
+		logger.setLevel(logging.DEBUG)
+	else:
+		logger.setLevel(logging.INFO)
+
+	file_handler = logging.FileHandler(logfile)
+	formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+	file_handler.setFormatter(formatter)
+	logger.addHandler(file_handler)
+
+	return logger
+
+
+==================== 62ece4992e6aefcf4aabbd89 ====================
+file_path: concert/tests/unit/devices/test_monochromator.py
+project: ufo-kit/concert
+name: gaussian
+
+prompt:
+Gaussian centered around 0.2 with a sigma of 0.1.
+
+steps:
+1. *   **Step 1**: Define the mean (mu) of the Gaussian distribution as 0.2.
+*   **Step 2**: Define the standard deviation (sigma) of the Gaussian distribution as 0.1.
+*   **Step 3**: Calculate the Gaussian function value using the formula:  `exp(-((x - mu)^2) / (2 * sigma^2)) / (sigma * sqrt(2 * pi))`
+*   **Step 4**: Return the calculated Gaussian value.
+
+generate_code:
+import numpy as np
+
+def gaussian(x):
+	"""
+	Calculate Gaussian centered with u is 0.2 and sigma is 0.1.
+	"""
+	mu = 0.2
+	sigma = 0.1
+	return np.exp(-((x - mu)**2) / (2 * sigma**2)) / (sigma * np.sqrt(2 * np.pi))
+
+
+
+==================== 62ece4992e6aefcf4aabbd8b ====================
+file_path: o2sclpy/utils.py
+project: awsteiner/o2sclpy
+name: force_string
+
+prompt:
+This function returns the bytes object corresponding to ``obj``
+in case it is a string using UTF-8. 
+
+steps:
+1.  Check if the input object `obj` is of type `bytes` or `numpy.bytes_`.
+2.  If it is, decode the object using UTF-8 encoding and return the resulting string.
+3.  If it is not, return the original object `obj` unchanged.
+
+generate_code:
+step
+1.  Check if the input object `obj` is of type `bytes` or `numpy.bytes_`.
+2.  If it is, decode the object using UTF-8 encoding and return the resulting string.
+3.  If it is not, return the original object `obj` unchanged.
+
+--------------------------------------------------
+
+==================== 62e60723d76274f8a4026b76 ====================
+file_path: neo4j/time/__init__.py
+project: neo4j/neo4j-python-driver
+name: from_ticks
+
+prompt:
+Create a time from ticks (nanoseconds since midnight).
+
+:param ticks: nanoseconds since midnight
+:type ticks: int
+:param tz: optional timezone
+:type tz: datetime.tzinfo
+
+:rtype: Time
+
+:raises ValueError: if ticks is out of bounds
+    (0 <= ticks < 86400000000000)
+
+steps:
+1. First, check if the input `ticks` is an integer. If not, raise a TypeError.
+2. Second, check if `ticks` is within the valid range, which is greater than or equal to 0 and strictly less than 86400000000000. If `ticks` is out of this range, raise a ValueError with a message indicating that ticks is out of bounds.
+3. Third, calculate the number of hours from `ticks`. Divide `ticks` by the number of nanoseconds in an hour (3600 * 10^9) and take the integer part.
+4. Fourth, calculate the remaining nanoseconds after extracting hours. Take the modulo of `ticks` with the number of nanoseconds in an hour (3600 * 10^9).
+5. Fifth, calculate the number of minutes from the remaining nanoseconds (from the previous step). Divide the remaining nanoseconds by the number of nanoseconds in a minute (60 * 10^9) and take the integer part.
+6. Sixth, calculate the remaining nanoseconds after extracting minutes. Take the modulo of the remaining nanoseconds (from step four) with the number of nanoseconds in a minute (60 * 10^9).
+7. Seventh, calculate the number of seconds from the remaining nanoseconds (from the previous step). Divide the remaining nanoseconds by the number of nanoseconds in a second (10^9) and take the integer part.
+8. Eighth, the remaining nanoseconds after extracting seconds is the nanosecond part. Take the modulo of the remaining nanoseconds (from step six) with the number of nanoseconds in a second (10^9).
+9. Ninth, create a `Time` object using the calculated hours, minutes, seconds, nanoseconds, and the provided timezone `tz`. Assume that the `Time` class is defined and accessible, and it has a constructor that accepts hour, minute, second, nanosecond, and tz as arguments.
+10. Tenth, return the created `Time` object.
+
+generate_code:
+HOURS_IN_DAY = 24
+	MINUTES_IN_HOUR = 60
+	SECONDS_IN_MINUTE = 60
+	NANOSECONDS_IN_SECOND = 1_000_000_000
+	NANOSECONDS_IN_MINUTE = NANOSECONDS_IN_SECOND * SECONDS_IN_MINUTE
+	NANOSECONDS_IN_HOUR = NANOSECONDS_IN_MINUTE * MINUTES_IN_HOUR
+	NANOSECONDS_IN_DAY = NANOSECONDS_IN_HOUR * HOURS_IN_DAY
+
+	if not isinstance(ticks, int):
+		raise TypeError("ticks must be an integer")
+	if not 0 <= ticks < NANOSECONDS_IN_DAY:
+		raise ValueError(
+			f"ticks must be in range [0, {NANOSECONDS_IN_DAY}), got {ticks}"
+		)
+
+	hours = ticks // NANOSECONDS_IN_HOUR
+	ticks %= NANOSECONDS_IN_HOUR
+	minutes = ticks // NANOSECONDS_IN_MINUTE
+	ticks %= NANOSECONDS_IN_MINUTE
+	seconds = ticks // NANOSECONDS_IN_SECOND
+	nanoseconds = ticks % NANOSECONDS_IN_SECOND
+
+	return cls(hour=hours, minute=minutes, second=seconds, nanosecond=nanoseconds, tz=tz)
+
+
+==================== 62e60873d76274f8a4026bd8 ====================
+file_path: neo4j/_async/io/_bolt.py
+project: neo4j/neo4j-python-driver
+name: protocol_handlers
+
+prompt:
+Return a dictionary of available Bolt protocol handlers,
+keyed by version tuple. If an explicit protocol version is
+provided, the dictionary will contain either zero or one items,
+depending on whether that version is supported. If no protocol
+version is provided, all available versions will be returned.
+
+:param protocol_version: tuple identifying a specific protocol
+    version (e.g. (3, 5)) or None
+:return: dictionary of version tuple to handler class for all
+    relevant and supported protocol versions
+:raise TypeError: if protocol version is not passed in a tuple
+
+steps:
+1. First, check if the provided `protocol_version` is not `None` and is not a tuple. If this condition is true, raise a `TypeError` indicating that the protocol version must be a tuple.
+2. Second, initialize an empty dictionary called `handlers` which will store the protocol handlers.
+3. Third, check if `protocol_version` is not `None`. This indicates that a specific protocol version is requested.
+4. Fourth, if a specific `protocol_version` is requested, check if this version exists in the class's supported protocol versions. Assume that the class `cls` has a class attribute named `VERSIONS` which is a dictionary where keys are version tuples and values are handler classes.
+5. Fifth, if the requested `protocol_version` exists in `cls.VERSIONS`, add it to the `handlers` dictionary. The key will be the `protocol_version` and the value will be the corresponding handler class from `cls.VERSIONS`.
+6. Sixth, if `protocol_version` is `None`, it means all available protocol versions are requested. In this case, iterate through all the items in `cls.VERSIONS` dictionary.
+7. Seventh, for each version and handler in `cls.VERSIONS`, add them to the `handlers` dictionary. The key will be the version tuple and the value will be the handler class.
+8. Eighth, finally, return the `handlers` dictionary.
+
+generate_code:
+if protocol_version is not None and not isinstance(protocol_version, tuple):
+		raise TypeError("Protocol version must be a tuple")
+
+	handlers = {}
+
+	if protocol_version is not None:
+		if protocol_version in cls.VERSIONS:
+			handlers[protocol_version] = cls.VERSIONS[protocol_version]
+	else:
+		handlers.update(cls.VERSIONS)
+
+	return handlers
+
+
+
+==================== 62e60e3bd76274f8a4026d1a ====================
+file_path: neo4j/api.py
+project: neo4j/neo4j-python-driver
+name: from_raw_values
+
+prompt:
+Create a Bookmarks object from a list of raw bookmark string values.
+
+You should not need to use this method unless you want to deserialize
+bookmarks.
+
+:param values: ASCII string values (raw bookmarks)
+:type values: Iterable[str]
+
+steps:
+1.  Initialize an empty list called `bookmarks` to store the created `Bookmark` objects.
+2.  Iterate through each `raw_value` in the input list `values`. This represents processing each raw bookmark string one by one.
+3.  For each `raw_value`, split the string into parts based on a delimiter. Let's assume the delimiter is a comma ",". This will separate the raw string into its constituent components (like URL, title, tags, etc.).
+4.  Extract the URL from the first part of the split string.
+5.  Extract the title from the second part of the split string.
+6.  Extract the tags from the remaining parts of the split string, if any. If there are more parts after URL and title, consider them as tags. Collect these tags into a list.
+7.  Create a `Bookmark` object using the extracted URL, title, and tags. Assume there is a `Bookmark` class available and its constructor accepts URL, title, and tags (as a list, which might be optional or could be None if no tags are present).
+8.  Append the newly created `Bookmark` object to the `bookmarks` list.
+9.  After processing all `raw_value` strings in the input `values` list, create a `Bookmarks` object using the accumulated list of `Bookmark` objects. Assume the `Bookmarks` class constructor takes a list of `Bookmark` objects as input.
+10. Return the created `Bookmarks` object.
+
+generate_code:
+bookmarks = []
+    for raw_value in values:
+        parts = raw_value.split(',')
+        url = parts[0]
+        title = parts[1]
+        tags = parts[2:] if len(parts) > 2 else []
+        bookmark = cls.bookmark_class(url=url, title=title, tags=tags) # Assuming bookmark_class is accessible from cls and Bookmark class constructor is like Bookmark(url, title, tags)
+        bookmarks.append(bookmark)
+    return cls(bookmarks) # Assuming Bookmarks class constructor is like Bookmarks(bookmarks)
+
+
+
+==================== 62b87b199a0c4fa8b80b354c ====================
+file_path: lena/core/split.py
+project: ynikitenko/lena
+name: _get_seq_with_type
+
+prompt:
+Return a (sequence, type) pair.
+Sequence is derived from *seq*
+(or is *seq*, if that is of a sequence type).
+
+steps:
+1. Check if the input `seq` is already a sequence type. Python's built-in sequence types include `list`, `tuple`, `str`, `bytes`, and `bytearray`. We can use `isinstance()` to check if `seq` belongs to any of these types.
+2.If `seq` is a sequence type, then the sequence to be returned is `seq` itself. Determine the type of `seq` using the `type()` function. The function should return a tuple `(seq, type(seq))`.
+3. If `seq` is not a sequence type, then it needs to be converted into a sequence. Convert `seq` into a list using `list(seq)`.
+4.Determine the type of the sequence obtained in the previous step. In the case of conversion, the type will be `list`.
+5.Return a tuple containing the sequence obtained in step 2 or step 3 and its type obtained in step 2 or step 4, i.e., `(sequence, type)`.
+
+```python
+def _get_seq_with_type(seq, bufsize=None):
+	"""
+	Return a (sequence, type) pair.
+Sequence is derived from *seq*
+(or is *seq*, if that is of a sequence type).
+	"""
+	if isinstance(seq, (list, tuple, str, bytes, bytearray)):
+		return seq, type(seq)
+	else:
+		seq_list = list(seq)
+		return seq_list, type(seq_list)
+```
+
+generate_code:
+def _get_seq_with_type(seq, bufsize=None):
+	"""
+	Return a (sequence, type) pair.
+Sequence is derived from *seq*
+(or is *seq*, if that is of a sequence type).
+	"""
+	if isinstance(seq, (list, tuple, str, bytes, bytearray)):
+		return seq, type(seq)
+	else:
+		seq_list = list(seq)
+		return seq_list, type(seq_list)
+
+
+
+==================== 62b87b4f9a0c4fa8b80b3581 ====================
+file_path: lena/structures/histogram.py
+project: ynikitenko/lena
+name: scale
+
+prompt:
+Compute or set scale (integral of the histogram).
+
+If *other* is ``None``, return scale of this histogram.
+If its scale was not computed before,
+it is computed and stored for subsequent use
+(unless explicitly asked to *recompute*).
+Note that after changing (filling) the histogram
+one must explicitly recompute the scale
+if it was computed before.
+
+If a float *other* is provided, rescale self to *other*.
+
+Histograms with scale equal to zero can't be rescaled.
+:exc:`.LenaValueError` is raised if one tries to do that.
+
+steps:
+1. Step 1: Check if the argument `other` is None. If it is None, proceed to handle the case of returning or computing the current scale of the histogram.
+2. Step 2: If `other` is None, check if the scale of the histogram has already been computed and stored. Assume there is an attribute, for instance `_scale`, to store the computed scale.
+3. Step 3: If the scale has not been computed yet or if the `recompute` flag is set to True, compute the scale. This is done by summing up the values of all bins in the histogram. Store the computed scale for future use, for example in the `_scale` attribute.
+4. Step 4: If the scale was already computed (and `recompute` is False), return the stored scale. If the scale was just computed in step 3, return the newly computed scale.
+5. Step 5: If `other` is not None (meaning a float value is provided for rescaling), first check if the current scale of the histogram is equal to zero. If it is zero, raise a `LenaValueError` as rescaling a histogram with zero scale is not allowed.
+6. Step 6: If the current scale is not zero, rescale the histogram to the new scale `other`. This involves multiplying each bin value by the ratio of the new scale to the current scale. After rescaling, update the stored scale to the new scale `other` and return None or self (returning None for simplicity here).
+7. Step 7: Import `LenaValueError` exception which should be raised in case of attempting to rescale a histogram with zero scale.
+
+generate_code:
+from lena.exceptions import LenaValueError
+
+def scale(self, other=None, recompute=False):
+	"""
+	Compute or set scale (integral of the histogram).
+
+If *other* is ``None``, return scale of this histogram.
+If its scale was not computed before,
+it is computed and stored for subsequent use
+(unless explicitly asked to *recompute*).
+Note that after changing (filling) the histogram
+one must explicitly recompute the scale
+if it was computed before.
+
+If a float *other* is provided, rescale self to *other*.
+
+Histograms with scale equal to zero can't be rescaled.
+:exc:`.LenaValueError` is raised if one tries to do that.
+	"""
+	if other is None:
+		if hasattr(self, "_scale") and not recompute:
+			return self._scale
+		else:
+			s = sum(bin_val for bin_val in self._bins) # Assuming self._bins is iterable of bin values
+			self._scale = s
+			return s
+	else:
+		if not isinstance(other, (int, float)):
+			raise LenaValueError("scale must be a number, not {}".format(other))
+		current_scale = self.scale() # Use the method itself to get current scale
+		if current_scale == 0:
+			raise LenaValueError("cannot rescale histogram with zero scale")
+		factor = float(other) / current_scale
+		for i in range(len(self._bins)): # Assuming self._bins is a list of bin values
+			self._bins[i] *= factor
+		self._scale = other
+		return None
+
+
+==================== 62b87b519a0c4fa8b80b3583 ====================
+file_path: lena/structures/graph.py
+project: ynikitenko/lena
+name: scale
+
+prompt:
+Get or set the scale of the graph.
+
+If *other* is ``None``, return the scale of this graph.
+
+If a numeric *other* is provided, rescale to that value.
+If the graph has unknown or zero scale,
+rescaling that will raise :exc:`~.LenaValueError`.
+
+To get meaningful results, graph's fields are used.
+Only the last coordinate is rescaled.
+For example, if the graph has *x* and *y* coordinates,
+then *y* will be rescaled, and for a 3-dimensional graph
+*z* will be rescaled.
+All errors are rescaled together with their coordinate.
+
+steps:
+1. Check if the `other` argument is None.
+2. If `other` is None, return the current scale of the graph, which is stored in `self._scale`.
+3. If `other` is not None, check if `other` is numeric (int or float). If not, raise a TypeError.
+4. Get the current scale from `self._scale`.
+5. Check if the current scale is None or equal to 0. If it is, raise a ValueError.
+6. Iterate through the coordinates in `self._coords`. For each coordinate tuple, convert it to a list, rescale the last element by multiplying it by `other / self._scale`, and convert it back to a tuple. Update the coordinate in `self._coords`.
+7. If `self._errors` is not None, iterate through the errors. For each error value, rescale it by multiplying it by `other / self._scale`. Update the error value in `self._errors`.
+8. Update the graph's scale to the new value `other`. Set `self._scale = other`.
+9. Return `self`.
+
+generate_code:
+def scale(self, other=None):
+        """
+        Get or set the scale of the graph.
+
+        If *other* is ``None``, return the scale of this graph.
+
+        If a numeric *other* is provided, rescale to that value.
+        If the graph has unknown or zero scale,
+        rescaling that will raise :exc:`~.LenaValueError`.
+
+        To get meaningful results, graph's fields are used.
+        Only the last coordinate is rescaled.
+        For example, if the graph has *x* and *y* coordinates,
+        then *y* will be rescaled, and for a 3-dimensional graph
+        *z* will be rescaled.
+        All errors are rescaled together with their coordinate.
+        """
+        if other is None:
+            return self._scale
+        if not isinstance(other, (int, float)):
+            raise TypeError("Scale factor must be a number")
+        current_scale = self._scale
+        if current_scale is None or current_scale == 0:
+            raise ValueError("Cannot rescale from unknown or zero scale")
+
+        rescale_factor = other / current_scale
+
+        new_coords = []
+        for coord in self._coords:
+            coord_list = list(coord)
+            coord_list[-1] *= rescale_factor
+            new_coords.append(tuple(coord_list))
+        self._coords = new_coords
+
+        if self._errors is not None:
+            new_errors = []
+            for error in self._errors:
+                new_errors.append(error * rescale_factor) # assuming errors are numeric
+            self._errors = new_errors
+
+        self._scale = other
+        return self
+
+The error code uses ValueError, and the correct code uses Lena.core.LenaValueError
+

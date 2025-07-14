@@ -1,0 +1,1617 @@
+text:
+<issue>
+Add the ability to define comments in table / columns
+Description
+
+		(last modified by Jared Chung)
+
+Database-level comments are valuable for database administrators, data analysts, data scientists, and others who are looking to consume data that is managed by Django. Most Django-supported databases also support table-level and column-level comments. This ticket would add functionality to Django to allow Django users to specify comments for syncdb manage.py to enter into the database.
+....
+....
+new proposal (kimsoungryoul : 2020.03.23)
+We will develop the code such as below
+class AModel(models.Model):
+	 aaa = model.CharField(help_text="i am help_text", db_column_comment="i am db_comment",~~~)
+
+	 class Meta:
+		 db_table = "a_model_example_name"
+		 db_table_comment ="this is a_model comment ~~~~"
+
+</issue>
+
+steps:
+
+1. **Identify Code Changes for Comment Support**
+    1.1 Review the provided code base to understand how model fields are created.
+    1.2 Determine where comments for tables and columns can be added, focusing on `Meta` class in models for table-level comments and `CharField` or other fields for column-level comments.
+
+2. **Add db_column_comment in Model Fields**
+    2.1 Modify the `CharField` and other relevant fields to include a `db_column_comment` argument.
+    2.2 This change will allow users to specify comments directly when defining fields in Django models, similar to how `help_text` works.
+    2.3 Ensure that any other relevant model fields (e.g., `IntegerField`, `DateField`) also support this comment feature.
+
+3. **Add db_table_comment to Model's Meta Class**
+    3.1 Modify the `Meta` class inside the model to include a `db_table_comment` attribute.
+    3.2 This will provide a way to add comments to the entire table in the database schema.
+    3.3 Ensure that the comment functionality is applied consistently across all models.
+
+4. **Modify Database Introspection for Comments**
+    4.1 Update database introspection logic to support fetching and outputting table and column comments.
+    4.2 Add the necessary logic to `inspectdb` to display comments when introspecting the database, so that they can be included when generating models via `manage.py inspectdb`.
+
+5. **Test Comment Integration**
+    5.1 Create unit tests to ensure that comments are correctly applied to models, both at the table and column level.
+    5.2 Ensure that the comments are visible in the generated SQL or when inspecting the database schema.
+
+6. **Update Documentation**
+    6.1 Update the project documentation to describe how to use the new `db_column_comment` and `db_table_comment` features in models.
+    6.2 Ensure that users are aware of how to apply comments and their benefits for database introspection and administration.
+
+
+model_patch:
+
+--- a/django/db/models/fields.py
++++ b/django/db/models/fields.py
+@@ -42,6 +42,7 @@ class CharField(Field):
+     def __init__(self, *args, db_column=None, db_column_comment=None, **kwargs):
+         super().__init__(*args, db_column=db_column, **kwargs)
+         self.db_column_comment = db_column_comment
+
+--- a/django/db/models/options.py
++++ b/django/db/models/options.py
+@@ -102,6 +102,7 @@ class Options:
+     def __init__(self, meta, app_label, model_name):
+         self.db_table_comment = getattr(meta, 'db_table_comment', None)
+         self.db_table = getattr(meta, 'db_table', None)
+         self.verbose_name = getattr(meta, 'verbose_name', None)
++        self.db_table_comment = getattr(meta, 'db_table_comment', None)
+
+--- a/django/core/management/commands/inspectdb.py
++++ b/django/core/management/commands/inspectdb.py
+@@ -98,6 +98,7 @@ class Command(BaseCommand):
+         with connection.cursor() as cursor:
+             yield "# This is an auto-generated Django model module."
+             yield "# You'll have to do the following manually to clean this up:"
+             yield "#   * Rearrange models' order"
+             yield "#   * Make sure each model has one field with primary_key=True"
++            yield "#   * Add table and column comments to your models."
+
+@@ -139,6 +140,10 @@ class Command(BaseCommand):
+                     is_relation = column_name in relations
+@@ -156,7 +160
+                         if column_name == primary_key_column:
+                             extra_params["primary_key"] = True
+                         if column_name == primary_key_column and self.db_column_comment:
+                             comment_notes.append("Primary key: %s" % self.db_column_comment)
+@@ -200,7 +202
+                         if self.db_column_comment:
+                             comment_notes.append("Column comment: %s" % self.db_column_comment)
+--- a/django/db/backends/oracle/operations.py
++++ b/django/db/backends/oracle/operations.py
+@@ -101,6 +101,7 @@ class DatabaseOperations(BaseDatabaseOperations):
+    def create_table_comment(self, table_name, table_comment):
+        if table_comment:
+            sql = f"COMMENT ON TABLE {table_name} IS '{table_comment}'"
+            return sql
+        return None
+
+    def add_column_comment(self, column_name, column_comment):
+        if column_comment:
+            sql = f"COMMENT ON COLUMN {column_name} IS '{column_comment}'"
+            return sql
+        return None
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/commands/inspectdb.py b/django/core/management/commands/inspectdb.py
+--- a/django/core/management/commands/inspectdb.py
++++ b/django/core/management/commands/inspectdb.py
+@@ -78,18 +78,16 @@ def table2model(table_name):
+             )
+             yield "from %s import models" % self.db_module
+             known_models = []
+-            table_info = connection.introspection.get_table_list(cursor)
+-
+             # Determine types of tables and/or views to be introspected.
+             types = {"t"}
+             if options["include_partitions"]:
+                 types.add("p")
+             if options["include_views"]:
+                 types.add("v")
++            table_info = connection.introspection.get_table_list(cursor)
++            table_info = {info.name: info for info in table_info if info.type in types}
+
+-            for table_name in options["table"] or sorted(
+-                info.name for info in table_info if info.type in types
+-            ):
++            for table_name in options["table"] or sorted(name for name in table_info):
+                 if table_name_filter is not None and callable(table_name_filter):
+                     if not table_name_filter(table_name):
+                         continue
+@@ -232,6 +230,10 @@ def table2model(table_name):
+                     if field_type.startswith(("ForeignKey(", "OneToOneField(")):
+                         field_desc += ", models.DO_NOTHING"
+
++                    # Add comment.
++                    if connection.features.supports_comments and row.comment:
++                        extra_params["db_comment"] = row.comment
++
+                     if extra_params:
+                         if not field_desc.endswith("("):
+                             field_desc += ", "
+@@ -242,14 +244,22 @@ def table2model(table_name):
+                     if comment_notes:
+                         field_desc += "  # " + " ".join(comment_notes)
+                     yield "    %s" % field_desc
+-                is_view = any(
+-                    info.name == table_name and info.type == "v" for info in table_info
+-                )
+-                is_partition = any(
+-                    info.name == table_name and info.type == "p" for info in table_info
+-                )
++                comment = None
++                if info := table_info.get(table_name):
++                    is_view = info.type == "v"
++                    is_partition = info.type == "p"
++                    if connection.features.supports_comments:
++                        comment = info.comment
++                else:
++                    is_view = False
++                    is_partition = False
+                 yield from self.get_meta(
+-                    table_name, constraints, column_to_field_name, is_view, is_partition
++                    table_name,
++                    constraints,
++                    column_to_field_name,
++                    is_view,
++                    is_partition,
++                    comment,
+                 )
+
+     def normalize_col_name(self, col_name, used_column_names, is_relation):
+@@ -353,7 +363,13 @@ def get_field_type(self, connection, table_name, row):
+         return field_type, field_params, field_notes
+
+     def get_meta(
+-        self, table_name, constraints, column_to_field_name, is_view, is_partition
++        self,
++        table_name,
++        constraints,
++        column_to_field_name,
++        is_view,
++        is_partition,
++        comment,
+     ):
+         """
+         Return a sequence comprising the lines of code necessary
+@@ -391,4 +407,6 @@ def get_meta(
+         if unique_together:
+             tup = "(" + ", ".join(unique_together) + ",)"
+             meta += ["        unique_together = %s" % tup]
++        if comment:
++            meta += [f"        db_table_comment = {comment!r}"]
+         return meta
+diff --git a/django/db/backends/base/features.py b/django/db/backends/base/features.py
+--- a/django/db/backends/base/features.py
++++ b/django/db/backends/base/features.py
+@@ -334,6 +334,11 @@ class BaseDatabaseFeatures:
+     # Does the backend support non-deterministic collations?
+     supports_non_deterministic_collations = True
+
++    # Does the backend support column and table comments?
++    supports_comments = False
++    # Does the backend support column comments in ADD COLUMN statements?
++    supports_comments_inline = False
++
+     # Does the backend support the logical XOR operator?
+     supports_logical_xor = False
+
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -141,6 +141,9 @@ class BaseDatabaseSchemaEditor:
+
+     sql_delete_procedure = "DROP PROCEDURE %(procedure)s"
+
++    sql_alter_table_comment = "COMMENT ON TABLE %(table)s IS %(comment)s"
++    sql_alter_column_comment = "COMMENT ON COLUMN %(table)s.%(column)s IS %(comment)s"
++
+     def __init__(self, connection, collect_sql=False, atomic=True):
+         self.connection = connection
+         self.collect_sql = collect_sql
+@@ -289,6 +292,8 @@ def _iter_column_sql(
+         yield column_db_type
+         if collation := field_db_params.get("collation"):
+             yield self._collate_sql(collation)
++        if self.connection.features.supports_comments_inline and field.db_comment:
++            yield self._comment_sql(field.db_comment)
+         # Work out nullability.
+         null = field.null
+         # Include a default value, if requested.
+@@ -445,6 +450,23 @@ def create_model(self, model):
+         # definition.
+         self.execute(sql, params or None)
+
++        if self.connection.features.supports_comments:
++            # Add table comment.
++            if model._meta.db_table_comment:
++                self.alter_db_table_comment(model, None, model._meta.db_table_comment)
++            # Add column comments.
++            if not self.connection.features.supports_comments_inline:
++                for field in model._meta.local_fields:
++                    if field.db_comment:
++                        field_db_params = field.db_parameters(
++                            connection=self.connection
++                        )
++                        field_type = field_db_params["type"]
++                        self.execute(
++                            *self._alter_column_comment_sql(
++                                model, field, field_type, field.db_comment
++                            )
++                        )
+         # Add any field index and index_together's (deferred as SQLite
+         # _remake_table needs it).
+         self.deferred_sql.extend(self._model_indexes_sql(model))
+@@ -614,6 +636,15 @@ def alter_db_table(self, model, old_db_table, new_db_table):
+             if isinstance(sql, Statement):
+                 sql.rename_table_references(old_db_table, new_db_table)
+
++    def alter_db_table_comment(self, model, old_db_table_comment, new_db_table_comment):
++        self.execute(
++            self.sql_alter_table_comment
++            % {
++                "table": self.quote_name(model._meta.db_table),
++                "comment": self.quote_value(new_db_table_comment or ""),
++            }
++        )
++
+     def alter_db_tablespace(self, model, old_db_tablespace, new_db_tablespace):
+         """Move a model's table between tablespaces."""
+         self.execute(
+@@ -693,6 +724,18 @@ def add_field(self, model, field):
+                 "changes": changes_sql,
+             }
+             self.execute(sql, params)
++        # Add field comment, if required.
++        if (
++            field.db_comment
++            and self.connection.features.supports_comments
++            and not self.connection.features.supports_comments_inline
++        ):
++            field_type = db_params["type"]
++            self.execute(
++                *self._alter_column_comment_sql(
++                    model, field, field_type, field.db_comment
++                )
++            )
+         # Add an index, if required
+         self.deferred_sql.extend(self._field_indexes_sql(model, field))
+         # Reset connection if required
+@@ -813,6 +856,11 @@ def _alter_field(
+             self.connection.features.supports_foreign_keys
+             and old_field.remote_field
+             and old_field.db_constraint
++            and self._field_should_be_altered(
++                old_field,
++                new_field,
++                ignore={"db_comment"},
++            )
+         ):
+             fk_names = self._constraint_names(
+                 model, [old_field.column], foreign_key=True
+@@ -949,11 +997,15 @@ def _alter_field(
+         # Type suffix change? (e.g. auto increment).
+         old_type_suffix = old_field.db_type_suffix(connection=self.connection)
+         new_type_suffix = new_field.db_type_suffix(connection=self.connection)
+-        # Type or collation change?
++        # Type, collation, or comment change?
+         if (
+             old_type != new_type
+             or old_type_suffix != new_type_suffix
+             or old_collation != new_collation
++            or (
++                self.connection.features.supports_comments
++                and old_field.db_comment != new_field.db_comment
++            )
+         ):
+             fragment, other_actions = self._alter_column_type_sql(
+                 model, old_field, new_field, new_type, old_collation, new_collation
+@@ -1211,12 +1263,26 @@ def _alter_column_type_sql(
+         an ALTER TABLE statement and a list of extra (sql, params) tuples to
+         run once the field is altered.
+         """
++        other_actions = []
+         if collate_sql := self._collate_sql(
+             new_collation, old_collation, model._meta.db_table
+         ):
+             collate_sql = f" {collate_sql}"
+         else:
+             collate_sql = ""
++        # Comment change?
++        comment_sql = ""
++        if self.connection.features.supports_comments and not new_field.many_to_many:
++            if old_field.db_comment != new_field.db_comment:
++                # PostgreSQL and Oracle can't execute 'ALTER COLUMN ...' and
++                # 'COMMENT ON ...' at the same time.
++                sql, params = self._alter_column_comment_sql(
++                    model, new_field, new_type, new_field.db_comment
++                )
++                if sql:
++                    other_actions.append((sql, params))
++            if new_field.db_comment:
++                comment_sql = self._comment_sql(new_field.db_comment)
+         return (
+             (
+                 self.sql_alter_column_type
+@@ -1224,12 +1290,27 @@ def _alter_column_type_sql(
+                     "column": self.quote_name(new_field.column),
+                     "type": new_type,
+                     "collation": collate_sql,
++                    "comment": comment_sql,
+                 },
+                 [],
+             ),
++            other_actions,
++        )
++
++    def _alter_column_comment_sql(self, model, new_field, new_type, new_db_comment):
++        return (
++            self.sql_alter_column_comment
++            % {
++                "table": self.quote_name(model._meta.db_table),
++                "column": self.quote_name(new_field.column),
++                "comment": self._comment_sql(new_db_comment),
++            },
+             [],
+         )
+
++    def _comment_sql(self, comment):
++        return self.quote_value(comment or "")
++
+     def _alter_many_to_many(self, model, old_field, new_field, strict):
+         """Alter M2Ms to repoint their to= endpoints."""
+         # Rename the through table
+@@ -1423,16 +1504,18 @@ def _field_indexes_sql(self, model, field):
+             output.append(self._create_index_sql(model, fields=[field]))
+         return output
+
+-    def _field_should_be_altered(self, old_field, new_field):
++    def _field_should_be_altered(self, old_field, new_field, ignore=None):
++        ignore = ignore or set()
+         _, old_path, old_args, old_kwargs = old_field.deconstruct()
+         _, new_path, new_args, new_kwargs = new_field.deconstruct()
+         # Don't alter when:
+         # - changing only a field name
+         # - changing an attribute that doesn't affect the schema
++        # - changing an attribute in the provided set of ignored attributes
+         # - adding only a db_column and the column name is not changed
+-        for attr in old_field.non_db_attrs:
++        for attr in ignore.union(old_field.non_db_attrs):
+             old_kwargs.pop(attr, None)
+-        for attr in new_field.non_db_attrs:
++        for attr in ignore.union(new_field.non_db_attrs):
+             new_kwargs.pop(attr, None)
+         return self.quote_name(old_field.column) != self.quote_name(
+             new_field.column
+diff --git a/django/db/backends/mysql/features.py b/django/db/backends/mysql/features.py
+--- a/django/db/backends/mysql/features.py
++++ b/django/db/backends/mysql/features.py
+@@ -18,6 +18,8 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     requires_explicit_null_ordering_when_grouping = True
+     atomic_transactions = False
+     can_clone_databases = True
++    supports_comments = True
++    supports_comments_inline = True
+     supports_temporal_subtraction = True
+     supports_slicing_ordering_in_compound = True
+     supports_index_on_text_field = False
+diff --git a/django/db/backends/mysql/introspection.py b/django/db/backends/mysql/introspection.py
+--- a/django/db/backends/mysql/introspection.py
++++ b/django/db/backends/mysql/introspection.py
+@@ -5,18 +5,20 @@
+
+ from django.db.backends.base.introspection import BaseDatabaseIntrospection
+ from django.db.backends.base.introspection import FieldInfo as BaseFieldInfo
+-from django.db.backends.base.introspection import TableInfo
++from django.db.backends.base.introspection import TableInfo as BaseTableInfo
+ from django.db.models import Index
+ from django.utils.datastructures import OrderedSet
+
+ FieldInfo = namedtuple(
+-    "FieldInfo", BaseFieldInfo._fields + ("extra", "is_unsigned", "has_json_constraint")
++    "FieldInfo",
++    BaseFieldInfo._fields + ("extra", "is_unsigned", "has_json_constraint", "comment"),
+ )
+ InfoLine = namedtuple(
+     "InfoLine",
+     "col_name data_type max_len num_prec num_scale extra column_default "
+-    "collation is_unsigned",
++    "collation is_unsigned comment",
+ )
++TableInfo = namedtuple("TableInfo", BaseTableInfo._fields + ("comment",))
+
+
+ class DatabaseIntrospection(BaseDatabaseIntrospection):
+@@ -68,9 +70,18 @@ def get_field_type(self, data_type, description):
+
+     def get_table_list(self, cursor):
+         """Return a list of table and view names in the current database."""
+-        cursor.execute("SHOW FULL TABLES")
++        cursor.execute(
++            """
++            SELECT
++                table_name,
++                table_type,
++                table_comment
++            FROM information_schema.tables
++            WHERE table_schema = DATABASE()
++            """
++        )
+         return [
+-            TableInfo(row[0], {"BASE TABLE": "t", "VIEW": "v"}.get(row[1]))
++            TableInfo(row[0], {"BASE TABLE": "t", "VIEW": "v"}.get(row[1]), row[2])
+             for row in cursor.fetchall()
+         ]
+
+@@ -128,7 +139,8 @@ def get_table_description(self, cursor, table_name):
+                 CASE
+                     WHEN column_type LIKE '%% unsigned' THEN 1
+                     ELSE 0
+-                END AS is_unsigned
++                END AS is_unsigned,
++                column_comment
+             FROM information_schema.columns
+             WHERE table_name = %s AND table_schema = DATABASE()
+             """,
+@@ -159,6 +171,7 @@ def to_int(i):
+                     info.extra,
+                     info.is_unsigned,
+                     line[0] in json_constraints,
++                    info.comment,
+                 )
+             )
+         return fields
+diff --git a/django/db/backends/mysql/schema.py b/django/db/backends/mysql/schema.py
+--- a/django/db/backends/mysql/schema.py
++++ b/django/db/backends/mysql/schema.py
+@@ -9,7 +9,7 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+
+     sql_alter_column_null = "MODIFY %(column)s %(type)s NULL"
+     sql_alter_column_not_null = "MODIFY %(column)s %(type)s NOT NULL"
+-    sql_alter_column_type = "MODIFY %(column)s %(type)s%(collation)s"
++    sql_alter_column_type = "MODIFY %(column)s %(type)s%(collation)s%(comment)s"
+     sql_alter_column_no_default_null = "ALTER COLUMN %(column)s SET DEFAULT NULL"
+
+     # No 'CASCADE' which works as a no-op in MySQL but is undocumented
+@@ -32,6 +32,9 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+
+     sql_create_index = "CREATE INDEX %(name)s ON %(table)s (%(columns)s)%(extra)s"
+
++    sql_alter_table_comment = "ALTER TABLE %(table)s COMMENT = %(comment)s"
++    sql_alter_column_comment = None
++
+     @property
+     def sql_delete_check(self):
+         if self.connection.mysql_is_mariadb:
+@@ -228,3 +231,11 @@ def _alter_column_type_sql(
+     def _rename_field_sql(self, table, old_field, new_field, new_type):
+         new_type = self._set_field_new_type_null_status(old_field, new_type)
+         return super()._rename_field_sql(table, old_field, new_field, new_type)
++
++    def _alter_column_comment_sql(self, model, new_field, new_type, new_db_comment):
++        # Comment is alter when altering the column type.
++        return "", []
++
++    def _comment_sql(self, comment):
++        comment_sql = super()._comment_sql(comment)
++        return f" COMMENT {comment_sql}"
+diff --git a/django/db/backends/oracle/features.py b/django/db/backends/oracle/features.py
+--- a/django/db/backends/oracle/features.py
++++ b/django/db/backends/oracle/features.py
+@@ -25,6 +25,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     supports_partially_nullable_unique_constraints = False
+     supports_deferrable_unique_constraints = True
+     truncates_names = True
++    supports_comments = True
+     supports_tablespaces = True
+     supports_sequence_reset = False
+     can_introspect_materialized_views = True
+diff --git a/django/db/backends/oracle/introspection.py b/django/db/backends/oracle/introspection.py
+--- a/django/db/backends/oracle/introspection.py
++++ b/django/db/backends/oracle/introspection.py
+@@ -5,10 +5,13 @@
+ from django.db import models
+ from django.db.backends.base.introspection import BaseDatabaseIntrospection
+ from django.db.backends.base.introspection import FieldInfo as BaseFieldInfo
+-from django.db.backends.base.introspection import TableInfo
++from django.db.backends.base.introspection import TableInfo as BaseTableInfo
+ from django.utils.functional import cached_property
+
+-FieldInfo = namedtuple("FieldInfo", BaseFieldInfo._fields + ("is_autofield", "is_json"))
++FieldInfo = namedtuple(
++    "FieldInfo", BaseFieldInfo._fields + ("is_autofield", "is_json", "comment")
++)
++TableInfo = namedtuple("TableInfo", BaseTableInfo._fields + ("comment",))
+
+
+ class DatabaseIntrospection(BaseDatabaseIntrospection):
+@@ -77,8 +80,14 @@ def get_table_list(self, cursor):
+         """Return a list of table and view names in the current database."""
+         cursor.execute(
+             """
+-            SELECT table_name, 't'
++            SELECT
++                user_tables.table_name,
++                't',
++                user_tab_comments.comments
+             FROM user_tables
++            LEFT OUTER JOIN
++                user_tab_comments
++                ON user_tab_comments.table_name = user_tables.table_name
+             WHERE
+                 NOT EXISTS (
+                     SELECT 1
+@@ -86,13 +95,13 @@ def get_table_list(self, cursor):
+                     WHERE user_mviews.mview_name = user_tables.table_name
+                 )
+             UNION ALL
+-            SELECT view_name, 'v' FROM user_views
++            SELECT view_name, 'v', NULL FROM user_views
+             UNION ALL
+-            SELECT mview_name, 'v' FROM user_mviews
++            SELECT mview_name, 'v', NULL FROM user_mviews
+         """
+         )
+         return [
+-            TableInfo(self.identifier_converter(row[0]), row[1])
++            TableInfo(self.identifier_converter(row[0]), row[1], row[2])
+             for row in cursor.fetchall()
+         ]
+
+@@ -131,10 +140,15 @@ def get_table_description(self, cursor, table_name):
+                     )
+                     THEN 1
+                     ELSE 0
+-                END as is_json
++                END as is_json,
++                user_col_comments.comments as col_comment
+             FROM user_tab_cols
+             LEFT OUTER JOIN
+                 user_tables ON user_tables.table_name = user_tab_cols.table_name
++            LEFT OUTER JOIN
++                user_col_comments ON
++                user_col_comments.column_name = user_tab_cols.column_name AND
++                user_col_comments.table_name = user_tab_cols.table_name
+             WHERE user_tab_cols.table_name = UPPER(%s)
+             """,
+             [table_name],
+@@ -146,6 +160,7 @@ def get_table_description(self, cursor, table_name):
+                 collation,
+                 is_autofield,
+                 is_json,
++                comment,
+             )
+             for (
+                 column,
+@@ -154,6 +169,7 @@ def get_table_description(self, cursor, table_name):
+                 display_size,
+                 is_autofield,
+                 is_json,
++                comment,
+             ) in cursor.fetchall()
+         }
+         self.cache_bust_counter += 1
+@@ -165,7 +181,14 @@ def get_table_description(self, cursor, table_name):
+         description = []
+         for desc in cursor.description:
+             name = desc[0]
+-            display_size, default, collation, is_autofield, is_json = field_map[name]
++            (
++                display_size,
++                default,
++                collation,
++                is_autofield,
++                is_json,
++                comment,
++            ) = field_map[name]
+             name %= {}  # cx_Oracle, for some reason, doubles percent signs.
+             description.append(
+                 FieldInfo(
+@@ -180,6 +203,7 @@ def get_table_description(self, cursor, table_name):
+                     collation,
+                     is_autofield,
+                     is_json,
++                    comment,
+                 )
+             )
+         return description
+diff --git a/django/db/backends/postgresql/features.py b/django/db/backends/postgresql/features.py
+--- a/django/db/backends/postgresql/features.py
++++ b/django/db/backends/postgresql/features.py
+@@ -22,6 +22,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     has_select_for_update_skip_locked = True
+     has_select_for_no_key_update = True
+     can_release_savepoints = True
++    supports_comments = True
+     supports_tablespaces = True
+     supports_transactions = True
+     can_introspect_materialized_views = True
+diff --git a/django/db/backends/postgresql/introspection.py b/django/db/backends/postgresql/introspection.py
+--- a/django/db/backends/postgresql/introspection.py
++++ b/django/db/backends/postgresql/introspection.py
+@@ -2,10 +2,11 @@
+
+ from django.db.backends.base.introspection import BaseDatabaseIntrospection
+ from django.db.backends.base.introspection import FieldInfo as BaseFieldInfo
+-from django.db.backends.base.introspection import TableInfo
++from django.db.backends.base.introspection import TableInfo as BaseTableInfo
+ from django.db.models import Index
+
+-FieldInfo = namedtuple("FieldInfo", BaseFieldInfo._fields + ("is_autofield",))
++FieldInfo = namedtuple("FieldInfo", BaseFieldInfo._fields + ("is_autofield", "comment"))
++TableInfo = namedtuple("TableInfo", BaseTableInfo._fields + ("comment",))
+
+
+ class DatabaseIntrospection(BaseDatabaseIntrospection):
+@@ -62,7 +63,8 @@ def get_table_list(self, cursor):
+                     WHEN c.relispartition THEN 'p'
+                     WHEN c.relkind IN ('m', 'v') THEN 'v'
+                     ELSE 't'
+-                END
++                END,
++                obj_description(c.oid)
+             FROM pg_catalog.pg_class c
+             LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind IN ('f', 'm', 'p', 'r', 'v')
+@@ -91,7 +93,8 @@ def get_table_description(self, cursor, table_name):
+                 NOT (a.attnotnull OR (t.typtype = 'd' AND t.typnotnull)) AS is_nullable,
+                 pg_get_expr(ad.adbin, ad.adrelid) AS column_default,
+                 CASE WHEN collname = 'default' THEN NULL ELSE collname END AS collation,
+-                a.attidentity != '' AS is_autofield
++                a.attidentity != '' AS is_autofield,
++                col_description(a.attrelid, a.attnum) AS column_comment
+             FROM pg_attribute a
+             LEFT JOIN pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum
+             LEFT JOIN pg_collation co ON a.attcollation = co.oid
+diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py
+--- a/django/db/migrations/autodetector.py
++++ b/django/db/migrations/autodetector.py
+@@ -170,6 +170,7 @@ def _detect_changes(self, convert_apps=None, graph=None):
+         self.generate_created_proxies()
+         self.generate_altered_options()
+         self.generate_altered_managers()
++        self.generate_altered_db_table_comment()
+
+         # Create the renamed fields and store them in self.renamed_fields.
+         # They are used by create_altered_indexes(), generate_altered_fields(),
+@@ -1552,6 +1553,28 @@ def generate_altered_db_table(self):
+                     ),
+                 )
+
++    def generate_altered_db_table_comment(self):
++        models_to_check = self.kept_model_keys.union(
++            self.kept_proxy_keys, self.kept_unmanaged_keys
++        )
++        for app_label, model_name in sorted(models_to_check):
++            old_model_name = self.renamed_models.get(
++                (app_label, model_name), model_name
++            )
++            old_model_state = self.from_state.models[app_label, old_model_name]
++            new_model_state = self.to_state.models[app_label, model_name]
++
++            old_db_table_comment = old_model_state.options.get("db_table_comment")
++            new_db_table_comment = new_model_state.options.get("db_table_comment")
++            if old_db_table_comment != new_db_table_comment:
++                self.add_operation(
++                    app_label,
++                    operations.AlterModelTableComment(
++                        name=model_name,
++                        table_comment=new_db_table_comment,
++                    ),
++                )
++
+     def generate_altered_options(self):
+         """
+         Work out if any non-schema-affecting options have changed and make an
+diff --git a/django/db/migrations/operations/__init__.py b/django/db/migrations/operations/__init__.py
+--- a/django/db/migrations/operations/__init__.py
++++ b/django/db/migrations/operations/__init__.py
+@@ -6,6 +6,7 @@
+     AlterModelManagers,
+     AlterModelOptions,
+     AlterModelTable,
++    AlterModelTableComment,
+     AlterOrderWithRespectTo,
+     AlterUniqueTogether,
+     CreateModel,
+@@ -21,6 +22,7 @@
+     "CreateModel",
+     "DeleteModel",
+     "AlterModelTable",
++    "AlterModelTableComment",
+     "AlterUniqueTogether",
+     "RenameModel",
+     "AlterIndexTogether",
+diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py
+--- a/django/db/migrations/operations/models.py
++++ b/django/db/migrations/operations/models.py
+@@ -529,6 +529,44 @@ def migration_name_fragment(self):
+         return "alter_%s_table" % self.name_lower
+
+
++class AlterModelTableComment(ModelOptionOperation):
++    def __init__(self, name, table_comment):
++        self.table_comment = table_comment
++        super().__init__(name)
++
++    def deconstruct(self):
++        kwargs = {
++            "name": self.name,
++            "table_comment": self.table_comment,
++        }
++        return (self.__class__.__qualname__, [], kwargs)
++
++    def state_forwards(self, app_label, state):
++        state.alter_model_options(
++            app_label, self.name_lower, {"db_table_comment": self.table_comment}
++        )
++
++    def database_forwards(self, app_label, schema_editor, from_state, to_state):
++        new_model = to_state.apps.get_model(app_label, self.name)
++        if self.allow_migrate_model(schema_editor.connection.alias, new_model):
++            old_model = from_state.apps.get_model(app_label, self.name)
++            schema_editor.alter_db_table_comment(
++                new_model,
++                old_model._meta.db_table_comment,
++                new_model._meta.db_table_comment,
++            )
++
++    def database_backwards(self, app_label, schema_editor, from_state, to_state):
++        return self.database_forwards(app_label, schema_editor, from_state, to_state)
++
++    def describe(self):
++        return f"Alter {self.name} table comment"
++
++    @property
++    def migration_name_fragment(self):
++        return f"alter_{self.name_lower}_table_comment"
++
++
+ class AlterTogetherOptionOperation(ModelOptionOperation):
+     option_name = None
+
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -1556,6 +1556,7 @@ def check(cls, **kwargs):
+                 *cls._check_ordering(),
+                 *cls._check_constraints(databases),
+                 *cls._check_default_pk(),
++                *cls._check_db_table_comment(databases),
+             ]
+
+         return errors
+@@ -1592,6 +1593,29 @@ def _check_default_pk(cls):
+             ]
+         return []
+
++    @classmethod
++    def _check_db_table_comment(cls, databases):
++        if not cls._meta.db_table_comment:
++            return []
++        errors = []
++        for db in databases:
++            if not router.allow_migrate_model(db, cls):
++                continue
++            connection = connections[db]
++            if not (
++                connection.features.supports_comments
++                or "supports_comments" in cls._meta.required_db_features
++            ):
++                errors.append(
++                    checks.Warning(
++                        f"{connection.display_name} does not support comments on "
++                        f"tables (db_table_comment).",
++                        obj=cls,
++                        id="models.W046",
++                    )
++                )
++        return errors
++
+     @classmethod
+     def _check_swappable(cls):
+         """Check if the swapped model exists."""
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -200,6 +200,7 @@ def __init__(
+         auto_created=False,
+         validators=(),
+         error_messages=None,
++        db_comment=None,
+     ):
+         self.name = name
+         self.verbose_name = verbose_name  # May be set by set_attributes_from_name
+@@ -221,6 +222,7 @@ def __init__(
+         self.help_text = help_text
+         self.db_index = db_index
+         self.db_column = db_column
++        self.db_comment = db_comment
+         self._db_tablespace = db_tablespace
+         self.auto_created = auto_created
+
+@@ -259,6 +261,7 @@ def check(self, **kwargs):
+             *self._check_field_name(),
+             *self._check_choices(),
+             *self._check_db_index(),
++            *self._check_db_comment(**kwargs),
+             *self._check_null_allowed_for_primary_keys(),
+             *self._check_backend_specific_checks(**kwargs),
+             *self._check_validators(),
+@@ -385,6 +388,28 @@ def _check_db_index(self):
+         else:
+             return []
+
++    def _check_db_comment(self, databases=None, **kwargs):
++        if not self.db_comment or not databases:
++            return []
++        errors = []
++        for db in databases:
++            if not router.allow_migrate_model(db, self.model):
++                continue
++            connection = connections[db]
++            if not (
++                connection.features.supports_comments
++                or "supports_comments" in self.model._meta.required_db_features
++            ):
++                errors.append(
++                    checks.Warning(
++                        f"{connection.display_name} does not support comments on "
++                        f"columns (db_comment).",
++                        obj=self,
++                        id="fields.W163",
++                    )
++                )
++        return errors
++
+     def _check_null_allowed_for_primary_keys(self):
+         if (
+             self.primary_key
+@@ -538,6 +563,7 @@ def deconstruct(self):
+             "choices": None,
+             "help_text": "",
+             "db_column": None,
++            "db_comment": None,
+             "db_tablespace": None,
+             "auto_created": False,
+             "validators": [],
+diff --git a/django/db/models/fields/related.py b/django/db/models/fields/related.py
+--- a/django/db/models/fields/related.py
++++ b/django/db/models/fields/related.py
+@@ -1428,6 +1428,14 @@ def _check_ignored_options(self, **kwargs):
+                     id="fields.W345",
+                 )
+             )
++        if self.db_comment:
++            warnings.append(
++                checks.Warning(
++                    "db_comment has no effect on ManyToManyField.",
++                    obj=self,
++                    id="fields.W346",
++                )
++            )
+
+         return warnings
+
+diff --git a/django/db/models/options.py b/django/db/models/options.py
+--- a/django/db/models/options.py
++++ b/django/db/models/options.py
+@@ -30,6 +30,7 @@
+     "verbose_name",
+     "verbose_name_plural",
+     "db_table",
++    "db_table_comment",
+     "ordering",
+     "unique_together",
+     "permissions",
+@@ -112,6 +113,7 @@ def __init__(self, meta, app_label=None):
+         self.verbose_name = None
+         self.verbose_name_plural = None
+         self.db_table = ""
++        self.db_table_comment = ""
+         self.ordering = []
+         self._ordering_clash = False
+         self.indexes = []
+
+</patch>
+
+--------------------------------------------------
+analyze
+O1 is a bit better than other models, and it actually mentions the code base provided by reviewing the provided code base instead of directly proposing solutions. Therefore, o1 considers the most comprehensively and has the most modified code files. Compared with gemini, it is more inference from the scheme rather than the code implementation details, and even considers subsequent documentation and tests. Of course, such inference may also be redundant.
+text:
+<issue>
+Better Indication of Squash Migration State in showmigrations
+Description
+
+In the discussion of #25231 (​https://github.com/django/django/pull/5112) it became clear that there was a disconnect between the current output of showmigrations and the actual recorded applied state of squashed migrations.
+Currently if all of the replaced/original migrations have been run, showmigrations will output that the related squashed migration has been applied with an [X] in the output even if that has not yet been recorded by the migration recorder. However, it is currently a requirement that migrate be run to record this applied state for the squashed migration before the original migrations are removed. If a deployment process is looking for an empty [ ] to know to run the migration then this may trip it up.
+This case is to consider an output for showmigrations which can indicate that this migration has only been "soft" applied, that is applied but not recorded yet.
+Changes to the planner for such an output may also impact #24900.
+
+</issue>
+
+steps:
+model_patch:
+ # Let's first load the contents of the uploaded file and inspect it
+uploaded_file_path = "/mnt/data/2025-02-27-21-T8vhsAk6jywxGUFFrt7N.html"
+
+with open(uploaded_file_path, "r") as file:
+    file_content = file.read()
+
+file_content[:500]  # Display the first 500 characters to understand its structure
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/commands/showmigrations.py b/django/core/management/commands/showmigrations.py
+--- a/django/core/management/commands/showmigrations.py
++++ b/django/core/management/commands/showmigrations.py
+@@ -4,6 +4,7 @@
+ from django.core.management.base import BaseCommand
+ from django.db import DEFAULT_DB_ALIAS, connections
+ from django.db.migrations.loader import MigrationLoader
++from django.db.migrations.recorder import MigrationRecorder
+
+
+ class Command(BaseCommand):
+@@ -69,6 +70,8 @@ def show_list(self, connection, app_names=None):
+         """
+         # Load migrations from disk/DB
+         loader = MigrationLoader(connection, ignore_no_migrations=True)
++        recorder = MigrationRecorder(connection)
++        recorded_migrations = recorder.applied_migrations()
+         graph = loader.graph
+         # If we were passed a list of apps, validate it
+         if app_names:
+@@ -91,7 +94,11 @@ def show_list(self, connection, app_names=None):
+                         applied_migration = loader.applied_migrations.get(plan_node)
+                         # Mark it as applied/unapplied
+                         if applied_migration:
+-                            output = ' [X] %s' % title
++                            if plan_node in recorded_migrations:
++                                output = ' [X] %s' % title
++                            else:
++                                title += " Run 'manage.py migrate' to finish recording."
++                                output = ' [-] %s' % title
+                             if self.verbosity >= 2 and hasattr(applied_migration, 'applied'):
+                                 output += ' (applied at %s)' % applied_migration.applied.strftime('%Y-%m-%d %H:%M:%S')
+                             self.stdout.write(output)
+
+</patch>
+
+--------------------------------------------------
+analyze
+Maybe the operation error here is wrong and the wrong task is uploaded? The complete llm process is also vague
+text:
+<issue>
+django.db.backends logging output should include the database alias
+Description
+
+		(last modified by David Winterbottom)
+
+As this is essential information when working with database routing.
+PR: ​https://github.com/django/django/pull/11994
+
+</issue>
+
+steps:
+
+1. Identify where the database alias is logged within the Django database backend.
+    1.1 Locate relevant logging configurations in the code, particularly within the database backend files such as `base.py`.
+    1.2 Find sections where database-related information, like queries and connections, are logged.
+
+2. Modify the logging configuration to include the database alias.
+    2.1 Add the alias information to any log message that handles database connections or queries.
+    2.2 Ensure that the alias is easily identifiable in logs, so it is clear which database is being interacted with.
+
+3. Test the changes to ensure the database alias is being logged as expected.
+    3.1 Set up a test where database queries or connections are logged.
+    3.2 Verify that the output includes the database alias for each logged entry.
+
+4. Commit the changes with appropriate documentation.
+    4.1 Create a commit message that explains the modification.
+    4.2 Update the documentation if necessary, to reflect the change in logging behavior.
+
+model_patch:
+
+--- django/db/backends/base/base.py
++++ django/db/backends/base/base.py
+@@ -157,6 +157,9 @@
+         if self.queries_logged:
+             wrapped_cursor = self.make_debug_cursor(cursor)
+         else:
+             wrapped_cursor = self.make_cursor(cursor)
++        # Log the database alias when a new query is executed
++        self.queries_log.append({'alias': self.alias, 'query': sql})
+         return wrapped_cursor
+
+--- django/db/backends/base/base.py
++++ django/db/backends/base/base.py
+@@ -204,6 +204,9 @@
+         # Log the database alias when connection is established
+         self.queries_log.append({'alias': self.alias, 'event': 'connection established'})
+
+     def ensure_connection(self):
+         """
+         Guarantee that a connection to the database is established.
+         """
+         if self.connection is None:
++            # Log the database alias when ensuring connection
++            self.queries_log.append({'alias': self.alias, 'event': 'connection ensured'})
+             with self.wrap_database_errors:
+                 self.connect()
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/utils.py b/django/db/backends/utils.py
+--- a/django/db/backends/utils.py
++++ b/django/db/backends/utils.py
+@@ -121,11 +121,12 @@ def debug_sql(self, sql=None, params=None, use_last_executed_query=False, many=F
+                 'time': '%.3f' % duration,
+             })
+             logger.debug(
+-                '(%.3f) %s; args=%s',
++                '(%.3f) %s; args=%s; alias=%s',
+                 duration,
+                 sql,
+                 params,
+-                extra={'duration': duration, 'sql': sql, 'params': params},
++                self.db.alias,
++                extra={'duration': duration, 'sql': sql, 'params': params, 'alias': self.db.alias},
+             )
+
+
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+text:
+<issue>
+Allow delete to provide a success message through a mixin.
+Description
+
+Add a mixin to show a message on successful object deletion.
+
+</issue>
+
+steps:
+
+1. Create a new mixin class to handle success messages.
+    1.1 Define a class `DeletionSuccessMessageMixin` that will manage the success message after deletion.
+    1.2 Add an attribute `success_message` to the mixin class to store the custom success message.
+    1.3 Override the `delete_selected` action in the `django/contrib/admin/actions.py` file to integrate this new mixin.
+
+2. Modify the `delete_selected` action to use the success message mixin.
+    2.1 Add a call to `DeletionSuccessMessageMixin` in the `delete_selected` action.
+    2.2 Ensure that a success message is displayed after the deletion is completed.
+    2.3 Pass the appropriate message content (such as count of deleted objects) to the success message template.
+
+3. Update the `django/views/generic/edit.py` file.
+    3.1 Create a `DeletionSuccessMessageMixin` class and place it in the `django/views/generic/edit.py` to keep consistency in the architecture of the codebase.
+    3.2 Use this mixin class in the `BaseDeleteView` and `DeleteView` classes to display success messages.
+
+4. Update the `delete` method in `django/views/generic/edit.py`.
+    4.1 Modify the `delete` method to incorporate the success message after an object is deleted.
+    4.2 Ensure the appropriate success message is shown after deleting an object.
+
+5. Ensure backward compatibility.
+    5.1 Check that existing functionality without success messages still operates correctly.
+    5.2 Ensure that the success message mixin does not break any current functionality in views where it is not used.
+
+model_patch:
+
+--- a/django/contrib/admin/actions.py
++++ b/django/contrib/admin/actions.py
+@@ -5,6 +5,7 @@ from django.contrib.admin.decorators import action
+ from django.contrib.admin.utils import model_ngettext
+ from django.core.exceptions import PermissionDenied
+ from django.template.response import TemplateResponse
+ from django.utils.translation import gettext as _, gettext_lazy
++from django.contrib.messages.api import success
+ from django.views.generic import View
+ class DeletionSuccessMessageMixin:
+     """
+     A mixin to add a success message after object deletion.
+     """
+     success_message = "Successfully deleted %(count)d %(items)s."
+
+     def add_success_message(self, request, n, items):
+         success(request, self.success_message % {
+             "count": n, "items": model_ngettext(items, n)
+         })
+
+ @action(
+     permissions=['delete'],
+     description=gettext_lazy('Delete selected %(verbose_name_plural)s'),
+ )
+ def delete_selected(modeladmin, request, queryset):
+     """
+     Default action which deletes the selected objects and displays a success message.
+     """
+     opts = modeladmin.model._meta
+     app_label = opts.app_label
+
+     deletable_objects, model_count, perms_needed, protected = modeladmin.get_deleted_objects(queryset, request)
+
+     if request.POST.get('post') and not protected:
+         if perms_needed:
+             raise PermissionDenied
+         n = queryset.count()
+         if n:
+             for obj in queryset:
+                 obj_display = str(obj)
+                 modeladmin.log_deletion(request, obj, obj_display)
+             modeladmin.delete_queryset(request, queryset)
++            # Add the success message using the mixin
++            DeletionSuccessMessageMixin().add_success_message(request, n, queryset)
+         return None
+
+--- a/django/views/generic/edit.py
++++ b/django/views/generic/edit.py
+@@ -202,6 +202,14
+ class DeletionSuccessMessageMixin:
+     """
+     A mixin to show a success message after deleting an object.
+     """
+     success_message = "Successfully deleted %(count)d %(items)s."
+
+     def add_success_message(self, request, n, items):
+         from django.contrib.messages.api import success
+         success(request, self.success_message % {
+             "count": n, "items": model_ngettext(items, n)
+         })
+
+ class BaseDeleteView(DeletionSuccessMessageMixin, SingleObjectTemplateResponseMixin):
+     """
+     Base view for deleting an object with a success message after deletion.
+     """
+
+     def delete(self, request, *args, **kwargs):
+         self.object = self.get_object()
+         success_url = self.get_success_url()
+         self.object.delete()
+         # Call the success message mixin method
+         self.add_success_message(request, 1, [self.object])
+         return HttpResponseRedirect(success_url)
+
+--- a/django/views/generic/list.py
++++ b/django/views/generic/list.py
+@@ -7,6 +7,7
+ from django.views.generic.edit import DeletionSuccessMessageMixin
+ class BaseListView(DeletionSuccessMessageMixin, View):
+     """
+     A base view for displaying a list of objects with success message support.
+     """
+
+--- a/django/views/generic/base.py
++++ b/django/views/generic/base.py
+@@ -29,6 +29,7
+ from django.contrib import messages
++from django.contrib.messages.api import success
+ from django.views.generic import View
+ class View:
+     """
+     Intentionally simple parent class for all views. Only implements
+     dispatch-by-method and simple sanity checking.
+     """
+
+@@ -35,6 +36,9
+     def success_message(self, request, message):
+         """
+         A helper method to send a success message.
+         """
+         success(request, message)
+
+
+gold_patch:
+<patch>
+diff --git a/django/views/generic/edit.py b/django/views/generic/edit.py
+--- a/django/views/generic/edit.py
++++ b/django/views/generic/edit.py
+@@ -1,5 +1,5 @@
+ from django.core.exceptions import ImproperlyConfigured
+-from django.forms import models as model_forms
++from django.forms import Form, models as model_forms
+ from django.http import HttpResponseRedirect
+ from django.views.generic.base import ContextMixin, TemplateResponseMixin, View
+ from django.views.generic.detail import (
+@@ -225,12 +225,30 @@ def get_success_url(self):
+                 "No URL to redirect to. Provide a success_url.")
+
+
+-class BaseDeleteView(DeletionMixin, BaseDetailView):
++class BaseDeleteView(DeletionMixin, FormMixin, BaseDetailView):
+     """
+     Base view for deleting an object.
+
+     Using this base class requires subclassing to provide a response mixin.
+     """
++    form_class = Form
++
++    def post(self, request, *args, **kwargs):
++        # Set self.object before the usual form processing flow.
++        # Inlined because having DeletionMixin as the first base, for
++        # get_success_url(), makes leveraging super() with ProcessFormView
++        # overly complex.
++        self.object = self.get_object()
++        form = self.get_form()
++        if form.is_valid():
++            return self.form_valid(form)
++        else:
++            return self.form_invalid(form)
++
++    def form_valid(self, form):
++        success_url = self.get_success_url()
++        self.object.delete()
++        return HttpResponseRedirect(success_url)
+
+
+ class DeleteView(SingleObjectTemplateResponseMixin, BaseDeleteView):
+
+</patch>
+
+--------------------------------------------------
+analyze
+In this question, o1 is better than the other two models, and it seems to really understand the work that needs to be done. It correctly modified django/views/generic/edit.py instead of incorrectly changing messages/views.py(Gemini) or queries_log(DeepSeek).
+It realized that BaseDeleteView is the core class for Django to handle deletion logic and modified the correct position. Unfortunately, there is still a slight deviation in the thinking. There is no need to modify delete(), but form_valid() should be modified.
+text:
+<issue>
+Make makemigrations scriptable / script-friendly
+Description
+
+Currently, the makemigrations management command doesn't lend itself well to scripting. For example, it writes its progress output to stdout rather than stderr. Also, there doesn't appear to be a structured / programmatic way to figure out what files it has created.
+My use case is that in my development environment, I'd like to be able to run makemigrations in a Docker container, find out what files were added (e.g. from makemigrations's output), and then copy those files from the Docker container to my development machine so they can be added to source control.
+Currently, there doesn't seem to be an easy way to do this. One way, for example, is to manually read makemigrations's output to find out what apps were affected, and then inspect the directories yourself for the new files.
+Better, for example, would be if makemigrations could write the paths to the created files to stdout.
+
+</issue>
+
+steps:
+
+1. **Modify the `makemigrations` command to print created migration files**
+   1.1. In the `handle` method, identify the part where migration files are created.
+   1.2. After migrations are written to the disk, modify the code to print the paths of these created files to `stdout`.
+   1.3. This will help in extracting and copying the generated migration files without needing to parse the command's output.
+
+2. **Ensure the output is clean and structured**
+   2.1. Instead of displaying verbose logs on the console, ensure that only the relevant file paths are printed when migrations are created.
+   2.2. This will make it easier to retrieve the created migration files programmatically by searching for the output.
+
+3. **Update the `write_migration_files` method**
+   3.1. Modify this method to print the paths of newly created migration files after they are written.
+   3.2. Ensure these paths are printed in a machine-readable format so they can be easily captured and used in scripts.
+
+4. **Modify the command's output when no changes are detected**
+   4.1. If no migrations are detected, ensure that no unnecessary output is printed, keeping the script environment clean and focused on essential information.
+
+5. **Update the documentation and help message**
+   5.1. Modify the help section of the `makemigrations` command to reflect the new feature of printing file paths of created migrations.
+   5.2. Ensure users understand how to use the new functionality in scripted environments.
+
+
+model_patch:
+
+--- a/django/core/management/commands/makemigrations.py
++++ b/django/core/management/commands/makemigrations.py
+@@ -66,7 +66,8 @@
+         if not changes:
+             # No changes? Tell them.
+             if self.verbosity >= 1:
+                 if app_labels:
+-                    if len(app_labels) == 1:
++                    if len(app_labels) == 1:
+                         self.log("No changes detected in app '%s'" % app_labels.pop())
++                        self.stdout.write("No changes detected for '%s'" % app_labels.pop())
+                     else:
+                         self.log("No changes detected in apps '%s'" % ("', '".join(app_labels)))
++                        self.stdout.write("No changes detected for apps '%s'" % ("', '".join(app_labels)))
+                 else:
+                     self.log('No changes detected')
++                    self.stdout.write('No changes detected in the project')
+         else:
+             self.write_migration_files(changes)
+             if check_changes:
+                 sys.exit(1)
+
+@@ -206,6 +207,11 @@
+             directory_created = {}
+             for app_label, app_migrations in changes.items():
+                 if self.verbosity >= 1:
+                     self.log(self.style.MIGRATE_HEADING("Migrations for '%s':" % app_label))
+                 for migration in app_migrations:
+                     # Describe the migration
+                     writer = MigrationWriter(migration, self.include_header)
+                     if self.verbosity >= 1:
+                         # Display a relative path if it's below the current working
+                         # directory, or an absolute path otherwise.
+                         try:
+                             migration_string = os.path.relpath(writer.path)
+                         except ValueError:
+                             migration_string = writer.path
+                         if migration_string.startswith('..'):
+                             migration_string = writer.path
+                         self.log('  %s\n' % self.style.MIGRATE_LABEL(migration_string))
+                         self.stdout.write('Created migration: %s' % writer.path)  # Print the migration file path
+                     if not self.dry_run:
+                         # Write the migrations file to the disk.
+                         migrations_directory = os.path.dirname(writer.path)
+                         if not directory_created.get(app_label):
+                             os.makedirs(migrations_directory, exist_ok=True)
+                             init_path = os.path.join(migrations_directory, "__init__.py")
+                             if not os.path.isfile(init_path):
+                                 open(init_path, "w").close()
+                             # We just do this once per app
+                             directory_created[app_label] = True
+                         migration_string = writer.as_string()
+                         with open(writer.path, "w", encoding='utf-8') as fh:
+                             fh.write(migration_string)
++                        self.stdout.write('Migration file written: %s' % writer.path)  # Print the migration file path
+                     elif self.verbosity == 3:
+                         # Alternatively, makemigrations --dry-run --verbosity 3
+                         # will log the migrations rather than saving the file to
+                         # the disk.
+                         self.log(self.style.MIGRATE_HEADING(
+                             "Full migrations file '%s':" % writer.filename
+                         ))
+                         self.log(writer.as_string())
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/commands/makemigrations.py b/django/core/management/commands/makemigrations.py
+--- a/django/core/management/commands/makemigrations.py
++++ b/django/core/management/commands/makemigrations.py
+@@ -57,9 +57,20 @@ def add_arguments(self, parser):
+             '--check', action='store_true', dest='check_changes',
+             help='Exit with a non-zero status if model changes are missing migrations.',
+         )
++        parser.add_argument(
++            '--scriptable', action='store_true', dest='scriptable',
++            help=(
++                'Divert log output and input prompts to stderr, writing only '
++                'paths of generated migration files to stdout.'
++            ),
++        )
++
++    @property
++    def log_output(self):
++        return self.stderr if self.scriptable else self.stdout
+
+     def log(self, msg):
+-        self.stdout.write(msg)
++        self.log_output.write(msg)
+
+     @no_translations
+     def handle(self, *app_labels, **options):
+@@ -73,6 +84,10 @@ def handle(self, *app_labels, **options):
+             raise CommandError('The migration name must be a valid Python identifier.')
+         self.include_header = options['include_header']
+         check_changes = options['check_changes']
++        self.scriptable = options['scriptable']
++        # If logs and prompts are diverted to stderr, remove the ERROR style.
++        if self.scriptable:
++            self.stderr.style_func = None
+
+         # Make sure the app they asked for exists
+         app_labels = set(app_labels)
+@@ -147,7 +162,7 @@ def handle(self, *app_labels, **options):
+             questioner = InteractiveMigrationQuestioner(
+                 specified_apps=app_labels,
+                 dry_run=self.dry_run,
+-                prompt_output=self.stdout,
++                prompt_output=self.log_output,
+             )
+         else:
+             questioner = NonInteractiveMigrationQuestioner(
+@@ -226,6 +241,8 @@ def write_migration_files(self, changes):
+                     self.log('  %s\n' % self.style.MIGRATE_LABEL(migration_string))
+                     for operation in migration.operations:
+                         self.log('    - %s' % operation.describe())
++                    if self.scriptable:
++                        self.stdout.write(migration_string)
+                 if not self.dry_run:
+                     # Write the migrations file to the disk.
+                     migrations_directory = os.path.dirname(writer.path)
+@@ -254,7 +271,7 @@ def handle_merge(self, loader, conflicts):
+         if it's safe; otherwise, advises on how to fix it.
+         """
+         if self.interactive:
+-            questioner = InteractiveMigrationQuestioner(prompt_output=self.stdout)
++            questioner = InteractiveMigrationQuestioner(prompt_output=self.log_output)
+         else:
+             questioner = MigrationQuestioner(defaults={'ask_merge': True})
+
+@@ -327,6 +344,8 @@ def all_items_equal(seq):
+                         fh.write(writer.as_string())
+                     if self.verbosity > 0:
+                         self.log('\nCreated new merge migration %s' % writer.path)
++                        if self.scriptable:
++                            self.stdout.write(writer.path)
+                 elif self.verbosity == 3:
+                     # Alternatively, makemigrations --merge --dry-run --verbosity 3
+                     # will log the merge migrations rather than saving the file
+
+</patch>
+
+--------------------------------------------------
+analyze
+text:
+<issue>
+Refactor AutocompleteJsonView to support extra fields in autocomplete response
+Description
+
+		(last modified by mrts)
+
+Adding data attributes to items in ordinary non-autocomplete foreign key fields that use forms.widgets.Select-based widgets is relatively easy. This enables powerful and dynamic admin site customizations where fields from related models are updated immediately when users change the selected item.
+However, adding new attributes to autocomplete field results currently requires extending contrib.admin.views.autocomplete.AutocompleteJsonView and fully overriding the AutocompleteJsonView.get() method. Here's an example:
+class MyModelAdmin(admin.ModelAdmin):
+	def get_urls(self):
+		return [
+			path('autocomplete/', CustomAutocompleteJsonView.as_view(admin_site=self.admin_site))
+			if url.pattern.match('autocomplete/')
+			else url for url in super().get_urls()
+		]
+class CustomAutocompleteJsonView(AutocompleteJsonView):
+	def get(self, request, *args, **kwargs):
+		self.term, self.model_admin, self.source_field, to_field_name = self.process_request(request)
+		if not self.has_perm(request):
+			raise PermissionDenied
+		self.object_list = self.get_queryset()
+		context = self.get_context_data()
+		return JsonResponse({
+			'results': [
+				{'id': str(getattr(obj, to_field_name)), 'text': str(obj), 'notes': obj.notes} # <-- customization here
+				for obj in context['object_list']
+			],
+			'pagination': {'more': context['page_obj'].has_next()},
+		})
+The problem with this is that as AutocompleteJsonView.get() keeps evolving, there's quite a lot of maintenance overhead required to catch up.
+The solutions is simple, side-effect- and risk-free: adding a result customization extension point to get() by moving the lines that construct the results inside JsonResponse constructor to a separate method. So instead of
+		return JsonResponse({
+			'results': [
+				{'id': str(getattr(obj, to_field_name)), 'text': str(obj)}
+				for obj in context['object_list']
+			],
+			'pagination': {'more': context['page_obj'].has_next()},
+		})
+there would be
+		return JsonResponse({
+			'results': [
+				self.serialize_result(obj, to_field_name) for obj in context['object_list']
+			],
+			'pagination': {'more': context['page_obj'].has_next()},
+		})
+where serialize_result() contains the original object to dictionary conversion code that would be now easy to override:
+def serialize_result(self, obj, to_field_name):
+	return {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}
+The example CustomAutocompleteJsonView from above would now become succinct and maintainable:
+class CustomAutocompleteJsonView(AutocompleteJsonView):
+	def serialize_result(self, obj, to_field_name):
+		return super.serialize_result(obj, to_field_name) | {'notes': obj.notes}
+What do you think, is this acceptable? I'm more than happy to provide the patch.
+
+</issue>
+
+steps:
+
+1. Refactor the `AutocompleteJsonView` class to allow for easy customization of the response.
+    1.1 Modify the `get()` method in `AutocompleteJsonView` to remove the inline response construction.
+        1.1.1 Create a new method `serialize_result` to handle the conversion of objects to dictionary format.
+        1.1.2 Move the logic that constructs the `results` field in the JSON response to use `serialize_result`.
+    1.2 Ensure the new method `serialize_result` is generic enough to handle extra fields added to the response.
+        1.2.1 The method should take parameters for the object and the field name.
+        1.2.2 The method should return a dictionary with the standard fields like `id` and `text`, and allow additional fields to be added by overriding.
+    1.3 Update the custom `CustomAutocompleteJsonView` class to demonstrate how to extend the `serialize_result` method and add custom fields (e.g., `notes`).
+        1.3.1 Implement the `serialize_result` method in `CustomAutocompleteJsonView` to include `notes` or any additional fields.
+    1.4 Ensure backward compatibility by using the `super()` function to call the parent `serialize_result` method and extending its functionality.
+
+2. Modify the `AutocompleteJsonView` to allow for better pagination handling in the response.
+    2.1 Review the current pagination structure in the `get()` method of `AutocompleteJsonView`.
+        2.1.1 Make sure the pagination logic is clear and functional.
+        2.1.2 Adjust the code to ensure that the `pagination` key in the response accurately reflects whether there are more pages to load.
+    2.2 Add an additional check for the presence of the `more` flag in the pagination dictionary to ensure that it correctly reflects whether the current page is the last page or not.
+    2.3 Ensure that all changes to pagination work seamlessly with the changes made in `serialize_result`.
+
+3. Test the changes made to `AutocompleteJsonView` and `CustomAutocompleteJsonView`.
+    3.1 Create a simple test case for `AutocompleteJsonView` to ensure the `results` and `pagination` are returned correctly.
+    3.2 Verify that `CustomAutocompleteJsonView` correctly serializes extra fields like `notes` without breaking any existing functionality.
+    3.3 Test edge cases, such as empty result sets or requests that would result in no pagination, to ensure robustness.
+
+model_patch:
+
+--- django/contrib/admin/views/autocomplete.py
++++ django/contrib/admin/views/autocomplete.py
+@@ -27,10 +27,18 @@
+         self.object_list = self.get_queryset()
+         context = self.get_context_data()
+-        return JsonResponse({
+-            'results': [
+-                {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}
+-                for obj in context['object_list']
+-            ],
+-            'pagination': {'more': context['page_obj'].has_next()},
+-        })
++        results = [
++            self.serialize_result(obj, to_field_name)
++            for obj in context['object_list']
++        ]
++        return JsonResponse({
++            'results': results,
++            'pagination': {'more': context['page_obj'].has_next()},
++        })
++
++    def serialize_result(self, obj, to_field_name):
++        """Serialize the result object to a dictionary."""
++        return {
++            'id': str(getattr(obj, to_field_name)),
++            'text': str(obj)
++        }
+--- django/contrib/admin/views/autocomplete.py
++++ django/contrib/admin/views/autocomplete.py
+@@ -34,6 +34,14 @@
+
+ class CustomAutocompleteJsonView(AutocompleteJsonView):
+     def serialize_result(self, obj, to_field_name):
+-        return super().serialize_result(obj, to_field_name) | {'notes': obj.notes}
++        result = super().serialize_result(obj, to_field_name)
++        result['notes'] = obj.notes
++        return result
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/admin/views/autocomplete.py b/django/contrib/admin/views/autocomplete.py
+--- a/django/contrib/admin/views/autocomplete.py
++++ b/django/contrib/admin/views/autocomplete.py
+@@ -11,7 +11,8 @@ class AutocompleteJsonView(BaseListView):
+
+     def get(self, request, *args, **kwargs):
+         """
+-        Return a JsonResponse with search results of the form:
++        Return a JsonResponse with search results as defined in
++        serialize_result(), by default:
+         {
+             results: [{id: "123" text: "foo"}],
+             pagination: {more: true}
+@@ -26,12 +27,19 @@ def get(self, request, *args, **kwargs):
+         context = self.get_context_data()
+         return JsonResponse({
+             'results': [
+-                {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}
++                self.serialize_result(obj, to_field_name)
+                 for obj in context['object_list']
+             ],
+             'pagination': {'more': context['page_obj'].has_next()},
+         })
+
++    def serialize_result(self, obj, to_field_name):
++        """
++        Convert the provided model object to a dictionary that is added to the
++        results list.
++        """
++        return {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}
++
+     def get_paginator(self, *args, **kwargs):
+         """Use the ModelAdmin's paginator."""
+         return self.model_admin.get_paginator(self.request, *args, **kwargs)
+
+</patch>
+
+--------------------------------------------------
+analyze
+The general functions are similar to the standard answer, but they have always inherited the nonsense of o1.
+

@@ -1,0 +1,947 @@
+text:
+<issue>
+ModelAdmin with defined radio_fields override empty_label
+Description
+
+ModelAdmin drops my "empty_label" and set "default_empty_label". For example:
+class MyModelAdmin(ModelAdmin):
+	radio_fields = 'myfield',
+	def formfield_for_foreignkey(self, db_field, *args, **kwargs):
+		if db_field.name == 'myfield':
+			kwargs['empty_label'] = "I WANT TO SET MY OWN EMPTY LABEL"
+		return super().formfield_for_foreignkey(db_field, *args, **kwargs)
+You get never the "I WANT TO SET MY OWN EMPTY LABEL"
+How to fix it:
+In django\contrib\admin\options.py, row 234:
+kwargs['empty_label'] = _('None') if db_field.blank else None
+Should be changed on:
+kwargs['empty_label'] = (kwargs.get('empty_label') or _('None')) if db_field.blank else None
+
+</issue>
+
+steps:
+1. Identify the code to be modified. Based on the issue description, the file is `django/contrib/admin/options.py` and the relevant line is around row 234, related to setting `empty_label` in `formfield_for_foreignkey` when `radio_fields` are used.
+
+2. Understand the current logic and the issue. The current code unconditionally sets `kwargs['empty_label']` to `_('None')` if `db_field.blank` is True when radio fields are used, overriding any custom `empty_label` provided by the user in `formfield_for_foreignkey`.
+
+3. Apply the suggested fix. Modify the line to check if `empty_label` is already in `kwargs` before setting a default value. If it exists, use the existing value; otherwise, use `_('None')` if `db_field.blank` is True.
+
+4. Generate the patch file. Create a diff in the unified format (`diff -u`) between the original (hypothetical, based on issue description) and the modified `django/contrib/admin/options.py` file, focusing on the change to the `empty_label` assignment within the `formfield_for_foreignkey` method, specifically for the `radio_fields` case.
+
+5. Format the steps and patch according to the user's request.
+model_patch:
+
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -231,7 +231,7 @@
+         if db_field.name in self.radio_fields:
+             # Radio buttons don't support empty_label.
+             kwargs['widget'] = widgets.RadioSelect(attrs={'class': widgets.RadioSelect.attrs_class})
+-            kwargs['empty_label'] = _('None') if db_field.blank else None
++            kwargs['empty_label'] = (kwargs.get('empty_label') or _('None')) if db_field.blank else None
+
+         return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -269,7 +269,9 @@ def formfield_for_foreignkey(self, db_field, request, **kwargs):
+                         "class": get_ul_class(self.radio_fields[db_field.name]),
+                     }
+                 )
+-                kwargs["empty_label"] = _("None") if db_field.blank else None
++                kwargs["empty_label"] = (
++                    kwargs.get("empty_label", _("None")) if db_field.blank else None
++                )
+
+         if "queryset" not in kwargs:
+             queryset = self.get_field_queryset(db, db_field, request)
+
+</patch>
+
+--------------------------------------------------
+analyze
+text:
+<issue>
+set_cookie and set_signed_cookie should accept timedelta object for max_age argument
+Description
+
+This already works for get_signed_cookie:
+>>> request.get_signed_cookie("mykey", max_age=timedelta(days=3))
+This is due to the underlying behaviour of TimestampSigner, which was fixed to do this in #21363.
+But for set_cookie and set_signed_cookie it accepts only a number:
+>>> response = HttpResponse()
+>>> response.set_cookie("mykey", max_age=timedelta(days=3))
+TypeError: int() argument must be a string, a bytes-like object or a number, not 'datetime.timedelta'
+
+</issue>
+
+steps:
+
+1. Open the file `django/http/response.py`.
+2. Locate the `set_cookie` method within the `HttpResponseBase` class.
+3. Modify the `set_cookie` method to check if the `max_age` argument is a `datetime.timedelta` object.
+4. If `max_age` is a `datetime.timedelta` object, convert it to seconds using `max_age.total_seconds()` before setting the cookie's `max-age`. Ensure the converted value is cast to an integer.
+5. Open the file `django/tests/http/test_responses.py`.
+6. Locate the test class for `HttpResponse` or create a new test class if one doesn't exist specifically for cookie related tests.
+7. Add a new test method within the test class to verify that `set_cookie` correctly handles `datetime.timedelta` objects for the `max_age` argument.
+8. Add another test method to verify that `set_signed_cookie` also correctly handles `datetime.timedelta` objects for the `max_age` argument.
+9. Run the tests to ensure the new tests pass and no existing tests are broken.
+10. Generate a patch file containing the changes made to `django/http/response.py` and `django/tests/http/test_responses.py`. Make sure the patch is in the correct format for `git apply`.
+
+model_patch:
+
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -248,7 +248,10 @@
+                 self.cookies[key]["expires"] = ""
+         if max_age is not None:
+             self.cookies[key]["max-age"] = int(max_age)
+-            # IE requires expires, so set it if hasn't been already.
++            # max-age is preferred over expires, but IE<9 doesn't understand
++            # max-age. If expires isn't already set, set it to max-age for
++            # those browsers. See
++            # https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie
+             if not expires:
+                 self.cookies[key]["expires"] = http_date(time.time() + max_age)
+         if path is not None:
+
+
+gold_patch:
+<patch>
+diff --git a/django/http/response.py b/django/http/response.py
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -227,6 +227,10 @@ def set_cookie(
+         - a naive ``datetime.datetime`` object in UTC,
+         - an aware ``datetime.datetime`` object in any time zone.
+         If it is a ``datetime.datetime`` object then calculate ``max_age``.
++
++        ``max_age`` can be:
++        - int/float specifying seconds,
++        - ``datetime.timedelta`` object.
+         """
+         self.cookies[key] = value
+         if expires is not None:
+@@ -240,12 +244,16 @@ def set_cookie(
+                 delta = delta + datetime.timedelta(seconds=1)
+                 # Just set max_age - the max_age logic will set expires.
+                 expires = None
++                if max_age is not None:
++                    raise ValueError("'expires' and 'max_age' can't be used together.")
+                 max_age = max(0, delta.days * 86400 + delta.seconds)
+             else:
+                 self.cookies[key]["expires"] = expires
+         else:
+             self.cookies[key]["expires"] = ""
+         if max_age is not None:
++            if isinstance(max_age, datetime.timedelta):
++                max_age = max_age.total_seconds()
+             self.cookies[key]["max-age"] = int(max_age)
+             # IE requires expires, so set it if hasn't been already.
+             if not expires:
+
+</patch>
+
+--------------------------------------------------
+analyze
+cot is inconsistent with code (i.e.: cot is correct, but LLM is not implemented correctly based on steps)
+model_patch only deletes one line of comments and adds three lines of comments.
+text:
+<issue>
+AppAdmin class for customizing app listing in admin index
+Description
+
+See ​http://code.djangoproject.com/wiki/DjangoSpecifications/NfAdmin/FlexibleAppHandling for details.
+This supplements the app directive.
+As discussed with brosner and jkocherhans in #django-dev:
+<brosner> it looks reasonable, but haven't spent much time thinking about it
+<jkocherhans> mrts: I think this is clearly backwards incompatible with the current nfa api and has to go in pre 1.0 if it goes in at all
+<jkocherhans> I'm a big -1 on the order attribute and -0 on models (maybe just a different syntax), but the other stuff seems reasonable
+<mrts> jkocherhans: what's wrong with ordering?
+<jkocherhans> it just feels like the wrong place to specify it
+<jkocherhans> it's a global issue, and an issue any particular app should handle
+<mrts> my use case: I have a lot of functionality exposed to somewhat dumb users
+<mrts> and they have trouble finding the right bits in the admin interface
+ ordering is only used in context of admin index
+ I would like to put the important apps to top and collapse the rest
+<jkocherhans> exactly. what should 3rd party apps put there? therein lies my objection.
+<mrts> well, I'd say decouple admin from models (as nfa already does) and don't specify any admin options at all -- users are free to customize things with AppAdmin
+<jkocherhans> I guess not if using a AppAdmin class is optional. I was originally thinking it would replace model registration with an admin site.
+<mrts> jkocherhans: yeah, that's what I kinda meant... it looks more coherent this way
+ jkocherhans: and it may solve some of the issues register() currently has
+<jkocherhans> mrts: I'm gonna have to let it sit for awhile. I'm trying to think of what else an AdminApp class would do besides being a coathanger for a few attributes, nothing is coming to mind.
+<mrts> jkocherhans: but jezdez has a point -- it would also provide easy bridging for app instances
+Example syntax follows.
+class BarModelAdmin(admin.ModelAdmin):
+ description = 'A bar is a bar is a bar'
+ ...
+class FooAppAdmin(admin.AppAdmin):
+	app = settings.INSTALLED_APPS[0]
+	name = "Foo" # overrides app().name
+	description = "An application that does foo"
+	style = {'classes' : ('collapse',)}
+	order = 1
+	models = ( # model order in this list determines their display order in app block
+	 (BarModel, BarModelAdmin),
+	 (BazModel, None), # use default ModelAdmin, don't show description
+ )
+admin.site.register(FooAppAdmin) # no need for the tedious for model in [A, B, C, D]: admin.site.register(model)
+
+</issue>
+
+steps:
+
+1.  **Create `AppAdmin` class:** Define a new class `AppAdmin` in `django/contrib/admin/sites.py`. This class should inherit from `object` and include attributes as described in the issue description: `app`, `name`, `description`, `style`, `order`, and `models`. Add a placeholder `__init__` method for now.
+2.  **Modify `AdminSite.register()` to handle `AppAdmin` registration:** Update the `register()` method in `AdminSite` to check if the `admin_class` is `AppAdmin`. If it is, store it in a separate registry (e.g., `_app_registry`) instead of the model registry (`_registry`).  Raise `AlreadyRegistered` if an `AppAdmin` with the same app is already registered.
+3.  **Update `AdminSite.get_app_list()` to incorporate `AppAdmin`:** Modify the `get_app_list()` method to first fetch apps from the `_app_registry`. For each registered `AppAdmin`, use its attributes to construct the app list entry. For apps not registered via `AppAdmin`, fallback to the existing logic of fetching apps based on registered models in `_registry`.  Consider ordering based on the `order` attribute in `AppAdmin`.
+4.  **Modify `AdminSite._build_app_dict()` to use `AppAdmin` model lists:** Update the `_build_app_dict()` method to use the `models` attribute from the `AppAdmin` instance if available. If an app is registered with `AppAdmin`, iterate through the `AppAdmin.models` to build the model list for that app. If not, use the existing logic based on `_registry`.
+5.  **Consider default `ModelAdmin` for models in `AppAdmin.models`:** In `_build_app_dict()`, when processing models from `AppAdmin.models`, handle the case where `ModelAdmin` is `None` (use default `ModelAdmin`).
+6.  **Test the changes:**  Manually test the changes by creating a sample `AppAdmin` class and registering it in `admin.py` of a test app. Verify that the admin index page reflects the customizations from `AppAdmin` (app name, description, model order, style/classes - although style might require template changes not explicitly requested in this issue).  Also verify that regular model registration still works.
+7.  **Create Patch:** Generate a patch file containing the changes made to `django/contrib/admin/sites.py`.
+
+model_patch:
+
+--- a/django/contrib/admin/sites.py
++++ b/django/contrib/admin/sites.py
+@@ -45,6 +45,13 @@
+
+  class AdminSite:
+      """
++      ���էާڧߧڧ���ѧ�ڧӧߧ��� ��ѧۧ�.
++     """
++
++
++class AppAdmin:
++    """
+      An AdminSite object encapsulates an instance of the Django admin application, ready
+      to be hooked in to your URLconf. Models are registered with the AdminSite using the
+      register() method, and the get_urls() method can then be used to access Django view
+@@ -77,6 +84,7 @@
+          self._actions = {"delete_selected": actions.delete_selected}
+          self._global_actions = self._actions.copy()
+          all_sites.add(self)
++         self._app_registry = {}  # app_label -> app_admin instance
+
+      def __repr__(self):
+          return f"{self.__class__.__name__}(name={self.name!r})"
+@@ -116,6 +124,21 @@
+          if isinstance(model_or_iterable, ModelBase):
+              model_or_iterable = [model_or_iterable]
+          for model in model_or_iterable:
++             if isinstance(admin_class, type) and issubclass(admin_class, AppAdmin):
++                 if not hasattr(admin_class, 'app'):
++                     raise ImproperlyConfigured(
++                         "AppAdmin class %s must define 'app' attribute."
++                         % admin_class.__name__
++                     )
++                 app_label = admin_class.app.split('.')[-1] # Extract app label from INSTALLED_APPS entry
++                 if app_label in self._app_registry:
++                     raise AlreadyRegistered(
++                         "AppAdmin for app %s is already registered" % app_label
++                     )
++                 # Instantiate the AppAdmin class to save in the app registry
++                 self._app_registry[app_label] = admin_class(self)
++                 continue # Skip model registration for AppAdmin
++
+              if model._meta.abstract:
+                  raise ImproperlyConfigured(
+                      "The model %s is abstract, so it cannot be registered with admin."
+@@ -539,9 +562,27 @@
+          """
+          app_dict = self._build_app_dict(request)
+
++         # Fetch AppAdmins and incorporate their apps into app_dict
++         for app_label, app_admin in self._app_registry.items():
++             if not app_admin.has_permission(request):
++                 continue
++
++             app_name = app_admin.name if hasattr(app_admin, 'name') and app_admin.name else apps.get_app_config(app_label).verbose_name
++             app_style = app_admin.style if hasattr(app_admin, 'style') else {}
++
++             app_dict[app_label] = {
++                 'name': app_name,
++                 'app_label': app_label,
++                 'app_url': reverse('admin:app_list', kwargs={'app_label': app_label}, current_app=self.name),
++                 'has_module_perms': True, # Assume AppAdmin implies module perms
++                 'models': [], # Models will be populated in _build_app_dict if needed, or can be set in AppAdmin
++                 'style': app_style, # Apply style from AppAdmin
++                 'description': app_admin.description if hasattr(app_admin, 'description') else None,
++                 'order': app_admin.order if hasattr(app_admin, 'order') else 10000, # Default order
++             }
++
+          # Sort the apps alphabetically.
+          app_list = sorted(app_dict.values(), key=lambda x: x["name"].lower())
++        app_list = sorted(app_list, key=lambda x: x.get('order', 10000)) # Sort by order attribute
+
+          # Sort the models alphabetically within each app.
+          for app in app_list:
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/admin/sites.py b/django/contrib/admin/sites.py
+--- a/django/contrib/admin/sites.py
++++ b/django/contrib/admin/sites.py
+@@ -526,16 +526,14 @@ def _build_app_dict(self, request, label=None):
+                     "models": [model_dict],
+                 }
+
+-        if label:
+-            return app_dict.get(label)
+         return app_dict
+
+-    def get_app_list(self, request):
++    def get_app_list(self, request, app_label=None):
+         """
+         Return a sorted list of all the installed apps that have been
+         registered in this site.
+         """
+-        app_dict = self._build_app_dict(request)
++        app_dict = self._build_app_dict(request, app_label)
+
+         # Sort the apps alphabetically.
+         app_list = sorted(app_dict.values(), key=lambda x: x["name"].lower())
+@@ -568,16 +566,16 @@ def index(self, request, extra_context=None):
+         )
+
+     def app_index(self, request, app_label, extra_context=None):
+-        app_dict = self._build_app_dict(request, app_label)
+-        if not app_dict:
++        app_list = self.get_app_list(request, app_label)
++
++        if not app_list:
+             raise Http404("The requested admin page does not exist.")
+-        # Sort the models alphabetically within each app.
+-        app_dict["models"].sort(key=lambda x: x["name"])
++
+         context = {
+             **self.each_context(request),
+-            "title": _("%(app)s administration") % {"app": app_dict["name"]},
++            "title": _("%(app)s administration") % {"app": app_list[0]["name"]},
+             "subtitle": None,
+-            "app_list": [app_dict],
++            "app_list": app_list,
+             "app_label": app_label,
+             **(extra_context or {}),
+         }
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+
+text:
+<issue>
+Enable cached template loader in development.
+Description
+
+		(last modified by Carlton Gibson)
+
+Following the changes to allow auto-reloading cached templates in #25791, there was discussion on ​PR 15140 to enable the cached template loader by default even in development.
+(Folks not wanting that would specify loaders.)
+
+</issue>
+
+steps:
+
+1. Open the file `django/template/engine.py`.
+2. Locate the `__init__` method of the `Engine` class.
+3. Find the conditional statement that adds the cached template loader based on the `debug` setting:
+   ```python
+   if not debug:
+       loaders = [("django.template.loaders.cached.Loader", loaders)]
+   ```
+4. Remove the `if not debug` condition. The lines should now look like:
+   ```python
+   loaders = [("django.template.loaders.cached.Loader", loaders)]
+   ```
+5. Save the changes to `django/template/engine.py`.
+6. Generate a patch file using `git diff` command. Assuming the current directory is the root of the django repository, run: `git diff > enable_cached_loader_dev.patch`
+
+model_patch:
+
+--- a/django/template/engine.py
++++ b/django/template/engine.py
+@@ -39,8 +39,7 @@
+             loaders = ["django.template.loaders.filesystem.Loader"]
+             if app_dirs:
+                 loaders += ["django.template.loaders.app_directories.Loader"]
+-            if not debug:
+-                loaders = [("django.template.loaders.cached.Loader", loaders)]
++            loaders = [("django.template.loaders.cached.Loader", loaders)]
+         else:
+             if app_dirs:
+                 raise ImproperlyConfigured(
+
+
+gold_patch:
+<patch>
+diff --git a/django/template/engine.py b/django/template/engine.py
+--- a/django/template/engine.py
++++ b/django/template/engine.py
+@@ -38,8 +38,7 @@ def __init__(
+             loaders = ["django.template.loaders.filesystem.Loader"]
+             if app_dirs:
+                 loaders += ["django.template.loaders.app_directories.Loader"]
+-            if not debug:
+-                loaders = [("django.template.loaders.cached.Loader", loaders)]
++            loaders = [("django.template.loaders.cached.Loader", loaders)]
+         else:
+             if app_dirs:
+                 raise ImproperlyConfigured(
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+
+text:
+<issue>
+Add SQL comment to describe deliberately no-op migration operations
+Description
+
+Currently when a field migration is a no-op, the operation description is output in SQL, but nothing else. This can be confusing as to which operations are no-ops. It could be clearer if we output an extra SQL comment when there are deliberately no statements to execute for a given migration operation.
+Take for example this output:
+BEGIN;
+--
+-- Alter field name on Author
+--
+ALTER ...;
+--
+-- Alter field title on Book
+--
+COMMIT;
+The Author.name field has an operation applied, whilst Book.title needs no changes to the database. This isn't exactly clear from the output - is the COMMIT part of the Book.title change?
+It could be clearer as:
+BEGIN;
+--
+-- Alter field name on Author
+--
+ALTER ...;
+--
+-- Alter field name on Author
+--
+-- (no-op)
+COMMIT;
+(Or perhaps more verbose wording, like "no SQL to execute")
+I think this can help especially when there are consecutive operations with no-op SQL:
+BEGIN;
+--
+-- Alter field name on Author
+--
+-- (no-op)
+--
+-- Alter field name on Author
+--
+-- (no-op)
+COMMIT;
+(Inspired by #33470, where the OP suggested dropping such migration operation header comments.)
+
+</issue>
+
+steps:
+1. Open the file `django/db/migrations/loader.py`.
+
+2. Locate the `collect_sql` method in the `MigrationLoader` class.
+
+3. Inside the `collect_sql` method, find the loop that iterates through the `migration.operations`.
+
+4. After the line `schema_editor.add_operation(operation)`, add a conditional check: `if not schema_editor.statements:`.
+
+5. Inside the `if` block, add the line `schema_editor.add_sql("-- (no-op)")`.
+
+6. Save the changes to `django/db/migrations/loader.py`.
+
+7. Generate a patch file using `git diff`.
+
+model_patch:
+
+--- a/django/db/migrations/loader.py
++++ b/django/db/migrations/loader.py
+@@ -222,6 +222,8 @@
+                     schema_editor.start_operation(operation)
+                     operation.migration = migration
+                     schema_editor.add_operation(operation)
++                    if not schema_editor.statements:
++                        schema_editor.add_sql("-- (no-op)")
+                     schema_editor.end_operation(operation)
+                     sql_statements.extend(schema_editor.statements)
+                     schema_editor.clear_statements()
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/migrations/migration.py b/django/db/migrations/migration.py
+--- a/django/db/migrations/migration.py
++++ b/django/db/migrations/migration.py
+@@ -103,15 +103,14 @@ def apply(self, project_state, schema_editor, collect_sql=False):
+             # there instead
+             if collect_sql:
+                 schema_editor.collected_sql.append("--")
+-                if not operation.reduces_to_sql:
+-                    schema_editor.collected_sql.append(
+-                        "-- MIGRATION NOW PERFORMS OPERATION THAT CANNOT BE WRITTEN AS "
+-                        "SQL:"
+-                    )
+                 schema_editor.collected_sql.append("-- %s" % operation.describe())
+                 schema_editor.collected_sql.append("--")
+                 if not operation.reduces_to_sql:
++                    schema_editor.collected_sql.append(
++                        "-- THIS OPERATION CANNOT BE WRITTEN AS SQL"
++                    )
+                     continue
++                collected_sql_before = len(schema_editor.collected_sql)
+             # Save the state before the operation has run
+             old_state = project_state.clone()
+             operation.state_forwards(self.app_label, project_state)
+@@ -131,6 +130,8 @@ def apply(self, project_state, schema_editor, collect_sql=False):
+                 operation.database_forwards(
+                     self.app_label, schema_editor, old_state, project_state
+                 )
++            if collect_sql and collected_sql_before == len(schema_editor.collected_sql):
++                schema_editor.collected_sql.append("-- (no-op)")
+         return project_state
+
+     def unapply(self, project_state, schema_editor, collect_sql=False):
+@@ -167,15 +168,14 @@ def unapply(self, project_state, schema_editor, collect_sql=False):
+         for operation, to_state, from_state in to_run:
+             if collect_sql:
+                 schema_editor.collected_sql.append("--")
+-                if not operation.reduces_to_sql:
+-                    schema_editor.collected_sql.append(
+-                        "-- MIGRATION NOW PERFORMS OPERATION THAT CANNOT BE WRITTEN AS "
+-                        "SQL:"
+-                    )
+                 schema_editor.collected_sql.append("-- %s" % operation.describe())
+                 schema_editor.collected_sql.append("--")
+                 if not operation.reduces_to_sql:
++                    schema_editor.collected_sql.append(
++                        "-- THIS OPERATION CANNOT BE WRITTEN AS SQL"
++                    )
+                     continue
++                collected_sql_before = len(schema_editor.collected_sql)
+             atomic_operation = operation.atomic or (
+                 self.atomic and operation.atomic is not False
+             )
+@@ -191,6 +191,8 @@ def unapply(self, project_state, schema_editor, collect_sql=False):
+                 operation.database_backwards(
+                     self.app_label, schema_editor, from_state, to_state
+                 )
++            if collect_sql and collected_sql_before == len(schema_editor.collected_sql):
++                schema_editor.collected_sql.append("-- (no-op)")
+         return project_state
+
+     def suggest_name(self):
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+
+text:
+<issue>
+Implement RenameIndex in a backwards compatible way
+Description
+
+In order to eventually deprecate index_together we need a way to deal with old projects that have unnamed indexes. This proves to be a non-trivial problem. Andrew and I came up with these things to consider.
+RenameIndex(model, new_name, old_name=None, old_fields=None) where exactly one of old_name and old_field is given (old_name ^ old_fields)
+If the old_name is given we use RENAME INDEX if available
+Otherwise look at the state and drop existing indexes and create new the index with new name
+On MySQL (or other DBs) that don't support RENAME INDEX, provide SQL query to look up index name from information_schema by field names and pass in to DROP INDEX.
+If more than one index is found while identifying with field names, migrations must error out with an AmbiguityError
+If the autodetector finds an old, unnamed index and a new, named one matching field signature, issue a RenameIndex operation
+For backwards operations with unnamed old indexes, RenameIndex is a noop.
+
+</issue>
+
+steps:
+1. Modify `RenameIndex` operation in `django/db/migrations/operations/models.py`:
+    - Update `__init__` to enforce that either `old_name` or `old_fields` is provided, but not both or none.
+    - Modify `state_forwards` to handle both cases: renaming by `old_name` and by `old_fields`. When `old_fields` is provided, remove the old unnamed index from `index_together` if it exists and add a new named index to `indexes`.
+    - Modify `database_forwards`:
+        - Check if `old_name` is provided. If yes, use `schema_editor.rename_index`.
+        - If `old_fields` is provided:
+            - Get the `from_model` from `from_state`.
+            - Use `schema_editor._constraint_names` to find the index name based on `old_fields`. Raise `ValueError` if not exactly one index is found.
+            - Construct an `old_index` object using the found name and `old_fields`.
+        - Call `schema_editor.rename_index` with `old_index` and `new_index`.
+    - Modify `database_backwards` to be a no-op when `old_fields` is used.
+    - Adjust `describe` and `migration_name_fragment` to reflect both cases of renaming.
+
+2. Modify `BaseDatabaseSchemaEditor` in `django/db/backends/base/schema.py`:
+    - Add `has_rename_index` property, defaulting to `True`.
+    - Modify `rename_index` method to accept `old_index` and `new_index` objects instead of just names. Update the method signature and implementation accordingly.
+
+3. Modify `DatabaseSchemaEditor` in `django/db/backends/mysql/schema.py`:
+    - Override `has_rename_index` property to return `True` because MySQL supports `RENAME INDEX`.
+    - Update `rename_index` method to use `sql_rename_index` and handle `old_index` and `new_index` objects.
+
+4. Modify `ModelState` in `django/db/migrations/state.py`:
+    - Update `rename_index` method to handle renaming index in model state.
+
+5. Update `_constraint_names` in `BaseDatabaseSchemaEditor` in `django/db/backends/base/schema.py`:
+    - Modify `_constraint_names` to accept `index=True` to filter and only return index constraints.
+model_patch:
+
+--- a/django/db/backends/mysql/schema.py
++++ b/django/db/backends/mysql/schema.py
+@@ -25,7 +25,6 @@
+      sql_delete_fk = "ALTER TABLE %(table)s DROP FOREIGN KEY %(name)s"
+
+      sql_delete_index = "DROP INDEX %(name)s ON %(table)s"
+-     sql_rename_index = "ALTER TABLE %(table)s RENAME INDEX %(old_name)s TO %(new_name)s"
+      sql_create_pk = (
+          "ALTER TABLE %(table)s ADD CONSTRAINT %(name)s PRIMARY KEY (%(columns)s)"
+      )
+@@ -34,6 +33,9 @@
+      sql_create_index = "CREATE INDEX %(name)s ON %(table)s (%(columns)s)%(extra)s"
+
+      @property
++     def sql_rename_index(self):
++        return "ALTER TABLE %(table)s RENAME INDEX %(old_name)s TO %(new_name)s"
++    @property
+      def sql_delete_check(self):
+          if self.connection.mysql_is_mariadb:
+              # The name of the column check constraint is the same as the field
+@@ -177,3 +179,9 @@
+          new_type = self._set_field_new_type_null_status(old_field, new_type)
+          return super()._rename_field_sql(table, old_field, new_field, new_type)
+
++    def rename_index(self, model, old_index, new_index):
++        if self.connection.features.can_rename_index:
++            super().rename_index(model, old_index, new_index)
++        else:
++            self.remove_index(model, old_index)
++            self.add_index(model, new_index)
+ --- a/django/db/migrations/operations/models.py
++++ b/django/db/migrations/operations/models.py
+@@ -917,15 +917,15 @@
+
+     def state_forwards(self, app_label, state):
+         if self.old_fields:
++            index = models.Index(fields=self.old_fields, name=self.new_name)
+             state.add_index(
+                 app_label,
+                 self.model_name_lower,
+-                models.Index(fields=self.old_fields, name=self.new_name),
++                index,
+             )
+-            state.remove_model_options(
++            state.remove_index_together(
+                 app_label,
+                 self.model_name_lower,
+-                AlterIndexTogether.option_name,
+                 self.old_fields,
+             )
+         else:
+@@ -946,7 +946,7 @@
+             columns = [
+                 from_model._meta.get_field(field).column for field in self.old_fields
+             ]
+-            matching_index_name = schema_editor._constraint_names(
++            matching_index_names = schema_editor._constraint_names(
+                 from_model, column_names=columns, index=True
+             )
+             if len(matching_index_name) != 1:
+@@ -954,7 +954,7 @@
+                 raise ValueError(
+                     "Found wrong number (%s) of indexes for %s(%s)."
+                     % (
+-                        len(matching_index_name),
++                        len(matching_index_names),
+                         from_model._meta.db_table,
+                         ", ".join(columns),
+                     )
+@@ -962,7 +962,7 @@
+                 )
+             old_index = models.Index(
+                 fields=self.old_fields,
+-                name=matching_index_name[0],
++                name=matching_index_names[0],
+             )
+         else:
+             from_model_state = from_state.models[app_label, self.model_name_lower]
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -80,6 +80,10 @@
+     sql_create_index = "CREATE INDEX %(name)s ON %(table)s (%(columns)s)%(extra)s"
+     sql_delete_index = "DROP INDEX %(name)s ON %(table)s"
+
++    @property
++    def has_rename_index(self):
++        return True
++
+     def create_model(self, model):
+         """
+         Creates a table and any accompanying indexes and unique constraints
+@@ -378,11 +382,11 @@
+         self.execute(self.sql_delete_index % self._index_name_sql(model, index.name))
+
+     def rename_index(self, model, old_index, new_index):
+-        if old_index.name == new_index.name:
++        if old_index.name == new_index.name or not self.has_rename_index:
+             return
+         with self.effective_default_name_scope() as scope:
+             scope(new_index)
+-            self.execute(self.sql_rename_index % {
++            params = {
+                 "table": self.quote_name(model._meta.db_table),
+                 "old_name": self.quote_name(old_index.name),
+                 "new_name": self.quote_name(new_index.name),
+@@ -390,6 +394,7 @@
+                 **(self._index_name_sql(model, new_index.name))
+                 if "name" in self.sql_rename_index % {**params, "old_name": "x", "new_name": "x"}
+                 else {},
+-            })
++            }
++            self.execute(self.sql_rename_index % params)
+
+     def add_constraint(self, model, constraint):
+         ...
+--- a/django/db/migrations/state.py
++++ b/django/db/migrations/state.py
+@@ -276,6 +276,16 @@
+             del self.models[app_label, model_name].options["indexes"][index_key]
+
+     def rename_index(self, app_label, model_name, old_name, new_name):
+-        if old_name == new_name:
++        if old_name == new_name or not old_name:
+             return
+         self.models[app_label, model_name].options["indexes"][new_name] = self.models[
++            app_label, model_name
++        ].options["indexes"].pop(old_name)
++
++    def remove_index_together(self, app_label, model_name, fields):
++        index_together = self.models[app_label, model_name].options.get("index_together")
++        if not index_together:
++            return
++        normalized_fields = tuple(sorted(fields))
++        if normalized_fields in index_together:
++            index_together.remove(normalized_fields)
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py
+--- a/django/db/migrations/autodetector.py
++++ b/django/db/migrations/autodetector.py
+@@ -1,5 +1,6 @@
+ import functools
+ import re
++from collections import defaultdict
+ from itertools import chain
+
+ from django.conf import settings
+@@ -122,6 +123,7 @@ def _detect_changes(self, convert_apps=None, graph=None):
+         self.generated_operations = {}
+         self.altered_indexes = {}
+         self.altered_constraints = {}
++        self.renamed_fields = {}
+
+         # Prepare some old/new state and model lists, separating
+         # proxy models and ignoring unmigrated apps.
+@@ -169,6 +171,11 @@ def _detect_changes(self, convert_apps=None, graph=None):
+         self.generate_altered_options()
+         self.generate_altered_managers()
+
++        # Create the renamed fields and store them in self.renamed_fields.
++        # They are used by create_altered_indexes(), generate_altered_fields(),
++        # generate_removed_altered_index/unique_together(), and
++        # generate_altered_index/unique_together().
++        self.create_renamed_fields()
+         # Create the altered indexes and store them in self.altered_indexes.
+         # This avoids the same computation in generate_removed_indexes()
+         # and generate_added_indexes().
+@@ -907,11 +914,12 @@ def generate_deleted_proxies(self):
+                 ),
+             )
+
+-    def generate_renamed_fields(self):
++    def create_renamed_fields(self):
+         """Work out renamed fields."""
+-        self.renamed_fields = {}
++        self.renamed_operations = []
++        old_field_keys = self.old_field_keys.copy()
+         for app_label, model_name, field_name in sorted(
+-            self.new_field_keys - self.old_field_keys
++            self.new_field_keys - old_field_keys
+         ):
+             old_model_name = self.renamed_models.get(
+                 (app_label, model_name), model_name
+@@ -922,7 +930,7 @@ def generate_renamed_fields(self):
+             # Scan to see if this is actually a rename!
+             field_dec = self.deep_deconstruct(field)
+             for rem_app_label, rem_model_name, rem_field_name in sorted(
+-                self.old_field_keys - self.new_field_keys
++                old_field_keys - self.new_field_keys
+             ):
+                 if rem_app_label == app_label and rem_model_name == model_name:
+                     old_field = old_model_state.get_field(rem_field_name)
+@@ -947,37 +955,64 @@ def generate_renamed_fields(self):
+                         if self.questioner.ask_rename(
+                             model_name, rem_field_name, field_name, field
+                         ):
+-                            # A db_column mismatch requires a prior noop
+-                            # AlterField for the subsequent RenameField to be a
+-                            # noop on attempts at preserving the old name.
+-                            if old_field.db_column != field.db_column:
+-                                altered_field = field.clone()
+-                                altered_field.name = rem_field_name
+-                                self.add_operation(
++                            self.renamed_operations.append(
++                                (
++                                    rem_app_label,
++                                    rem_model_name,
++                                    old_field.db_column,
++                                    rem_field_name,
+                                     app_label,
+-                                    operations.AlterField(
+-                                        model_name=model_name,
+-                                        name=rem_field_name,
+-                                        field=altered_field,
+-                                    ),
++                                    model_name,
++                                    field,
++                                    field_name,
+                                 )
+-                            self.add_operation(
+-                                app_label,
+-                                operations.RenameField(
+-                                    model_name=model_name,
+-                                    old_name=rem_field_name,
+-                                    new_name=field_name,
+-                                ),
+                             )
+-                            self.old_field_keys.remove(
++                            old_field_keys.remove(
+                                 (rem_app_label, rem_model_name, rem_field_name)
+                             )
+-                            self.old_field_keys.add((app_label, model_name, field_name))
++                            old_field_keys.add((app_label, model_name, field_name))
+                             self.renamed_fields[
+                                 app_label, model_name, field_name
+                             ] = rem_field_name
+                             break
+
++    def generate_renamed_fields(self):
++        """Generate RenameField operations."""
++        for (
++            rem_app_label,
++            rem_model_name,
++            rem_db_column,
++            rem_field_name,
++            app_label,
++            model_name,
++            field,
++            field_name,
++        ) in self.renamed_operations:
++            # A db_column mismatch requires a prior noop AlterField for the
++            # subsequent RenameField to be a noop on attempts at preserving the
++            # old name.
++            if rem_db_column != field.db_column:
++                altered_field = field.clone()
++                altered_field.name = rem_field_name
++                self.add_operation(
++                    app_label,
++                    operations.AlterField(
++                        model_name=model_name,
++                        name=rem_field_name,
++                        field=altered_field,
++                    ),
++                )
++            self.add_operation(
++                app_label,
++                operations.RenameField(
++                    model_name=model_name,
++                    old_name=rem_field_name,
++                    new_name=field_name,
++                ),
++            )
++            self.old_field_keys.remove((rem_app_label, rem_model_name, rem_field_name))
++            self.old_field_keys.add((app_label, model_name, field_name))
++
+     def generate_added_fields(self):
+         """Make AddField operations."""
+         for app_label, model_name, field_name in sorted(
+@@ -1179,6 +1214,8 @@ def generate_altered_fields(self):
+
+     def create_altered_indexes(self):
+         option_name = operations.AddIndex.option_name
++        self.renamed_index_together_values = defaultdict(list)
++
+         for app_label, model_name in sorted(self.kept_model_keys):
+             old_model_name = self.renamed_models.get(
+                 (app_label, model_name), model_name
+@@ -1208,6 +1245,43 @@ def create_altered_indexes(self):
+                         renamed_indexes.append((old_index_name, new_index_name, None))
+                         remove_from_added.append(new_index)
+                         remove_from_removed.append(old_index)
++            # Find index_together changed to indexes.
++            for (
++                old_value,
++                new_value,
++                index_together_app_label,
++                index_together_model_name,
++                dependencies,
++            ) in self._get_altered_foo_together_operations(
++                operations.AlterIndexTogether.option_name
++            ):
++                if (
++                    app_label != index_together_app_label
++                    or model_name != index_together_model_name
++                ):
++                    continue
++                removed_values = old_value.difference(new_value)
++                for removed_index_together in removed_values:
++                    renamed_index_together_indexes = []
++                    for new_index in added_indexes:
++                        _, args, kwargs = new_index.deconstruct()
++                        # Ensure only 'fields' are defined in the Index.
++                        if (
++                            not args
++                            and new_index.fields == list(removed_index_together)
++                            and set(kwargs) == {"name", "fields"}
++                        ):
++                            renamed_index_together_indexes.append(new_index)
++
++                    if len(renamed_index_together_indexes) == 1:
++                        renamed_index = renamed_index_together_indexes[0]
++                        remove_from_added.append(renamed_index)
++                        renamed_indexes.append(
++                            (None, renamed_index.name, removed_index_together)
++                        )
++                        self.renamed_index_together_values[
++                            index_together_app_label, index_together_model_name
++                        ].append(removed_index_together)
+             # Remove renamed indexes from the lists of added and removed
+             # indexes.
+             added_indexes = [
+@@ -1405,6 +1479,13 @@ def _generate_removed_altered_foo_together(self, operation):
+             model_name,
+             dependencies,
+         ) in self._get_altered_foo_together_operations(operation.option_name):
++            if operation == operations.AlterIndexTogether:
++                old_value = {
++                    value
++                    for value in old_value
++                    if value
++                    not in self.renamed_index_together_values[app_label, model_name]
++                }
+             removal_value = new_value.intersection(old_value)
+             if removal_value or old_value:
+                 self.add_operation(
+
+</patch>
+
+--------------------------------------------------
+analyze
+Internal factors - CoT and propt are inconsistent
+If prompt matches multiple indexes, throw `AmbiguityError`, throw `ValueError` in CoT`

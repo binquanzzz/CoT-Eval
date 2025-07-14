@@ -1,0 +1,768 @@
+
+==================== 62b87b7e9a0c4fa8b80b35bc ====================
+file_path: lena/structures/graph.py
+project: ynikitenko/lena
+name: _update_context
+
+prompt:
+Update *context* with the properties of this graph.
+Update the context with the properties of this graph
+*context.error* is appended with indices of errors.
+Example subcontext for a graph with fields "E,t,error_E_low":
+{"error": {"x_low": {"index": 2}}}.
+Note that error names are called "x", "y" and "z"
+(this corresponds to first three coordinates,
+if they are present), which allows to simplify plotting.
+Existing values are not removed
+from *context.value* and its subcontexts.
+
+Called on "destruction" of the graph (for example,
+in :class:`.ToCSV`). By destruction we mean conversion
+to another structure (like text) in the flow.
+The graph object is not really destroyed in this process.
+
+steps:
+1.Initialize or access the `error` sub-context within the input `context`. If `context` does not have a key named "error", create it and set its value to an empty dictionary. If it already exists, use the existing dictionary.
+2. Identify the error-related properties of the graph to be processed. Based on the docstring and example, these properties seem to be related to fields with names like "error_E_low".  We need to extract information from these field names to create error context entries.
+3. For each identified error property, determine the error name and the associated index. The error name is derived from the field name, using "x", "y", and "z" as base names, and potentially appending suffixes from the field name (like "_low"). The index is explicitly mentioned as being associated with the error.  Let's assume we have a mechanism to map error field names to error names ("x_low", "y", "z_high", etc.) and get corresponding indices.
+4. For each error property, create a sub-context dictionary of the form `{"index": index}`, where `index` is the index associated with the error property from step 3.
+5. Update the `context["error"]` dictionary. For each error property, use the error name determined in step 3 as the key and the sub-context dictionary created in step 4 as the value.  Add this key-value pair to the `context["error"]` dictionary. If a key (error name) already exists, it will be updated (or appended in terms of adding a new error entry, not modifying existing ones). Ensure existing values in `context.value` and its subcontexts are not modified.
+6. The function operates in place by modifying the input `context` dictionary. No explicit return is needed based on the docstring's description of "destruction" and side-effects. However, for clarity in a standalone function example, we might consider returning the modified `context`.
+1. Initialize or access the "Error" subcontext in the input "Context". If the "Context" does not have a key named "error", create it and set its value to an empty dictionary. If it already exists, use an existing dictionary.
+2. Identify error-related properties of the graph to be processed. According to the document string and example, these properties appear to be related to fields named "error_E_low". We need to extract information from these field names to create an error context entry.
+3. For each identified error attribute, determine the error name and the associated index. The error name comes from the field name, using "x", "y" and "z" as the base name, and may append a suffix from the field name (such as "_low"). The index explicitly mentions being associated with the error. Suppose we have a mechanism to map the error field name to the error name ("x_low", "y", "z_high" etc.) and get the corresponding index.
+4. For each error attribute, create a subcontext dictionary of the form `{"index": index}` where `index` is the index associated with the error attribute in step 3.
+5. Update the `context["error"]` dictionary. For each error attribute, use the error name identified in step 3 as the key and the child context dictionary created in step 4 as the value. Add this key-value pair to the `context["error"]` dictionary. If the key (error name) already exists, the key will be updated (or a new error entry is attached instead of modifying the existing entry). Make sure that the existing values ​​in the `context.value` and its subcontext have not been modified.
+6. The function runs in-place by modifying the input `context` dictionary. According to the description of "destruct" and side effects of the document string, there is no need to be explicitly returned. However, for clarity and ease of understanding in independent function examples, we may consider returning the modified `context`.
+
+generate_code:
+def _update_context(context):
+	"""
+	Update *context* with error information.
+
+	For demonstration purposes, we will assume fixed error properties
+	and indices. In a real scenario, these would be derived from
+	the graph object itself.
+
+	Example subcontext for a graph with fields "E,t,error_E_low":
+	{"error": {"x_low": {"index": 2}}}.
+	Note that error names are called "x", "y" and "z"
+	(this corresponds to first three coordinates,
+	if they are present), which allows to simplify plotting.
+	Existing values are not removed
+	from *context.value* and its subcontexts.
+	"""
+	if "error" not in context:
+		context["error"] = {}
+
+	# Assume these error properties are derived from the graph
+	error_properties = {
+		"error_E_low": 2,
+		"error_t_high": 5,
+		"error_other": 10,
+	}
+
+	error_name_map = {
+		"error_E": "x",
+		"error_t": "y",
+		"error_": "z" # Default for other errors starting with "error_"
+	}
+
+	for error_field, index in error_properties.items():
+		error_name = None
+		for prefix, base_name in error_name_map.items():
+			if error_field.startswith(prefix):
+				suffix = error_field[len(prefix):]
+				error_name = base_name
+				if suffix:
+					error_name += suffix
+				break
+		if error_name is None:
+			# Fallback error naming if no prefix matches.
+			# In a real scenario, you might have more sophisticated naming.
+			error_name = "unknown_error" + error_field
+
+
+		context["error"][error_name] = {"index": index}
+
+	return context
+
+
+if __name__ == '__main__':
+	# Example usage:
+	context = {}
+	updated_context = _update_context(context)
+	print(updated_context)
+
+	context_with_existing_error = {"value": {"data": 1}, "error": {"old_error": {"index": 1}}}
+	updated_context_existing_error = _update_context(context_with_existing_error)
+	print(updated_context_existing_error)
+
+--------------------------------------------------
+analyze:
+Prompt blur---missing context information---missing repo-level information
+Graph object is not provided: Prompt does not explain the structure of the graph or how its properties are accessed (for example, whether there are graph.fields or _parsed_error_names). The generated code may therefore rely on hard code and cannot dynamically obtain fields.
+
+The context structure is incomplete: Example context {"error": {"x_low": {"index": 2}}} provides the result, but does not specify the initial state or full structure of context. The generated code may not initialize or update the context correctly.
+
+Coordinate information is missing: Prompt mentioned that "x", "y", "z" corresponds to the first three coordinates, but does not provide a way to define the coordinates, resulting in the generated code being unable to be mapped dynamically.
+
+
+Prompt blur---missing context information--missing return value details
+ The return value is not clear: Prompt requires the update of the context, but does not specify whether the updated context needs to be returned. The generated code may return context, while the reference implementation (such as class methods) may not return any value, resulting in the test failure.
+ Inadequate details of updating the structure: Prompt does not specify how to handle multiple error fields (such as "error_E_low" and "error_F_high") or complex situations, and the generated code may only handle a single case and the structure does not meet expectations.
+
+
+
+==================== 62b87b4f9a0c4fa8b80b3580 ====================
+file_path: lena/structures/hist_functions.py
+project: ynikitenko/lena
+name: integral
+
+prompt:
+Compute integral (scale for a histogram).
+
+*bins* contain values, and *edges* form the mesh
+for the integration.
+Their format is defined in :class:`.histogram` description.
+
+steps:
+1. Calculate the width of each bin by subtracting consecutive elements in the `edges` array. The width of the i-th bin is `edges[i+1] - edges[i]`.
+2. Calculate the area of each bin by multiplying the bin height (from the `bins` array) with the corresponding bin width calculated in the previous step. The area of the i-th bin is `bins[i] * (edges[i+1] - edges[i])`.
+3. Sum up the areas of all bins to get the total area of the graph.
+4. Return the total calculated area.
+1. Calculate the width of each box by subtracting the successive elements in the `edges` array. The width of the i-th box is `edges[i+1] - edges[i]`.
+2. Calculate the area of ​​each box by multiplying the box height (from the `bins` array) by multiplying the corresponding box width calculated in the previous step. The area of ​​the i-th box is `bins[i] * (edges[i+1] - edges[i])`.
+3. Add the areas of all boxes to obtain the total area of ​​the figure.
+4. Returns the calculated total area.
+
+generate_code:
+def integral(bins, edges):
+	"""
+	Calculate the area of the overall graph.
+	"""
+	bin_widths = edges[1:] - edges[:-1]
+	areas = bins * bin_widths
+	total_area = sum(areas)
+	return total_area
+
+--------------------------------------------------
+analyze:
+Prompt fuzzy ---Implementation details are unclear --- The specific data structure of the input parameters is not given
+Failure to define the structure of bins and edges causes the CoT of generate_code to be assumed to be a 1D histogram, while the reference code deals with multi-dimensional cases.
+
+
+==================== 62b87b199a0c4fa8b80b354e ====================
+file_path: lena/core/check_sequence_type.py
+project: ynikitenko/lena
+name: is_fill_request_seq
+
+prompt:
+Test whether *seq* can be converted to a FillRequestSeq.
+
+True only if it is a FillRequest element
+or contains at least one such,
+and it is not a Source sequence.
+Test whether *seq* can be converted to FillRequestSeq.
+Only if it is a FillRequest element
+Or at least contain one such element
+And it is true only when it is not a source sequence.
+
+steps:
+1. First, check if the input `seq` is a list or a tuple. If `seq` is not a list or a tuple, it cannot be converted to `FillRequestSeq`, so return `False`.
+2. Second, iterate through each item in the sequence `seq`.
+3. Third, for each item in `seq`, check if it is a dictionary. If any item is not a dictionary, then `seq` cannot be converted to `FillRequestSeq`, so return `False`.
+4. Fourth, if all items in `seq` are dictionaries and `seq` itself is a list or tuple, then `seq` can be considered convertible to `FillRequestSeq`, so return `True`.
+
+ First, check whether the input seq is a list or tuple. If not, return False.
+ Secondly, iterate through each item in seq.
+ Then, check for each item to be a dictionary. If any item is not a dictionary, return False.
+ Finally, if seq is a list or tuple and all items are dictionaries, return True.
+
+generate_code:
+def is_fill_request_seq(seq):
+	"""
+	Check whether seq can be converted to FillRequestSeq and bool is returned.
+	"""
+	if not isinstance(seq, (list, tuple)):
+		return False
+	for item in seq:
+		if not isinstance(item, dict):
+			return False
+	return True
+Reference code:
+def is_fill_request_seq(seq):
+    """Test whether *seq* can be converted to a FillRequestSeq.
+
+    True only if it is a FillRequest element
+    or contains at least one such,
+    and it is not a Source sequence.
+    """
+    if is_source(seq):
+        return False
+    is_fcseq = False
+    if hasattr(seq, "__iter__"):
+        is_fcseq = any(map(is_fill_request_el, seq))
+    if is_fill_request_el(seq):
+        is_fcseq = True
+    return is_fcseq
+--------------------------------------------------
+analyze:
+Prompt fuzzy --- The implementation details are unclear --- The data structure is not given
+The definition of the FillRequest element and Source sequence mentioned by Prompt is unclear, that is, the specific data structure of FillRequest is not given, which leads to CoT failing to correctly understand the requirements based on incomplete or incorrect assumptions.
+
+
+==================== 62b87af19a0c4fa8b80b34f7 ====================
+file_path: lena/context/functions.py
+project: ynikitenko/lena
+name: difference
+
+prompt:
+Return a dictionary with items from *d1* not contained in *d2*.
+
+*level* sets the maximum depth of recursion. For infinite recursion,
+set that to -1. For level 1,
+if a key is present both in *d1* and *d2* but has different values,
+it is included into the difference.
+See :func:`intersection` for more details.
+
+*d1* and *d2* remain unchanged. However, *d1* or some of its
+subdictionaries may be returned directly.
+Make a deep copy of the result when appropriate.
+
+.. versionadded:: 0.5
+   add keyword argument *level*.
+
+steps:
+1. Initialize an empty dictionary called `diff_dict`. This dictionary will store the key-value pairs from `d1` that are considered different from `d2`.
+2. Iterate through each key in the dictionary `d1`.
+3. For each key from `d1`, check if this key exists in `d2`.
+4. If the key from `d1` is not found in `d2`, it means this key is unique to `d1`. Add this key and its corresponding value from `d1` to the `diff_dict`.
+5. If the key from `d1` is found in `d2`, compare the value associated with this key in `d1` with the value associated with the same key in `d2`.
+6. If the values associated with the key in `d1` and `d2` are different, add the key and its corresponding value from `d1` to the `diff_dict`.
+7. If the values are the same, do nothing and continue to the next key in `d1`.
+8. After iterating through all keys in `d1`, return the `diff_dict`.
+
+generate_code:
+def difference(d1, d2, level=-1):
+	"""
+	Return a dictionary with items from d1 not contained in d2.
+	"""
+	diff_dict = {}
+	for key in d1:
+		if key not in d2:
+			diff_dict[key] = d1[key]
+		elif d1[key] != d2[key]:
+			diff_dict[key] = d1[key]
+	return diff_dict
+Reference code:
+def difference(d1, d2, level=-1):
+    """Return a dictionary with items from *d1* not contained in *d2*.
+
+    *level* sets the maximum depth of recursion. For infinite recursion,
+    set that to -1. For level 1,
+    if a key is present both in *d1* and *d2* but has different values,
+    it is included into the difference.
+    See :func:`intersection` for more details.
+
+    *d1* and *d2* remain unchanged. However, *d1* or some of its
+    subdictionaries may be returned directly.
+    Make a deep copy of the result when appropriate.
+
+    .. versionadded:: 0.5
+       add keyword argument *level*.
+    """
+    # can become not dicts during the recursion
+    if not isinstance(d1, dict) or not isinstance(d2, dict):
+        return d1
+
+    if d1 == d2:
+        return {}
+    elif level == 0:
+        return d1
+
+    # some keys differ
+    result = {}
+    for key in d1:
+        if key not in d2:
+            result[key] = d1[key]
+        elif d1[key] != d2[key]:
+            res = difference(d1[key], d2[key], level-1)
+            # if d2[key] contains all d1[key] elements,
+            # the difference will be empty
+            if res:
+                result[key] = res
+    return result
+
+--------------------------------------------------
+analyze:
+prompt fuzzy --- implementation details are unclear --- recursion, nested processing and level default values ​​are fuzzy
+ The definition of recursive behavior is unclear
+Prompt mentioned that level controls the depth of recursion, but does not specify how to deal with nested dictionaries under different level values. For example, when level=1, it is clearly required that "the key exists but the values ​​are different and are included in the difference", but does not specify whether the nested dictionary needs to compare the contents of the values ​​recursively. This ambiguity may cause the implementer to mistakenly think that only the top-level key-value pairs need to be processed.
+ The meaning of "not in d2" is unclear
+Prompt requires returning items that are "not in d2" in d1, but in the case of nested dictionaries, "not in d2" can refer to the missing top-level keys, or they can refer to the difference in keys or values ​​at nested levels. Prompt does not clarify this point, which may lead to deviations in understanding the differences.
+ The default behavior of level is not defined
+Prompt does not specify the default value when level is not provided. The generated code assumes to be -1 (infinite recursion), but this is not explicit in Prompt and may affect the design of CoT.
+
+
+==================== 62b87af09a0c4fa8b80b34f1 ====================
+file_path: lena/structures/histogram.py
+project: ynikitenko/lena
+name: fill
+
+prompt:
+Fill histogram at *coord* with the given *weight*.
+
+Coordinates outside the histogram edges are ignored.
+
+steps:
+1.  Validate the input coordinate `coord`. Ensure it is a tuple or list and its dimensionality is consistent with the histogram's dimensionality. If not, raise an error or handle appropriately (in this case, the docstring says coordinates outside are ignored, so no error raising needed, we just need to check if it's within bounds).
+2.  Iterate through each dimension of the coordinate. For each dimension, check if the coordinate value falls within the defined edges of the histogram for that dimension. Assume the histogram object has an attribute, say `_edges`, which stores the edges for each dimension.
+3.  If, for any dimension, the coordinate value is outside the defined edges, then the coordinate is outside the histogram boundaries. In this case, according to the docstring, we should ignore the coordinate and do nothing. Return from the function without modifying the histogram.
+4.  If the coordinate is within the boundaries for all dimensions, proceed to find the bin indices for each dimension. For each dimension, iterate through the bin edges for that dimension to find the bin index that the coordinate value belongs to. Assume bins are defined by consecutive pairs of edges, and a value `x` falls into bin `i` if `edge[i] <= x < edge[i+1]`. For the last bin, it might be `edge[n] <= x <= edge[n+1]` or similar depending on inclusive/exclusive boundary definition.
+5.  Once bin indices are found for all dimensions, these indices together form a tuple of indices that uniquely identifies a bin in the histogram. Use these indices to access the internal data structure of the histogram (e.g., a multi-dimensional array, perhaps stored in `self._hist`).
+6.  Increment the value stored at the identified bin location by the provided `weight`. If no `weight` is provided, use a default weight of 1.
+7.  After incrementing the bin count, the fill operation is complete. The function can return `None` or the histogram object itself if needed for chaining. Based on the provided function signature, it seems no explicit return is expected.
+
+generate_code:
+def fill(self, coord, weight=1):
+        """
+        Fill histogram at *coord* with the given *weight*.
+
+        Coordinates outside the histogram edges are ignored.
+        """
+        try:
+            if not isinstance(coord, (tuple, list)):
+                raise TypeError("Coordinate must be a tuple or list")
+            if len(coord) != self.ndim:
+                raise ValueError(f"Coordinate dimension mismatch, expected {self.ndim} but got {len(coord)}")
+
+            bin_indices = []
+            for dim_index, c in enumerate(coord):
+                edges = self.edges[dim_index]
+                found_bin = False
+                for bin_idx in range(len(edges) - 1):
+                    if edges[bin_idx] <= c < edges[bin_idx+1]:
+                        bin_indices.append(bin_idx)
+                        found_bin = True
+                        break
+                if not found_bin:
+                    if edges[-2] <= c <= edges[-1]: # Handle last bin inclusive of right edge
+                        bin_indices.append(len(edges) - 2)
+                        found_bin = True
+                    if not found_bin:
+                        return # Coordinate outside histogram edges, ignore
+
+            if len(bin_indices) == self.ndim:
+                self._hist[tuple(bin_indices)] += weight # Assuming _hist is a numpy array or similar
+
+        except (TypeError, ValueError):
+            return # Or handle error as needed, but docstring says ignore outside coords
+        except IndexError:
+            return # Index out of bounds in _hist, likely due to logic error in bin finding or edges, ignore for robustness in fill
+
+--------------------------------------------------
+analyze:
+Prompt fuzzy ---- The implementation details are unclear --- The data structure does not give a specific form
+Prompt does not clarify the dimensions and structure of the histogram, which leads to CoT assuming it as a one-dimensional histogram, which is inconsistent with the multi-dimensional processing of the reference code.
+
+==================== 62b86aa3b4d922cb0e688d36 ====================
+file_path: krake/krake/data/core.py
+project: rak-n-rok/Krake
+name: _validate_labels
+
+prompt:
+Check that keys and values in the given labels match against their corresponding
+regular expressions.
+Prompt's content requires checking whether the keys and values ​​in labels match the "corresponding regular expression", and throw a ValidationError when verification fails, and the error message contains a list of all errors.
+
+Args:
+    labels (dict): the different labels to validate.
+
+Raises:
+    ValidationError: if any of the keys and labels does not match their respective
+        regular expression. The error contains as message the list of all errors
+        which occurred in the labels. Each element of the list is a dictionary with
+        one key-value pair:
+        - key: the label key or label value for which an error occurred as string.
+        - value: the error message.
+
+        .. code:: python
+
+            # Example:
+            labels = {
+                "key1": "valid",
+                "key2": ["invalid"],
+                "$$": "invalid",
+                True: True,
+            }
+            try:
+                _validate_labels(labels)
+            except ValidationError as err:
+                assert err.messages == [
+                    {"['invalid']": 'expected string or bytes-like object'},
+                    {'$$': "Label key '$$' does not match the regex [...]"},
+                    {'True': 'expected string or bytes-like object'},
+                    {'True': 'expected string or bytes-like object'},
+                ]
+
+steps:
+1. Define a function named `_validate_labels` that accepts one argument `labels`. This argument is expected to be a dictionary.
+2. Iterate through each key-value pair in the `labels` dictionary. You can use a `for` loop and the `.items()` method of the dictionary to achieve this.
+3. For each key obtained from the dictionary, call the function `validate_key()` with the key as an argument.
+4. Check the return value of `validate_key()`. If it returns `False`, it indicates that the key is invalid. In this case, raise a `ValueError` exception with a descriptive message indicating that an invalid key was found. Include the invalid key in the error message for better debugging.
+5. For each value obtained from the dictionary, call the function `validate_value()` with the value as an argument.
+6. Check the return value of `validate_value()`. If it returns `False`, it indicates that the value is invalid. In this case, raise a `ValueError` exception with a descriptive message indicating that an invalid value was found. Include the invalid value in the error message for better debugging.
+7. If the loop completes without raising any `ValueError` exceptions, it means all keys and values in the `labels` dictionary are valid according to `validate_key()` and `validate_value()`. In this case, the function should complete its execution without explicitly returning anything (implicitly returns `None`).
+
+generate_code:
+def _validate_labels(labels):
+	"""
+	Check that keys and values in the given labels by validate_key() and validate_value().
+	"""
+	for key, value in labels.items():
+		if not validate_key(key):
+			raise ValueError(f"Invalid label key: {key}")
+		if not validate_value(value):
+			raise ValueError(f"Invalid label value: {value}")
+
+def validate_key(key):
+	# Replace with your actual key validation logic
+	if not isinstance(key, str):
+		return False
+	return True
+
+def validate_value(value):
+	# Replace with your actual value validation logic
+	if not isinstance(value, (str, int)):
+		return False
+	return True
+Reference code:
+def _validate_labels(labels):
+    """Check that keys and values in the given labels match against their corresponding
+    regular expressions.
+
+    Args:
+        labels (dict): the different labels to validate.
+
+    Raises:
+        ValidationError: if any of the keys and labels does not match their respective
+            regular expression. The error contains as message the list of all errors
+            which occurred in the labels. Each element of the list is a dictionary with
+            one key-value pair:
+            - key: the label key or label value for which an error occurred as string.
+            - value: the error message.
+
+            .. code:: python
+
+                # Example:
+                labels = {
+                    "key1": "valid",
+                    "key2": ["invalid"],
+                    "$$": "invalid",
+                    True: True,
+                }
+                try:
+                    _validate_labels(labels)
+                except ValidationError as err:
+                    assert err.messages == [
+                        {"['invalid']": 'expected string or bytes-like object'},
+                        {'$$': "Label key '$$' does not match the regex [...]"},
+                        {'True': 'expected string or bytes-like object'},
+                        {'True': 'expected string or bytes-like object'},
+                    ]
+    """
+    errors = []
+    for key, value in labels.items():
+        try:
+            validate_key(key)
+        except (ValidationError, TypeError) as err:
+            errors.append({str(key): str(err)})
+
+        try:
+            validate_value(value)
+        except (ValidationError, TypeError) as err:
+            errors.append({str(value): str(err)})
+
+    if errors:
+        raise ValidationError(list(errors))
+
+--------------------------------------------------
+analyze :
+prompt fuzzy --- Context missing --- Repo-level information is missing. That is: regular expressions defined in the context
+Prompt mentions "their corresponding regular expressions", but does not specify what these regular expressions are. For example, do keys need to be alphanumeric strings? Do values ​​need to follow a specific format? The example mentions Label key '$$' does not match the regex [...], but does not provide a specific regular expression pattern. This ambiguity makes it difficult for implementers to accurately design verification logic.
+
+
+==================== 62b86a9eb4d922cb0e688d25 ====================
+file_path: krake/krake/data/core.py
+project: rak-n-rok/Krake
+name: _get_resource_name_regex
+
+prompt:
+Build or return the regular expressions that are used to validate
+the name of the Krake resources.
+
+Returns:
+    (re.Pattern): the compiled regular expressions, to validate
+    the resource name.
+
+steps:
+1. Understand the purpose of the function `_get_resource_name_regex()`. Based on its name and docstring, it is intended to return regular expressions used for validating the names of Krake resources.
+2. Determine the valid characters and format for Krake resource names. Although not explicitly specified, typical resource naming conventions often allow lowercase alphanumeric characters, hyphens, and underscores.  Assume Krake resource names follow this general pattern.
+3. Define a regular expression pattern that enforces these naming conventions. The regex should ensure that a resource name:
+    *   Starts with a lowercase alphabetic character.
+    *   Contains only lowercase alphanumeric characters, hyphens, or underscores for the rest of the name.
+    *   Optionally, consider adding length constraints if Krake has specific length limits for resource names. For now, we will focus on character validity and starting character.
+4. Construct the regular expression string in Python. Use the `re` module's syntax to create the regex pattern. A suitable regex pattern would be `^[a-z][a-z0-9-_]*$`.
+    *   `^`: Matches the beginning of the string.
+    *   `[a-z]`: Matches a lowercase alphabet character for the first character.
+    *   `[a-z0-9-_]*`: Matches zero or more of lowercase alphabets, numbers, hyphens, or underscores for the rest of the string.
+    *   `$`: Matches the end of the string.
+5. Return the constructed regular expression string from the function.
+
+generate_code:
+def _get_resource_name_regex():
+	"""
+	Return the regular expressions that are used to validate the name of the Krake resources
+	"""
+	return "^[a-z][a-z0-9-_]*$"
+
+--------------------------------------------------
+analyze:
+Prompt blur ---- Implementing blur details --- The regular expression definition is unclear
+Prompt does not clarify the naming rules of Krake resource names and the way regular expressions are built. Ambiguity is the root cause of CoT and code implementation problems.
+
+ The naming rules are unclear
+Prompt requires verification of the regular expression of "Krake resource name", but does not specify specific naming rules, such as allowed characters, length limits, end-to-end character requirements, etc. This ambiguity makes it difficult for implementers to accurately construct regular expressions, and can only rely on assumptions or guesses.
+ The source of regular expressions is blurred
+The phrase "Build or return the regular expressions" implies that regular expressions may require dynamic construction or return existing patterns, but Prompt does not specify the specific source or construction logic, which increases implementation uncertainty.
+ Clear return type
+Prompt explicitly requires returning a compiled regular expression object re.Pattern, which has no ambiguity.
+
+
+==================== 62b86a4fb4d922cb0e688cf8 ====================
+
+file_path: krake/krake/data/core.py
+project: rak-n-rok/Krake
+name: validate_value
+
+prompt:
+Validate the given value against the corresponding regular expression.
+
+Args:
+    value: the string to validate
+
+Raises:
+    ValidationError: if the given value is not conform to the regular expression.
+
+steps:
+1. Import the `re` module to work with regular expressions in Python.
+2. Define the regular expression pattern as a string. This pattern will be used to validate the input `value`. For example, to validate if the value is a string of digits, the pattern would be `r'^\d+$'`.  Let's assume we are validating for digits for this example, but the actual regex could be different depending on the validation requirement.
+3. Use the `re.match()` function to attempt to match the regular expression pattern from the beginning of the input `value`. `re.match(pattern, value)` returns a match object if the pattern matches at the beginning of the string, otherwise it returns `None`.
+4. Check if the result of `re.match()` is not `None`. If it's not `None`, it means the `value` matches the regular expression, and the validation is successful.
+5. Return `True` if `re.match()` returns a match object (validation successful), and `False` if it returns `None` (validation failed).
+
+generate_code:
+import re
+
+def validate_value(value, regex_pattern):
+	"""
+	Validate the given value against the provided regular expression pattern.
+	"""
+	match = re.match(regex_pattern, value)
+	if match:
+		return True
+	else:
+		return False
+Reference code:
+def validate_key(key):
+    """Validate the given key against the corresponding regular expression.
+
+    Args:
+        key: the string to validate
+
+    Raises:
+        ValidationError: if the given key is not conform to the regular expression.
+    """
+    key_regex, _ = _get_labels_regex()
+    if not key_regex.fullmatch(key):
+        raise ValidationError(
+            f"Label key {key!r} does not match the regex {_label_key_pattern!r}."
+        )
+--------------------------------------------------
+analyze:
+The source of regular expressions is unclear --- Actually, it is a regular expression that has been predefined in the context
+Prompt requires verification whether the value matches "corresponding regular expression", but does not specify the source of the regular expression. Is it passed in as a parameter, predefined inside the function, or is it obtained in other ways? This ambiguity directly affects the design direction of CoT and code. For example, CoT assumes that the regular expression is defined inside the function, and generate_code passes it as a parameter. Both implementations may be reasonable guesses about Prompt, but may also be inconsistent with the actual requirements.
+
+
+
+==================== 62b86a4fb4d922cb0e688cf7 ====================
+file_path: krake/krake/data/core.py
+project: rak-n-rok/Krake
+name: validate_key
+
+prompt:
+Validate the given key against the corresponding regular expression.
+
+Args:
+    key: the string to validate
+
+Raises:
+    ValidationError: if the given key is not conform to the regular expression.
+
+steps:
+1. **Import the `re` module:** Import the regular expression module in Python to work with regular expressions. This is necessary to use functions for pattern matching.
+2. **Define the regular expression pattern:**  Determine the regular expression that the `key` should match. This pattern specifies the valid format for the key. For demonstration purposes, let's assume a key should consist of alphanumeric characters and underscores, with a length between 5 and 15 characters. The regular expression for this would be `^[a-zA-Z0-9_]{5,15}$`.  **Note:** You need to replace this example regex with the actual regular expression that is required for your key validation.
+3. **Use `re.fullmatch()` to match the key against the regex:** Employ the `re.fullmatch(pattern, string)` function. This function attempts to match the *entire* input `key` string against the defined regular expression `pattern`. It returns a match object if the entire string matches the pattern, and `None` otherwise.
+4. **Return the boolean result of the validation:** Check if `re.fullmatch()` returned a match object (successful match) or `None` (no match). Return `True` if there is a match (meaning the key is valid according to the regex), and `False` if there is no match (key is invalid). You can directly convert the result of `re.fullmatch()` to a boolean value as a match object is truthy and `None` is falsy.
+
+generate_code:
+import re
+
+def validate_key(key):
+	"""
+	Validate the given key against the corresponding regular expression.
+	For example, key should be alphanumeric and underscore, with length between 5 and 15.
+	"""
+	regex_pattern = r"^[a-zA-Z0-9_]{5,15}$" # Define your key validation regex here.
+	match = re.fullmatch(regex_pattern, key)
+	return bool(match)
+Reference code:
+def validate_key(key):
+    """Validate the given key against the corresponding regular expression.
+
+    Args:
+        key: the string to validate
+
+    Raises:
+        ValidationError: if the given key is not conform to the regular expression.
+    """
+    key_regex, _ = _get_labels_regex()
+    if not key_regex.fullmatch(key):
+        raise ValidationError(
+            f"Label key {key!r} does not match the regex {_label_key_pattern!r}."
+        )
+
+
+--------------------------------------------------
+analyze:
+The source of regular expressions is unclear --- Actually, it is a regular expression that has been predefined in the context
+Prompt requires verification whether the value matches "corresponding regular expression", but does not specify the source of the regular expression. Is it passed in as a parameter, predefined inside the function, or is it obtained in other ways? This ambiguity directly affects the design direction of CoT and code. For example, CoT assumes that the regular expression is defined inside the function, and generate_code passes it as a parameter. Both implementations may be reasonable guesses about Prompt, but may also be inconsistent with the actual requirements.
+
+==================== 62b86a01b4d922cb0e688ccc ====================
+
+file_path: krake/krake/controller/kubernetes/hooks.py
+project: rak-n-rok/Krake
+name: generate_default_observer_schema_dict
+
+prompt:
+Together with :func:``generate_default_observer_schema_list``, this function is
+called recursively to generate part of a default ``observer_schema`` from part of a
+Kubernetes resource, defined respectively by ``manifest_dict`` or ``manifest_list``.
+
+Args:
+    manifest_dict (dict): Partial Kubernetes resources
+    first_level (bool, optional): If True, indicates that the dictionary represents
+        the whole observer schema of a Kubernetes resource
+
+Returns:
+    dict: Generated partial observer_schema
+
+This function creates a new dictionary from ``manifest_dict`` and replaces all
+non-list and non-dict values by ``None``.
+
+In case of ``first_level`` dictionary (i.e. complete ``observer_schema`` for a
+resource), the values of the identifying fields are copied from the manifest file.
+
+steps:
+1. Initialize an empty dictionary called `observer_schema_dict`.
+2. Iterate through each key-value pair in the input `manifest_dict`.
+3. For each value, check its type.
+4. If the value is of type `dict`:
+    a. Check the value of `first_level`.
+    b. If `first_level` is True, set the value for the current key in `observer_schema_dict` to an empty dictionary `{}`.
+    c. If `first_level` is False, recursively call the `generate_default_observer_schema_dict` function with the current value and `first_level=False`. Set the returned dictionary as the value for the current key in `observer_schema_dict`.
+5. If the value is of type `list`, set the value for the current key in `observer_schema_dict` to an empty list `[]`.
+6. If the value is of type `str`, set the value for the current key in `observer_schema_dict` to an empty string `""`.
+7. If the value is of type `int`, set the value for the current key in `observer_schema_dict` to `0`.
+8. If the value is of type `float`, set the value for the current key in `observer_schema_dict` to `0.0`.
+9. If the value is of type `bool`, set the value for the current key in `observer_schema_dict` to `False`.
+10. For any other data type, set the value for the current key in `observer_schema_dict` to `None`.
+11. Return the `observer_schema_dict`.
+
+generate_code:
+def generate_default_observer_schema_dict(manifest_dict, first_level=False):
+	observer_schema_dict = {}
+	for key, value in manifest_dict.items():
+		if isinstance(value, dict):
+			if first_level:
+				observer_schema_dict[key] = {}
+			else:
+				observer_schema_dict[key] = generate_default_observer_schema_dict(value, first_level=False)
+		elif isinstance(value, list):
+			observer_schema_dict[key] = []
+		elif isinstance(value, str):
+			observer_schema_dict[key] = ""
+		elif isinstance(value, int):
+			observer_schema_dict[key] = 0
+		elif isinstance(value, float):
+			observer_schema_dict[key] = 0.0
+		elif isinstance(value, bool):
+			observer_schema_dict[key] = False
+		else:
+			observer_schema_dict[key] = None
+	return observer_schema_dict
+Reference code:
+def generate_default_observer_schema_dict(manifest_dict, first_level=False):
+    """Together with :func:``generate_default_observer_schema_list``, this function is
+    called recursively to generate part of a default ``observer_schema`` from part of a
+    Kubernetes resource, defined respectively by ``manifest_dict`` or ``manifest_list``.
+
+    Args:
+        manifest_dict (dict): Partial Kubernetes resources
+        first_level (bool, optional): If True, indicates that the dictionary represents
+            the whole observer schema of a Kubernetes resource
+
+    Returns:
+        dict: Generated partial observer_schema
+
+    This function creates a new dictionary from ``manifest_dict`` and replaces all
+    non-list and non-dict values by ``None``.
+
+    In case of ``first_level`` dictionary (i.e. complete ``observer_schema`` for a
+    resource), the values of the identifying fields are copied from the manifest file.
+
+    """
+    observer_schema_dict = {}
+
+    for key, value in manifest_dict.items():
+
+        if isinstance(value, dict):
+            observer_schema_dict[key] = generate_default_observer_schema_dict(value)
+
+        elif isinstance(value, list):
+            observer_schema_dict[key] = generate_default_observer_schema_list(value)
+
+        else:
+            observer_schema_dict[key] = None
+
+    if first_level:
+        observer_schema_dict["apiVersion"] = manifest_dict["apiVersion"]
+        observer_schema_dict["kind"] = manifest_dict["kind"]
+        observer_schema_dict["metadata"]["name"] = manifest_dict["metadata"]["name"]
+
+        if (
+            "spec" in manifest_dict
+            and "type" in manifest_dict["spec"]
+            and manifest_dict["spec"]["type"] == "LoadBalancer"
+        ):
+            observer_schema_dict["status"] = {"load_balancer": {"ingress": None}}
+
+    return observer_schema_dict
+
+analyze:
+prompt fuzzy—missing context information—missing repo-level information
+Prompt did not specify which fields "identifying fields" are specifically, nor did it mention other fields that may be involved when first_level is True (such as status processing)
+
+
+--------------------------------------------------

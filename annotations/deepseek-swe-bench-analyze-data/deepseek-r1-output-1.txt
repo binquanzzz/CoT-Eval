@@ -1,0 +1,817 @@
+text:
+<issue>
+Add an option to django-admin to always colorize output
+Description
+
+With Django management commands, it is currently possible disable colors with the --no-colors flag.
+What I'd like to have is basically the other side of the coin: a --force-colors flag that instructs Django to output ANSI color sequences in cases it would disable colors by default (typically, when the output is piped to another command, as documented).
+My real world use-case is the following one: I have a custom Django command to import data. I run this command myself, and I'd like to send a colored log (HTML seems perfect for this) to the data curators. I can use the ​https://github.com/theZiz/aha utility for this, but that doesn't work since Django disable colors when the output is piped.
+Other *nix commands have a special flag for this exact use-case, for example $ ls --color=always
+
+</issue>
+
+steps:
+
+1. **Add the `--force-colors` command line option**: Modify the `create_parser` method in `BaseCommand` to include the new `--force-colors` flag. This allows users to specify that they want ANSI color output even when not connected to a TTY.
+
+2. **Update `OutputWrapper` to support forced colors**: Introduce a `force_color` attribute in the `OutputWrapper` class. Adjust the `style_func` setter to check this attribute, allowing style functions to be applied when `force_color` is `True`, overriding the TTY check.
+
+3. **Handle `--force-colors` in the `execute` method**: After parsing the command line options in the `execute` method of `BaseCommand`, set the `force_color` attribute on `stdout` and `stderr` OutputWrappers if the `--force-colors` option is present. Re-apply the `style_func` to ensure colors are forced even in non-TTY environments.
+
+4. **Ensure `--no-color` takes precedence**: Maintain existing logic where `--no-color` disables colors regardless of `--force-colors` by checking `no_color` first before processing `force_colors`.
+
+model_patch:
+
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -280,6 +280,10 @@
+             '--no-color', action='store_true',
+             help="Don't colorize the command output.",
+         )
++        parser.add_argument(
++            '--force-colors', action='store_true',
++            help="Force colorization of the command output.",
++        )
+         self.add_arguments(parser)
+         return parser
+
+@@ -344,6 +348,13 @@
+         if options.get('stderr'):
+             self.stderr = OutputWrapper(options['stderr'], self.stderr.style_func)
+
++        if options.get('force_colors'):
++            self.stdout.force_color = True
++            self.stderr.force_color = True
++            # Re-apply style_func to force color output
++            if self.stderr.style_func:
++                self.stderr.style_func = self.stderr.style_func
++
+         if self.requires_system_checks and not options.get('skip_checks'):
+             self.check()
+         if self.requires_migrations_checks:
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -125,11 +125,12 @@
+     """
+     @property
+     def style_func(self):
+         return self._style_func
+
+     @style_func.setter
+     def style_func(self, style_func):
+-        if style_func and self.isatty():
++        if style_func and (self.force_color or self.isatty()):
+             self._style_func = style_func
+         else:
+             self._style_func = lambda x: x
+
+     def __init__(self, out, style_func=None, ending='\n'):
+@@ -137,6 +138,7 @@
+         self.style_func = None
+         self.ending = ending
+
+     def __getattr__(self, name):
+         return getattr(self._out, name)
+
++    force_color = False
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -95,7 +95,7 @@ class DjangoHelpFormatter(HelpFormatter):
+     """
+     show_last = {
+         '--version', '--verbosity', '--traceback', '--settings', '--pythonpath',
+-        '--no-color',
++        '--no-color', '--force_color',
+     }
+
+     def _reordered_actions(self, actions):
+@@ -227,13 +227,15 @@ class BaseCommand:
+     # Command-specific options not defined by the argument parser.
+     stealth_options = ()
+
+-    def __init__(self, stdout=None, stderr=None, no_color=False):
++    def __init__(self, stdout=None, stderr=None, no_color=False, force_color=False):
+         self.stdout = OutputWrapper(stdout or sys.stdout)
+         self.stderr = OutputWrapper(stderr or sys.stderr)
++        if no_color and force_color:
++            raise CommandError("'no_color' and 'force_color' can't be used together.")
+         if no_color:
+             self.style = no_style()
+         else:
+-            self.style = color_style()
++            self.style = color_style(force_color)
+             self.stderr.style_func = self.style.ERROR
+
+     def get_version(self):
+@@ -280,6 +282,10 @@ def create_parser(self, prog_name, subcommand, **kwargs):
+             '--no-color', action='store_true',
+             help="Don't colorize the command output.",
+         )
++        parser.add_argument(
++            '--force-color', action='store_true',
++            help='Force colorization of the command output.',
++        )
+         self.add_arguments(parser)
+         return parser
+
+@@ -339,7 +345,11 @@ def execute(self, *args, **options):
+         controlled by the ``requires_system_checks`` attribute, except if
+         force-skipped).
+         """
+-        if options['no_color']:
++        if options['force_color'] and options['no_color']:
++            raise CommandError("The --no-color and --force-color options can't be used together.")
++        if options['force_color']:
++            self.style = color_style(force_color=True)
++        elif options['no_color']:
+             self.style = no_style()
+             self.stderr.style_func = None
+         if options.get('stdout'):
+diff --git a/django/core/management/color.py b/django/core/management/color.py
+--- a/django/core/management/color.py
++++ b/django/core/management/color.py
+@@ -64,10 +64,10 @@ def no_style():
+     return make_style('nocolor')
+
+
+-def color_style():
++def color_style(force_color=False):
+     """
+     Return a Style object from the Django color scheme.
+     """
+-    if not supports_color():
++    if not force_color and not supports_color():
+         return no_style()
+     return make_style(os.environ.get('DJANGO_COLORS', ''))
+
+</patch>
+
+--------------------------------------------------
+analyze
+Reason for error: format error (miss exception handling when creating attributes)
+CoT does not handle how to handle conflicting command line options when --no-color and --force-colors exist at the same time. Specifically: Step 2 assumes that only the force_color attribute is checked to be true, and there is a lack of instructions for effective integration; Step 3 logically cannot clearly prevent the case of simultaneously specifying --no-color and --force-colors.
+The code also does not implement exception handling, so the format may exceed the expected structure.
+text:
+<issue>
+Trunc() should allow passing is_dst resolution to avoid NonExistentTimeError/AmbiguousTimeError
+Description
+
+		(last modified by Alexander Holmbäck)
+
+When Trunc() truncates to a nonexisting or ambiguous datetime, the exception raised by pytz remains unhandled. The expected behavior would, IMO, be to not check the validity of truncated dates.
+This test for example:
+import datetime
+import pytz
+from django.db.models.functions import Trunc
+from django.test import TestCase
+from django.utils import timezone
+from .models import Log
+class TestTruncateToInvalidTime(TestCase):
+	def test_truncate_to_dst_ends_stockholm(self):
+		tzinfo = pytz.timezone('Europe/Stockholm')
+		timestamp = datetime.datetime(2018, 10, 28, 2, tzinfo=tzinfo)
+		Log.objects.create(timestamp=timestamp)
+		logs = Log.objects.annotate(day=Trunc('timestamp', 'hour')).all()
+		timezone.activate(tzinfo)
+		self.assertEqual(logs[0].day.day, 28)
+Results in the following error:
+ERROR: test_truncate_to_dst_ends_stockholm (trunc.tests.TestTruncateInvalidTime)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+File "/home/alex/tickets/trunc/tests.py", line 47, in test_truncate_to_dst_ends_stockholm
+self.assertEqual(logs[0].day.day, 28)
+File "/home/alex/django/django/db/models/query.py", line 303, in __getitem__
+qs._fetch_all()
+File "/home/alex/django/django/db/models/query.py", line 1190, in _fetch_all
+self._result_cache = list(self._iterable_class(self))
+File "/home/alex/django/django/db/models/query.py", line 64, in __iter__
+for row in compiler.results_iter(results):
+File "/home/alex/django/django/db/models/sql/compiler.py", line 1013, in apply_converters
+value = converter(value, expression, connection)
+File "/home/alex/django/django/db/models/functions/datetime.py", line 225, in convert_value
+value = timezone.make_aware(value, self.tzinfo)
+File "/home/alex/django/django/utils/timezone.py", line 270, in make_aware
+return timezone.localize(value, is_dst=is_dst)
+File "/home/alex/.virtualenvs/djangodev/lib/python3.6/site-packages/pytz/tzinfo.py", line 363, in localize
+raise AmbiguousTimeError(dt)
+pytz.exceptions.AmbiguousTimeError: 2018-10-28 02:00:00
+
+</issue>
+
+steps:
+
+1. **Add `is_dst` parameter to `TruncBase` class:**
+   - Modify the `__init__` method of `TruncBase` to accept an optional `is_dst` parameter.
+   - Store `is_dst` as an instance variable so it can be used during datetime conversion.
+
+2. **Pass `is_dst` to `make_aware` in `TruncBase.convert_value`:**
+   - Update the `convert_value` method to include the `is_dst` parameter when calling `timezone.make_aware`.
+   - This allows handling ambiguous or non-existent times during truncation by leveraging pytz's `is_dst` resolution.
+
+3. **Update `Trunc` class to forward `is_dst` parameter:**
+   - Modify the `Trunc` class constructor to accept `is_dst` as an optional keyword argument.
+   - Pass the `is_dst` value to `TruncBase`'s constructor to ensure it's available during processing.
+
+model_patch:
+
+--- a/django/db/models/functions/datetime.py
++++ b/django/db/models/functions/datetime.py
+@@ -173,9 +173,10 @@ class TruncBase(TimezoneMixin, Transform):
+     kind = None
+     tzinfo = None
+
+-    def __init__(self, expression, output_field=None, tzinfo=None, **extra):
++    def __init__(self, expression, output_field=None, tzinfo=None, is_dst=None, **extra):
+         self.tzinfo = tzinfo
+         super().__init__(expression, output_field=output_field, **extra)
++        self.is_dst = is_dst
+
+     def as_sql(self, compiler, connection):
+         inner_sql, inner_params = compiler.compile(self.lhs)
+@@ -225,7 +226,7 @@ class TruncBase(TimezoneMixin, Transform):
+             if not settings.USE_TZ:
+                 pass
+             elif value is not None:
+-                value = timezone.make_aware(value, self.tzinfo)
++                value = timezone.make_aware(value, self.tzinfo, is_dst=self.is_dst)
+             elif not connection.features.has_zoneinfo_database:
+                 raise ValueError(
+                     'Database returned an invalid datetime value. Are time '
+@@ -245,8 +246,8 @@ class TruncBase(TimezoneMixin, Transform):
+
+ class Trunc(TruncBase):
+
+-    def __init__(self, expression, kind, output_field=None, tzinfo=None, **extra):
++    def __init__(self, expression, kind, output_field=None, tzinfo=None, is_dst=None, **extra):
+         self.kind = kind
+-        super().__init__(expression, output_field=output_field, tzinfo=tzinfo, **extra)
++        super().__init__(expression, output_field=output_field, tzinfo=tzinfo, is_dst=is_dst, **extra)
+
+
+ class TruncYear(TruncBase):
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/functions/datetime.py b/django/db/models/functions/datetime.py
+--- a/django/db/models/functions/datetime.py
++++ b/django/db/models/functions/datetime.py
+@@ -170,8 +170,9 @@ class TruncBase(TimezoneMixin, Transform):
+     kind = None
+     tzinfo = None
+
+-    def __init__(self, expression, output_field=None, tzinfo=None, **extra):
++    def __init__(self, expression, output_field=None, tzinfo=None, is_dst=None, **extra):
+         self.tzinfo = tzinfo
++        self.is_dst = is_dst
+         super().__init__(expression, output_field=output_field, **extra)
+
+     def as_sql(self, compiler, connection):
+@@ -222,7 +223,7 @@ def convert_value(self, value, expression, connection):
+                 pass
+             elif value is not None:
+                 value = value.replace(tzinfo=None)
+-                value = timezone.make_aware(value, self.tzinfo)
++                value = timezone.make_aware(value, self.tzinfo, is_dst=self.is_dst)
+             elif not connection.features.has_zoneinfo_database:
+                 raise ValueError(
+                     'Database returned an invalid datetime value. Are time '
+@@ -240,9 +241,12 @@ def convert_value(self, value, expression, connection):
+
+ class Trunc(TruncBase):
+
+-    def __init__(self, expression, kind, output_field=None, tzinfo=None, **extra):
++    def __init__(self, expression, kind, output_field=None, tzinfo=None, is_dst=None, **extra):
+         self.kind = kind
+-        super().__init__(expression, output_field=output_field, tzinfo=tzinfo, **extra)
++        super().__init__(
++            expression, output_field=output_field, tzinfo=tzinfo,
++            is_dst=is_dst, **extra
++        )
+
+
+ class TruncYear(TruncBase):
+
+</patch>
+
+--------------------------------------------------
+analyze
+Reason for error: When the Trunc() function tries to handle a non-existent or fuzzy date time, an AmbiguousTimeError is thrown. (At the end of processing daylight saving time (DST), some time points may be blurred or non-existent in the local time zone. The existing Trunc() implementation cannot handle this situation, which directly leads to an unhandled exception.)
+The CoT step lacks detailed instructions and validation of is_dst parameter processing. Specifically:
+Step 1 does not explain the case where the is_dict parameter is not passed; Step 2 also only assumes that all parameters is_dict will be passed when the cover_value is called. In Step 3, there may be a logical conflict between is_dict when interacting with other parameters.
+
+text:
+<issue>
+Allow FilePathField path to accept a callable.
+Description
+
+I have a special case where I want to create a model containing the path to some local files on the server/dev machine. Seeing as the place where these files are stored is different on different machines I have the following:
+import os
+from django.conf import settings
+from django.db import models
+class LocalFiles(models.Model):
+	name = models.CharField(max_length=255)
+	file = models.FilePathField(path=os.path.join(settings.LOCAL_FILE_DIR, 'example_dir'))
+Now when running manage.py makemigrations it will resolve the path based on the machine it is being run on. Eg: /home/<username>/server_files/example_dir
+I had to manually change the migration to include the os.path.join() part to not break this when running the migration on production/other machine.
+
+</issue>
+
+steps:
+
+1. Modify the FilePathField to accept a callable for the `path` argument. Update its initialization logic to check if `path` is a callable and store it without immediate evaluation.
+2. Adjust the migration serialization process in `django/db/migrations/writer.py` to handle callables. Introduce a serializer that converts callables to their import path strings (e.g., `os.path.join`) instead of evaluating them during migration creation.
+3. Ensure the `MigrationWriter` correctly serializes the callable `path` by referencing its module and function name, preventing the resolved path from being hardcoded into migrations.
+4. Update the deconstruction logic of the FilePathField to include the callable in the migration's operations when generating migrations, allowing it to be serialized properly.
+
+model_patch:
+
+--- a/django/db/migrations/writer.py
++++ b/django/db/migrations/writer.py
+@@ -12,6 +12,7 @@
+ from django.db.migrations.loader import MigrationLoader
+ from django.db.migrations.serializer import Serializer, serializer_factory
+ from django.utils.inspect import get_func_args
++from django.utils.functional import LazyObject, SimpleLazyObject
+ from django.utils.module_loading import module_dir
+ from django.utils.timezone import now
+
+@@ -270,6 +271,16 @@
+     def serialize(cls, value):
+         return serializer_factory(value).serialize()
+
++    @classmethod
++    def _serialize_callable(cls, callable):
++        module = callable.__module__
++        if module == '__main__':
++            raise ValueError(
++                'Cannot serialize function %r: unable to determine import path'
++                % callable)
++        name = callable.__qualname__
++        return '%s.%s' % (module, name), {'import %s' % module}
++
+     @classmethod
+     def register_serializer(cls, type_, serializer):
+         Serializer.register(type_, serializer)
+@@ -277,6 +288,15 @@
+     @classmethod
+     def unregister_serializer(cls, type_):
+         Serializer.unregister(type_)
++
++    @classmethod
++    def serialize_callable(cls, value):
++        if isinstance(value, (LazyObject, SimpleLazyObject)):
++            value = value._wrapped
++        if callable(value):
++            return cls._serialize_callable(value)
++        else:
++            raise ValueError("Cannot serialize non-callable value: %s" % value)
+
+
+ MIGRATION_HEADER_TEMPLATE = """\
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -1314,6 +1314,8 @@
+
+     def __init__(self, verbose_name=None, name=None, path='', **kwargs):
+         self.path = path
++        if callable(self.path):
++            self.path = self.path()
+         self.match = kwargs.pop('match', None)
+         self.recursive = kwargs.pop('recursive', False)
+         self.allow_files = kwargs.pop('allow_files', True)
+@@ -1335,7 +1337,6 @@
+             raise ValueError("FilePathField requires allow_files to be True when allow_folders is False.")
+
+         super().__init__(verbose_name, name, **kwargs)
+-
+     def check(self, **kwargs):
+         errors = super().check(**kwargs)
+         if not self.path:
+@@ -1379,6 +1380,8 @@
+     def deconstruct(self):
+         name, path, args, kwargs = super().deconstruct()
+         kwargs["path"] = self.path
++        if callable(kwargs["path"]):
++            kwargs["path"] = self._path
+         if self.match is not None:
+             kwargs["match"] = self.match
+         if self.recursive is not False:
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -1709,7 +1709,7 @@ def get_prep_value(self, value):
+
+     def formfield(self, **kwargs):
+         return super().formfield(**{
+-            'path': self.path,
++            'path': self.path() if callable(self.path) else self.path,
+             'match': self.match,
+             'recursive': self.recursive,
+             'form_class': forms.FilePathField,
+
+</patch>
+
+--------------------------------------------------
+analyze
+Reason for the error: FilePathField’s path parameter needs to accept a callable object, but the code has problems with the processing of the callable object. (The process of path in the formfield method is not comprehensive, and the callable object cannot be correctly evaluated, resulting in failure in testing test_callable_path)
+CoT lacks the details of the callable object processing, and it is impossible to clarify the correct way to handle callable objects in different contexts. Specifically:
+Step 2: In the process of adjusting migration serialization, there are many details missing, and it is impossible to ensure that it can be serialized correctly in all different migration contexts. Step 3: The exception of module import path failure is not handled. Then, Step 4: For different migration generation situations, the possible update of the anti-construction logic may fail.
+text:
+<issue>
+Add autocomplete attribute to contrib.auth fields
+Description
+
+		(last modified by CHI Cheng)
+
+Add autocomplete=username/email/current-password/new-password to contrib.auth builtin forms.
+Pull request: ​https://github.com/django/django/pull/9921
+The most useful one is autocomplete=new-password, which prevents browsers prefill with current password, Chrome will also suggest a random strong password for users who turned on account sync.
+Related docs:
+​https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill
+​https://www.chromium.org/developers/design-documents/form-styles-that-chromium-understands
+​https://developer.mozilla.org/en-US/docs/Web/Security/Securing_your_site/Turning_off_form_autocompletion#The_autocomplete_attribute_and_login_fields
+
+</issue>
+
+steps:
+
+1. Identify the form fields in contrib/auth/forms.py that require autocomplete attributes based on their purpose:
+   - AuthenticationForm: username (username), password (current-password)
+   - PasswordResetForm: email (email)
+   - UserCreationForm: password1 (new-password), password2 (new-password)
+   - SetPasswordForm: new_password1 (new-password), new_password2 (new-password)
+   - PasswordChangeForm: old_password (current-password), new_password1 (new-password), new_password2 (new-password)
+   - AdminPasswordChangeForm: password1 (new-password), password2 (new-password)
+
+2. Modify each identified field's widget attributes to include the appropriate autocomplete value:
+   - Add 'autocomplete' attribute to existing widget definitions
+   - Maintain existing attributes like autofocus where present
+
+3. Update password confirmation fields to use 'new-password' autocomplete to prevent browsers from suggesting current passwords
+
+4. Ensure email fields use 'email' autocomplete for better browser support
+
+5. Preserve existing functionality while adding new attributes to maintain backward compatibility
+
+6. No documentation changes required as this is an HTML attribute addition that follows existing form field patterns
+
+model_patch:
+
+--- a/django/contrib/auth/forms.py
++++ b/django/contrib/auth/forms.py
+@@ -83,12 +83,14 @@
+         label=_("Password"),
+         strip=False,
+         widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+     password2 = forms.CharField(
+         label=_("Password confirmation"),
+         widget=forms.PasswordInput,
+         strip=False,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         help_text=_("Enter the same password as before, for verification."),
+     )
+
+@@ -167,11 +169,11 @@
+     Base class for authenticating users. Extend this to get a form that accepts
+     username/password logins.
+     """
+-    username = UsernameField(widget=forms.TextInput(attrs={'autofocus': True}))
++    username = UsernameField(widget=forms.TextInput(attrs={'autofocus': True, 'autocomplete': 'username'}))
+     password = forms.CharField(
+         label=_("Password"),
+         strip=False,
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'current-password'}),
+     )
+
+     error_messages = {
+@@ -239,7 +241,7 @@
+
+
+ class PasswordResetForm(forms.Form):
+-    email = forms.EmailField(label=_("Email"), max_length=254)
++    email = forms.EmailField(label=_("Email"), max_length=254, widget=forms.EmailInput(attrs={'autocomplete': 'email'}))
+
+     def send_mail(self, subject_template_name, email_template_name,
+                   context, from_email, to_email, html_email_template_name=None):
+@@ -315,14 +317,14 @@
+     new_password1 = forms.CharField(
+         label=_("New password"),
+         widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+     new_password2 = forms.CharField(
+         label=_("New password confirmation"),
+         strip=False,
+-        widget=forms.PasswordInput,
+-    )
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+
+     def __init__(self, user, *args, **kwargs):
+         self.user = user
+@@ -361,7 +363,7 @@
+     old_password = forms.CharField(
+         label=_("Old password"),
+         strip=False,
+-        widget=forms.PasswordInput(attrs={'autofocus': True}),
++        widget=forms.PasswordInput(attrs={'autofocus': True, 'autocomplete': 'current-password'}),
+     )
+
+     field_order = ['old_password', 'new_password1', 'new_password2']
+@@ -389,13 +391,13 @@
+     required_css_class = 'required'
+     password1 = forms.CharField(
+         label=_("Password"),
+-        widget=forms.PasswordInput(attrs={'autofocus': True}),
++        widget=forms.PasswordInput(attrs={'autofocus': True, 'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+     password2 = forms.CharField(
+         label=_("Password (again)"),
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=_("Enter the same password as before, for verification."),
+     )
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/auth/forms.py b/django/contrib/auth/forms.py
+--- a/django/contrib/auth/forms.py
++++ b/django/contrib/auth/forms.py
+@@ -78,12 +78,12 @@ class UserCreationForm(forms.ModelForm):
+     password1 = forms.CharField(
+         label=_("Password"),
+         strip=False,
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+     password2 = forms.CharField(
+         label=_("Password confirmation"),
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=_("Enter the same password as before, for verification."),
+     )
+@@ -96,7 +96,10 @@ class Meta:
+     def __init__(self, *args, **kwargs):
+         super().__init__(*args, **kwargs)
+         if self._meta.model.USERNAME_FIELD in self.fields:
+-            self.fields[self._meta.model.USERNAME_FIELD].widget.attrs.update({'autofocus': True})
++            self.fields[self._meta.model.USERNAME_FIELD].widget.attrs.update({
++                'autocomplete': 'username',
++                'autofocus': True,
++            })
+
+     def clean_password2(self):
+         password1 = self.cleaned_data.get("password1")
+@@ -163,11 +166,11 @@ class AuthenticationForm(forms.Form):
+     Base class for authenticating users. Extend this to get a form that accepts
+     username/password logins.
+     """
+-    username = UsernameField(widget=forms.TextInput(attrs={'autofocus': True}))
++    username = UsernameField(widget=forms.TextInput(attrs={'autocomplete': 'username', 'autofocus': True}))
+     password = forms.CharField(
+         label=_("Password"),
+         strip=False,
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'current-password'}),
+     )
+
+     error_messages = {
+@@ -235,7 +238,11 @@ def get_invalid_login_error(self):
+
+
+ class PasswordResetForm(forms.Form):
+-    email = forms.EmailField(label=_("Email"), max_length=254)
++    email = forms.EmailField(
++        label=_("Email"),
++        max_length=254,
++        widget=forms.EmailInput(attrs={'autocomplete': 'email'})
++    )
+
+     def send_mail(self, subject_template_name, email_template_name,
+                   context, from_email, to_email, html_email_template_name=None):
+@@ -311,14 +318,14 @@ class SetPasswordForm(forms.Form):
+     }
+     new_password1 = forms.CharField(
+         label=_("New password"),
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+     new_password2 = forms.CharField(
+         label=_("New password confirmation"),
+         strip=False,
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+     )
+
+     def __init__(self, user, *args, **kwargs):
+@@ -357,7 +364,7 @@ class PasswordChangeForm(SetPasswordForm):
+     old_password = forms.CharField(
+         label=_("Old password"),
+         strip=False,
+-        widget=forms.PasswordInput(attrs={'autofocus': True}),
++        widget=forms.PasswordInput(attrs={'autocomplete': 'current-password', 'autofocus': True}),
+     )
+
+     field_order = ['old_password', 'new_password1', 'new_password2']
+@@ -385,13 +392,13 @@ class AdminPasswordChangeForm(forms.Form):
+     required_css_class = 'required'
+     password1 = forms.CharField(
+         label=_("Password"),
+-        widget=forms.PasswordInput(attrs={'autofocus': True}),
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password', 'autofocus': True}),
+         strip=False,
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+     password2 = forms.CharField(
+         label=_("Password (again)"),
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=_("Enter the same password as before, for verification."),
+     )
+
+</patch>
+
+--------------------------------------------------
+analyze
+Reason for the error: The forms.py file has a problem with setting the autocomplete attribute of each form field. PasswordInput instances were repeatedly created in the widget definition of some fields, causing the autocomplete attribute to fail to take effect as expected. In addition, the autocomplete attribute of some fields is not set correctly, resulting in the browser that may still prompt the current password when filling in the form.
+The main problem is that the autocomplete attribute is insufficient in the CoT step and lacks proper validation and testing. An error occurs when handling PasswordInput-related fields. It is clear how to add the autocomplete attribute to the existing widget attribute instead of creating a new instance. Specifically:
+Step 1 is missing field validation in different forms. Step 2 has the problem of repeated instantiation.
+text:
+<issue>
+add ModelAdmin.get_inlines() hook to allow set inlines based on the request or model instance.
+Description
+
+add ModelAdmin.get_inlines() hook to allow set inlines based on the request or model instance.
+Currently, We can override the method get_inline_instances to do such a thing, but a for loop should be copied to my code. So I wished add a hook get_inlines(request, obj=None)
+
+Add ModelAdmin.getinlines() to set up inline based on request or model instance.
+Currently, the method getinlineinstances can be rewritable, but requires copying a loop into the code. So I want to add this feature.
+
+</issue>
+
+steps:
+
+1. Identify the ModelAdmin class in Django's admin options where the inline handling is managed.
+2. Introduce a new method `get_inlines(self, request, obj=None)` in the ModelAdmin class. This method returns `self.inlines` by default, allowing subclasses to override it.
+3. Modify the existing `get_inline_instances` method in ModelAdmin to call `self.get_inlines(request, obj)` instead of directly using `self.inlines` to fetch the list of inline classes.
+4. Ensure that the rest of the logic in `get_inline_instances` remains unchanged, preserving the loop that instantiates the inlines and checks permissions.
+5. Update any relevant documentation or comments to reflect the new `get_inlines` hook, guiding users to override this method for dynamic inline configuration.
+
+model_patch:
+
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -1235,6 +1235,9 @@
+     def get_formsets_with_inlines(self, request, obj=None):
+         return [(inline, inline.get_formset(request, obj)) for inline in self.get_inline_instances(request, obj)]
+
++    def get_inlines(self, request, obj=None):
++        return self.inlines
++
+     def get_inline_instances(self, request, obj=None):
+         """
+         Return all the inline instances that should be added to the form.
+@@ -1242,7 +1245,7 @@
+         """
+         inline_instances = []
+         for inline_class in self.get_inlines(request, obj):
+-            inline = inline_class(self.model, self.admin_site)
++            inline = inline_class(self.model, self.admin_site, self.admin_site)
+             if request:
+                 if not (inline.has_view_or_change_permission(request, obj) or
+                         inline.has_add_permission(request, obj) or
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -327,6 +327,10 @@ def get_fieldsets(self, request, obj=None):
+             return self.fieldsets
+         return [(None, {'fields': self.get_fields(request, obj)})]
+
++    def get_inlines(self, request, obj):
++        """Hook for specifying custom inlines."""
++        return self.inlines
++
+     def get_ordering(self, request):
+         """
+         Hook for specifying field ordering.
+@@ -582,7 +586,7 @@ def __str__(self):
+
+     def get_inline_instances(self, request, obj=None):
+         inline_instances = []
+-        for inline_class in self.inlines:
++        for inline_class in self.get_inlines(request, obj):
+             inline = inline_class(self.model, self.admin_site)
+             if request:
+                 if not (inline.has_view_or_change_permission(request, obj) or
+
+</patch>
+
+--------------------------------------------------
+analyze
+Reason for error: There is a problem with the definition of the get_inlines method. (The parameter definition is inconsistent with the definition in gold_patch. The get_inlines method in gold_patch has no default parameters. The get_inlines method in model_patch contains the default parameter obj=None, which may cause the problem of mismatch when calling). The inconsistent parameters during inline may cause the permission check logic to be invalid.
+Prompt fuzzy: It is mentioned that I hope to add get_inlines(request, obj=None), but the specific purpose and scenario of the method are not explained in detail. The lack of background information may lead to unclear understanding of the specific functions of the method during implementation.
+Prompt lacks sufficient context to cause misunderstandings when steps are executed and the parameter definition is unclear.
+
+text:
+<issue>
+HttpResponse doesn't handle memoryview objects
+Description
+
+I am trying to write a BinaryField retrieved from the database into a HttpResponse. When the database is Sqlite this works correctly, but Postgresql returns the contents of the field as a memoryview object and it seems like current Django doesn't like this combination:
+from django.http import HttpResponse
+# String content
+response = HttpResponse("My Content")
+response.content
+# Out: b'My Content'
+# This is correct
+# Bytes content
+response = HttpResponse(b"My Content")
+response.content
+# Out: b'My Content'
+# This is also correct
+# memoryview content
+response = HttpResponse(memoryview(b"My Content"))
+response.content
+# Out: b'<memory at 0x7fcc47ab2648>'
+# This is not correct, I am expecting b'My Content'
+
+</issue>
+
+steps:
+
+1. **Modify the `content` setter in `HttpResponse` class** to prevent treating `memoryview` objects as iterables. Update the condition to exclude `memoryview` from the iterable check so that it's processed as a single value.
+2. **Update the `make_bytes` method in `HttpResponseBase`** to handle `memoryview` instances explicitly. Convert `memoryview` to bytes using `bytes(value)` to ensure the actual content is used instead of the object's representation.
+
+model_patch:
+
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -307,7 +307,7 @@
+         @content.setter
+         def content(self, value):
+             # Consume iterators upon assignment to allow repeated iteration.
+-            if hasattr(value, '__iter__') and not isinstance(value, (bytes, str)):
++            if hasattr(value, '__iter__') and not isinstance(value, (bytes, str, memoryview)):
+                 content = b''.join(self.make_bytes(chunk) for chunk in value)
+                 if hasattr(value, 'close'):
+                     try:
+@@ -224,6 +224,8 @@
+         # Handle string types -- we can't rely on force_bytes here because:
+         # - Python attempts str conversion first
+         # - when self._charset != 'utf-8' it re-encodes the content
++        if isinstance(value, memoryview):
++            return bytes(value)
+         if isinstance(value, bytes):
+             return bytes(value)
+         if isinstance(value, str):
+
+
+gold_patch:
+<patch>
+diff --git a/django/http/response.py b/django/http/response.py
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -229,7 +229,7 @@ def make_bytes(self, value):
+         # Handle string types -- we can't rely on force_bytes here because:
+         # - Python attempts str conversion first
+         # - when self._charset != 'utf-8' it re-encodes the content
+-        if isinstance(value, bytes):
++        if isinstance(value, (bytes, memoryview)):
+             return bytes(value)
+         if isinstance(value, str):
+             return bytes(value.encode(self.charset))
+
+</patch>
+
+--------------------------------------------------
+analyze
+CoT Steps 1 and 2 lack clear processing of the specific usage scenarios of the memoryview object in HttpResponse and lacks context. Step 1 mentions that the content is to be modified to prevent memoryview from being treated as an iterable, but does not mention how to deal with other iterable objects. Step 2 mentions that the make_bytes method is to be updated to handle memoryview, but compatibility with other types (bytes, strings) cannot be ensured.
+CoT logic processing is not perfect enough, resulting in an error in model_patch processing memoryview. (In model_patch, although the content was modified, the modification of the make_bytes method does not fully meet the requirements of the propt)

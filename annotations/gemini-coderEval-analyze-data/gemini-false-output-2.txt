@@ -1,0 +1,638 @@
+
+==================== 62e6087ad76274f8a4026bf2 ====================
+file_path: neo4j/_async/io/_bolt3.py
+project: neo4j/neo4j-python-driver
+name: discard
+
+prompt:
+Appends a DISCARD message to the output queue.
+
+:param n: number of records to discard, default = -1 (ALL)
+:param qid: query ID to discard for, default = -1 (last query)
+:param dehydration_hooks:
+    Hooks to dehydrate types (dict from type (class) to dehydration
+    function). Dehydration functions receive the value and returns an
+    object of type understood by packstream.
+:param hydration_hooks:
+    Hooks to hydrate types (mapping from type (class) to
+    dehydration function). Dehydration functions receive the value of
+    type understood by packstream and are free to return anything.
+:param handlers: handler functions passed into the returned Response object
+
+steps:
+1. **Step 1:** Understand the function signature and docstring. Identify the function name, parameters, their types, default values, and the overall purpose of the function as described in the docstring.
+
+**Step 2:** Analyze each parameter: `n`, `qid`, `dehydration_hooks`, `hydration_hooks`, and `handlers`. Understand their roles in the `discard` operation as explained in the docstring. Pay attention to the default values of `n` and `qid` and their special meanings (-1 for ALL and last query respectively).
+
+**Step 3:**  Infer the function's action: Based on the name "discard" and the docstring, determine that the function is intended to create and enqueue a "DISCARD" message. This message likely instructs a system to discard records or results associated with a query.
+
+**Step 4:** Consider the hooks: Understand that `dehydration_hooks` are for preparing data to be sent (converting Python types to packstream types), and `hydration_hooks` are for processing received data (converting packstream types back to Python types). These are used for data serialization and deserialization.
+
+**Step 5:**  Recognize the `handlers` parameter: Understand that `handlers` are meant to be passed to a `Response` object. This implies the function likely returns a `Response` object to handle the server's response to the DISCARD message.
+
+**Step 6:**  Outline the core logic: Summarize the function's operation as: create a DISCARD message (potentially including `n` and `qid`), handle data dehydration using `dehydration_hooks` if necessary, append the message to an output queue, create a `Response` object with `hydration_hooks` and `handlers`, and return the `Response` object.
+
+generate_code:
+def discard(self, n=-1, qid=-1, dehydration_hooks=None,
+                hydration_hooks=None, **handlers):
+	"""
+	Appends a DISCARD message to the output queue.
+
+:param n: number of records to discard, default = -1 (ALL)
+:param qid: query ID to discard for, default = -1 (last query)
+:param dehydration_hooks:
+    Hooks to dehydrate types (dict from type (class) to dehydration
+    function). Dehydration functions receive the value and returns an
+    object of type understood by packstream.
+:param hydration_hooks:
+    Hooks to hydrate types (mapping from type (class) to
+    dehydration function). Dehydration functions receive the value of
+    type understood by packstream and are free to return anything.
+:param handlers: handler functions passed into the returned Response object
+	"""
+	# Step 1: Prepare the DISCARD message payload
+	message_payload = {
+		"action": "DISCARD",
+		"n": n,
+		"qid": qid
+	}
+
+	# Step 2: Apply dehydration hooks if provided (Example - needs actual implementation based on hooks)
+	if dehydration_hooks:
+		dehydrated_payload = {}
+		for key, value in message_payload.items():
+			value_type = type(value)
+			if value_type in dehydration_hooks:
+				dehydrated_payload[key] = dehydration_hooks[value_type](value)
+			else:
+				dehydrated_payload[key] = value # No hook, use original value
+		message_to_queue = dehydrated_payload
+	else:
+		message_to_queue = message_payload
+
+	# Step 3: Append the DISCARD message to the output queue (Assuming self.output_queue exists)
+	if hasattr(self, 'output_queue'):
+		self.output_queue.append(message_to_queue)
+	else:
+		raise AttributeError("output_queue attribute not found in self") #Or handle queue creation if needed
+
+	# Step 4: Create a Response object (Assuming Response class is defined elsewhere)
+	response = Response(hydration_hooks=hydration_hooks, **handlers) # Pass handlers to Response
+
+	# Step 5: Return the Response object
+	return response
+
+class Response: # Dummy Response class for demonstration
+	def __init__(self, hydration_hooks=None, **handlers):
+		self.hydration_hooks = hydration_hooks
+		self.handlers = handlers
+
+	# ... Response class methods to handle incoming data and use hydration_hooks and handlers ...
+	pass
+
+--------------------------------------------------
+Missing Response-related information
+==================== 62e60879d76274f8a4026bec ====================
+file_path: neo4j/_async/io/_bolt3.py
+project: neo4j/neo4j-python-driver
+name: begin
+
+prompt:
+Appends a BEGIN message to the output queue.
+
+:param mode: access mode for routing - "READ" or "WRITE" (default)
+:param bookmarks: iterable of bookmark values after which this transaction should begin
+:param metadata: custom metadata dictionary to attach to the transaction
+:param timeout: timeout for transaction execution (seconds)
+:param db: name of the database against which to begin the transaction
+    Requires Bolt 4.0+.
+:param imp_user: the user to impersonate
+    Requires Bolt 4.4+
+:param dehydration_hooks:
+    Hooks to dehydrate types (dict from type (class) to dehydration
+    function). Dehydration functions receive the value and returns an
+    object of type understood by packstream.
+:param hydration_hooks:
+    Hooks to hydrate types (mapping from type (class) to
+    dehydration function). Dehydration functions receive the value of
+    type understood by packstream and are free to return anything.
+:param handlers: handler functions passed into the returned Response object
+:return: Response object
+
+steps:
+1. Understand the purpose of the `begin` function. The function is designed to initiate a database transaction by appending a "BEGIN" message to an output queue. It allows for customization of the transaction through various parameters.
+2. Identify and describe each parameter of the `begin` function and its role in configuring the transaction.
+    - `mode`: Specifies the access mode for the transaction, either "READ" or "WRITE". Defaults to "WRITE".
+    - `bookmarks`:  A collection of bookmark values that define the starting point of the transaction in relation to previous transactions.
+    - `metadata`: A dictionary for attaching custom metadata to the transaction, useful for tracking or context.
+    - `timeout`: Sets a time limit (in seconds) for the transaction's execution.
+    - `db`:  Specifies the target database for the transaction, applicable for Bolt protocol version 4.0 and later.
+    - `imp_user`:  Allows impersonating another user for the transaction, available in Bolt protocol version 4.4 and later.
+    - `dehydration_hooks`:  Hooks for converting Python types into packstream-compatible formats before sending them in the transaction message.
+    - `hydration_hooks`: Hooks for converting packstream-formatted data back into Python types upon receiving a response.
+    - `**handlers`: Keyword arguments for handler functions that will be associated with the `Response` object returned by the function, likely to process responses related to the transaction.
+3. Infer the actions performed by the function based on its name, docstring, and parameters. The function likely constructs a "BEGIN" message containing the provided parameters and adds it to an output queue for processing. It then returns a `Response` object to handle the server's response to the transaction initiation.
+4. List the detailed steps based on the above analysis.
+    - Step 1: Construct a "BEGIN" message.
+    - Step 2: Include the `mode` parameter in the message to specify "READ" or "WRITE" access.
+    - Step 3: Include the `bookmarks` parameter to set the transaction's starting point based on provided bookmark values.
+    - Step 4: Include the `metadata` parameter to attach custom metadata to the transaction.
+    - Step 5: Include the `timeout` parameter to set a timeout for transaction execution.
+    - Step 6: Include the `db` parameter to specify the database for the transaction (if Bolt 4.0+).
+    - Step 7: Include the `imp_user` parameter to specify a user to impersonate (if Bolt 4.4+).
+    - Step 8:  Incorporate `dehydration_hooks` and `hydration_hooks` to handle custom type conversion for packstream serialization and deserialization.
+    - Step 9: Create a `Response` object, passing in the `handlers` to manage responses related to the transaction.
+    - Step 10: Append the constructed "BEGIN" message to the output queue.
+    - Step 11: Return the created `Response` object.
+5. Generate the Python code for the `begin` function as provided in the user prompt.
+
+generate_code:
+def begin(self, mode=None, bookmarks=None, metadata=None, timeout=None,
+              db=None, imp_user=None, dehydration_hooks=None,
+              hydration_hooks=None, **handlers):
+	"""
+	Appends a BEGIN message to the output queue.
+
+:param mode: access mode for routing - "READ" or "WRITE" (default)
+:param bookmarks: iterable of bookmark values after which this transaction should begin
+:param metadata: custom metadata dictionary to attach to the transaction
+:param timeout: timeout for transaction execution (seconds)
+:param db: name of the database against which to begin the transaction
+    Requires Bolt 4.0+.
+:param imp_user: the user to impersonate
+    Requires Bolt 4.4+
+:param dehydration_hooks:
+    Hooks to dehydrate types (dict from type (class) to dehydration
+    function). Dehydration functions receive the value and returns an
+    object of type understood by packstream.
+:param hydration_hooks:
+    Hooks to hydrate types (mapping from type (class) to
+    dehydration function). Dehydration functions receive the value of
+    type understood by packstream and are free to return anything.
+:param handlers: handler functions passed into the returned Response object
+:return: Response object
+	"""
+	pass
+
+--------------------------------------------------
+No function body.
+==================== 62e60707d76274f8a4026b69 ====================
+file_path: neo4j/_spatial/__init__.py
+project: neo4j/neo4j-python-driver
+name: point_type
+
+prompt:
+Dynamically create a Point subclass.
+
+steps:
+1. Define the function `point_type` that takes `name`, `fields`, and `srid_map` as input.
+2. Dynamically create a class using `type(name, bases, attrs)`. The class name will be the input `name`. The base class can be `object` or `tuple` if needed, but for a basic class, we can use an empty tuple or just let it default to inheriting from `object` implicitly.
+3. Define the `__init__` method for the dynamic class. This method should accept positional arguments `*args` and keyword arguments `**kwargs`.
+4. Inside `__init__`, first, check if the number of positional arguments `args` matches the number of fields in the `fields` list. If they don't match, raise a `TypeError` indicating incorrect number of arguments.
+5. Next, iterate through the `fields` list and the positional arguments `args` simultaneously using `zip`. For each field name and corresponding argument value, set an instance attribute on `self` with the field name and the argument value.
+6. After handling positional arguments, process keyword arguments `kwargs`. Iterate through the keys and values in `kwargs`. For each key (which should be a field name), check if it is present in the `fields` list. If a keyword argument's key is not in `fields`, raise a `TypeError` indicating an invalid field name.
+7. If the keyword argument key is a valid field, set the corresponding instance attribute on `self` with the keyword argument's value, potentially overriding the value set by positional arguments if the keyword argument's key corresponds to a field already set by positional arguments (although in this step, we are simply setting all attributes based on positional arguments and then keyword arguments, effectively letting keyword arguments override if the keys match field names).
+8. Finally, after defining `__init__`, add a class attribute `_srid_map` to the dynamically created class and assign the input `srid_map` to it. This will make the SRID map accessible from the class.
+9. Return the dynamically created class.
+
+generate_code:
+def point_type(name, fields, srid_map):
+	"""
+	Dynamically Generating Point Class
+	"""
+	def __init__(self, *args, **kwargs):
+		if len(args) != len(fields):
+			raise TypeError(f"__init__() takes {len(fields)} positional arguments but {len(args)} were given")
+
+		for field_name, arg_value in zip(fields, args):
+			setattr(self, field_name, arg_value)
+
+		for key, value in kwargs.items():
+			if key not in fields:
+				raise TypeError(f"__init__() got an unexpected keyword argument '{key}'")
+			setattr(self, key, value)
+
+	attrs = {
+		'__init__': __init__,
+		'_srid_map': srid_map
+	}
+
+	PointClass = type(name, (), attrs)
+	return PointClass
+
+--------------------------------------------------
+There is too little information about prompt.
+==================== 62e4fc3c85ea98643089041e ====================
+file_path: pre_commit/languages/r.py
+project: pre-commit/pre-commit
+name: _inline_r_setup
+
+prompt:
+Some behaviour of R cannot be configured via env variables, but can
+only be configured via R options once R has started. These are set here.
+
+steps:
+1. Define a string variable named `r_setup_code` that contains R code to configure R options using the `options()` function. This code should address settings that are typically configured via R options and not environment variables. Examples include setting the CRAN mirror, encoding, or other R session-specific settings. For demonstration, let's include setting the CRAN mirror to a specific URL and setting the `warn` option to control warning messages.
+2. Concatenate the `r_setup_code` string with the input `code` string. Ensure that `r_setup_code` comes before the input `code` so that the setup options are applied before the execution of the user-provided R code.
+3. Return the concatenated string, which now represents the complete R code including the inline setup and the user-provided code.
+
+generate_code:
+def _inline_r_setup(code: str) -> str:
+	"""
+	Some behaviour of R cannot be configured via env variables, but can
+only be configured via R options once R has started. These are set here.
+	"""
+	r_setup_code = """
+options(repos=c(CRAN="https://cloud.r-project.org"))
+options(warn=1)
+"""
+	return r_setup_code + "\n" + code
+
+--------------------------------------------------
+There is no specific R-option to be set, and the repo-level information is missing.
+==================== 62e4fbda85ea986430890405 ====================
+file_path: pre_commit/xargs.py
+project: pre-commit/pre-commit
+name: xargs
+
+prompt:
+A simplified implementation of xargs.
+
+color: Make a pty if on a platform that supports it
+target_concurrency: Target number of partitions to run concurrently
+
+steps:
+1. Define the function `xargs` with the specified parameters: `cmd` (tuple of strings), `varargs` (sequence of strings), `color` (boolean, default False), `target_concurrency` (integer, default 1), `_max_length` (integer, default from `_get_platform_max_length()`), and `**kwargs`.
+2. Initialize an empty list called `command_list` to store chunks of arguments that will form individual commands.
+3. Initialize a variable `current_command_length` to store the length of the base command. Calculate this length by joining the elements of `cmd` with spaces and getting the length of the resulting string. Add a small buffer (e.g., 10) to account for potential overhead when arguments are appended.
+4. Initialize a list `current_arg_chunk` to hold the arguments for the current command.
+5. Iterate through each `arg` in `varargs`.
+6. For each `arg`, calculate the `arg_length` which is the length of the argument string plus the length of a space (since arguments will be space-separated in the command line).
+7. Check if adding the current `arg` to the `current_arg_chunk` would exceed `_max_length`. This can be checked by comparing `current_command_length + sum of lengths of arguments in current_arg_chunk + arg_length` with `_max_length`.  A simpler and slightly less precise but often sufficient method is to check if `current_command_length + len(current_arg_chunk) + arg_length` is less than `_max_length` as a rough estimation of the command length, where `len(current_arg_chunk)` approximates the spaces needed between arguments.
+8. If adding `arg` does not exceed `_max_length`, append `arg` to `current_arg_chunk` and update `current_command_length` by adding `arg_length`.
+9. If adding `arg` would exceed `_max_length`, it means the current chunk is full. If `current_arg_chunk` is not empty, append a copy of `current_arg_chunk` to `command_list`. Then, clear `current_arg_chunk`, reset `current_command_length` back to the length of the base command (plus buffer), and start a new chunk by appending the current `arg` to `current_arg_chunk` and updating `current_command_length` with `arg_length`.
+10. After iterating through all `varargs`, if `current_arg_chunk` is not empty, append it to `command_list`. This handles the last chunk of arguments.
+11. Iterate through each `arg_list` in `command_list`. For each `arg_list`, construct the full command by combining `cmd` and `arg_list`.
+12. Execute the constructed command using `subprocess.run()`. Collect and return the return codes of each executed command. For simplicity in this initial version, we can just print the commands that would be executed instead of actually running them.
+13.  For this simplified version, we will only print the commands that *would* be executed instead of actually executing them using subprocess. This avoids external dependencies and keeps the code focused on the core logic of chunking and command construction.
+
+generate_code:
+from typing import Sequence, Tuple
+import os
+import subprocess
+
+def _get_platform_max_length():
+    if os.name == 'nt':
+        return 8191  # Windows
+    else:
+        return 2097152 # Linux, macOS, etc. - a very large value in practice
+
+
+def xargs(
+        cmd: Tuple[str, ...],
+        varargs: Sequence[str],
+        *,
+        color: bool = False,
+        target_concurrency: int = 1,
+        _max_length: int = _get_platform_max_length(),
+        **kwargs
+):
+    """
+    Simplified Implementation of Xargs in Linux
+    """
+    command_list = []
+    current_arg_chunk = []
+    base_command_length = len(" ".join(cmd)) + 10 # Buffer
+
+    for arg in varargs:
+        arg_length = len(arg) + 1 # +1 for space
+
+        if base_command_length + sum(len(a) + 1 for a in current_arg_chunk) + arg_length < _max_length:
+            current_arg_chunk.append(arg)
+        else:
+            if current_arg_chunk:
+                command_list.append(list(current_arg_chunk)) # Append a copy
+            current_arg_chunk = [arg]
+
+    if current_arg_chunk:
+        command_list.append(list(current_arg_chunk))
+
+    for arg_list in command_list:
+        full_command = list(cmd) + arg_list
+        print("Would execute:", " ".join(full_command)) # Simplified: Print command instead of executing
+
+    # In a real implementation, you would use subprocess.run() here:
+    # return_codes = []
+    # for arg_list in command_list:
+    #     full_command = list(cmd) + arg_list
+    #     process = subprocess.run(full_command, **kwargs)
+    #     return_codes.append(process.returncode)
+    # return return_codes if return_codes else [0] # Or handle return codes as needed.
+
+    return None # Simplified version returns None
+
+--------------------------------------------------
+Prompt fuzzy: propt does not provide valid information (only some parameters are given information). At the same time, it also lacks the necessary repo-level information.
+Cot logic flow is incomplete: Exception handling situations have not been considered.
+==================== 62e4fbda85ea986430890403 ====================
+file_path: pre_commit/languages/helpers.py
+project: pre-commit/pre-commit
+name: _shuffled
+
+prompt:
+Deterministically shuffle
+
+steps:
+1. Import the `random` module, which is necessary for shuffling and setting the random seed.
+2. Define the function `_shuffled` that accepts a single argument `seq` of type `Sequence[str]` and is annotated to return a `list[str]`.
+3. Convert the input sequence `seq` into a list to allow in-place shuffling, and store it in a variable, say `shuffled_list`.
+4. Set a fixed random seed using `random.seed()`. Choose a constant integer value for the seed to ensure deterministic shuffling. A common choice is 42.
+5. Use `random.shuffle()` to shuffle the `shuffled_list` in place.
+6. Return the `shuffled_list`.
+
+generate_code:
+import random
+from typing import Sequence
+
+def _shuffled(seq: Sequence[str]) -> list[str]:
+	"""
+	Shuffle a given seq with the given FIXED_RANDOM_SEED
+	"""
+	shuffled_list = list(seq)
+	random.seed(42)
+	random.shuffle(shuffled_list)
+	return shuffled_list
+
+--------------------------------------------------
+Prompt fuzzy: Missing information for FIXED_RANDOM_SEED.
+==================== 62b8d27a48ba5a41d1c3f4c6 ====================
+file_path: cachetools/decorators.py
+project: pexip/os-python-cachetools
+name: cached
+
+prompt:
+Decorator to wrap a function with a memoizing callable that saves
+results in a cache.
+
+steps:
+1. Define a decorator function named `cached` that accepts `cache`, `key` (defaulting to `hashkey`), and `lock` (defaulting to `None`) as arguments. This function will return the actual decorator.
+2. Define the actual decorator function inside `cached`. This function will accept the function to be decorated (`func`) as an argument.
+3. Inside the decorator function, define a wrapper function (e.g., `wrapper`) that will be executed when the decorated function is called. This wrapper function should accept `*args` and `**kwargs` to handle any function arguments.
+4. Inside the `wrapper` function, generate a cache key by calling the `key` function with `func`, `args`, and `kwargs` as arguments.
+5. Check if the generated `cache_key` exists in the `cache`.
+6. If `cache_key` is found in the `cache`, retrieve the cached value from the `cache` using `cache_key` and return it.
+7. If `cache_key` is not found in the `cache`, proceed to compute the value by calling the original function `func` with `*args` and `**kwargs`.
+8. Before calling `func`, if a `lock` is provided, acquire the lock to ensure thread-safe caching.
+9. After calling `func` and obtaining the result, store the result in the `cache` with `cache_key` as the key and the result as the value.
+10. After storing the result in the cache, if a `lock` was acquired, release the lock.
+11. Return the computed result from the `wrapper` function.
+12. The decorator function should return the `wrapper` function.
+
+generate_code:
+def cached(cache, key=hashkey, lock=None):
+	"""
+	Returns a decorator function that saves the results in the cache
+	"""
+	def decorator(func):
+		def wrapper(*args, **kwargs):
+			cache_key = key(func, *args, **kwargs)
+			if cache_key in cache:
+				return cache[cache_key]
+			else:
+				if lock:
+					lock.acquire()
+				try:
+					result = func(*args, **kwargs)
+					cache[cache_key] = result
+				finally:
+					if lock:
+						lock.release()
+				return result
+		return wrapper
+	return decorator
+
+Prompt does not provide information about functools.
+Cot did not consider exception handling.
+==================== 62b8d24048ba5a41d1c3f49f ====================
+file_path: cachetools/func.py
+project: pexip/os-python-cachetools
+name: ttl_cache
+
+prompt:
+Decorator to wrap a function with a memoizing callable that saves
+up to `maxsize` results based on a Least Recently Used (LRU)
+algorithm with a per-item time-to-live (TTL) value.
+
+steps:
+1. Define the `ttl_cache` decorator function that accepts `maxsize`, `ttl`, `timer`, and `typed` as arguments. This function will serve as the outer decorator.
+2. Inside `ttl_cache`, initialize an empty dictionary called `cache` to store the cached results. Also, initialize an empty list called `lru_keys` to maintain the order of keys based on their last access, and a dictionary `cache_timestamps` to store the timestamp of each cached item.
+3. Define the actual decorator function (let's call it `decorator`) inside `ttl_cache`. This function takes the function to be decorated (`func`) as an argument.
+4. Inside `decorator`, define the wrapper function (let's call it `wrapper`) that will be returned when the function is decorated. This `wrapper` function should accept arbitrary positional arguments (`*args`) and keyword arguments (`**kwargs`).
+5. Inside the `wrapper` function, construct a cache key. If `typed` is True, the key should include the types of the arguments to differentiate between calls with different types but same values. If `typed` is False, only the values of arguments are considered for the key. The key should be hashable, so use tuples for positional arguments and sorted tuples of items for keyword arguments.
+6. Before calling the original function, check if the generated `key` exists in the `cache`.
+7. If the `key` is found in the `cache`, retrieve the cached result and its timestamp. Check if the time elapsed since the item was cached (current time from `timer` minus the stored timestamp) is less than `ttl`.
+8. If the cached item is valid (key exists and TTL is not expired), return the cached value. When returning a cached value, update the LRU list by moving the accessed key to the end of the `lru_keys` list and also update the timestamp in `cache_timestamps`.
+9. If the `key` is not found in the `cache` or the TTL has expired, it's a cache miss. In this case, call the original function `func` with the provided `*args` and `**kwargs` to get the result.
+10. After getting the result from the original function (in case of cache miss), store this result in the `cache` with the generated `key`. Also, store the current timestamp using `timer` in `cache_timestamps` for this `key`. Add the `key` to the end of the `lru_keys` list.
+11. After adding a new item to the cache, check if the number of items in the `cache` exceeds `maxsize`. If it does, remove the least recently used item. The least recently used item is at the beginning of the `lru_keys` list. Remove the first key from `lru_keys` and delete the corresponding entry from `cache` and `cache_timestamps`.
+12. Finally, the `wrapper` function should return the result (either from the cache or by calling the original function). The `decorator` function should return the `wrapper` function, and the `ttl_cache` function should return the `decorator` function.
+
+
+generate_code:
+import time
+from functools import wraps
+
+def ttl_cache(maxsize=128, ttl=600, timer=time.monotonic, typed=False):
+    """
+    Decorator to wrap a function with a memoizing callable that saves
+    up to `maxsize` results based on a Least Recently Used (LRU)
+    algorithm with a per-item time-to-live (TTL) value.
+    """
+    cache = {}
+    lru_keys = []
+    cache_timestamps = {}
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            key = args
+            if kwargs:
+                key += (tuple(sorted(kwargs.items())),)
+            if typed:
+                key += tuple(type(arg) for arg in args)
+                if kwargs:
+                    key += tuple(type(v) for k, v in sorted(kwargs.items()))
+
+            nonlocal cache, lru_keys, cache_timestamps
+            current_time = timer()
+
+            if key in cache:
+                cached_value, last_timestamp = cache[key]
+                if current_time - last_timestamp < ttl:
+                    try:
+                        lru_keys.remove(key)
+                    except ValueError:
+                        pass # Key might have been removed due to maxsize
+                    lru_keys.append(key)
+                    cache_timestamps[key] = current_time # Update timestamp on access
+                    return cached_value
+
+            value = func(*args, **kwargs)
+            cache[key] = (value, current_time)
+            cache_timestamps[key] = current_time
+            if key in lru_keys: # In case of expired key that was still in lru_keys
+                lru_keys.remove(key)
+            lru_keys.append(key)
+
+            if len(cache) > maxsize:
+                oldest_key = lru_keys.pop(0)
+                del cache[oldest_key]
+                del cache_timestamps[oldest_key]
+            return value
+        return wrapper
+    return decorator
+
+--------------------------------------------------
+No _cache function related information.
+==================== 62b8d23b48ba5a41d1c3f49a ====================
+file_path: cachetools/func.py
+project: pexip/os-python-cachetools
+name: mru_cache
+
+prompt:
+Decorator to wrap a function with a memoizing callable that saves
+up to `maxsize` results based on a Most Recently Used (MRU)
+algorithm.
+
+steps:
+1. Define the `mru_cache` decorator function that takes `maxsize` and `typed` as arguments.
+2. Initialize an empty dictionary `cache` to store cached results and a deque `usage_order` to track the order of key usage within the `mru_cache` decorator.
+3. Define a wrapper function `wrapper(*args, **kwargs)` inside `mru_cache`. This function will be returned by the decorator and will replace the original decorated function.
+4. Inside the `wrapper` function, create a cache `key` from the input `args` and `kwargs`. If `typed` is True, incorporate argument types into the key to differentiate calls with arguments of the same value but different types.
+5. Check if the generated `key` exists in the `cache`.
+6. If the `key` is found in the `cache` (cache hit), retrieve the cached result from the `cache`.
+7. Upon a cache hit, update the `usage_order` to reflect that this key was just used. Move the key to the end of the `usage_order` deque to signify it as most recently used.
+8. Return the cached result in case of a cache hit.
+9. If the `key` is not found in the `cache` (cache miss), call the original decorated function with `*args` and `**kwargs` to compute the result.
+10. Store the computed result in the `cache` with the generated `key`.
+11. Add the `key` to the end of the `usage_order` deque to mark it as most recently used.
+12. After adding a new item to the cache, check if the current size of the `cache` exceeds `maxsize`.
+13. If the `cache` size exceeds `maxsize`, remove the least recently used item from the cache. This corresponds to removing the item represented by the key at the front of the `usage_order` deque. Remove both the entry from `cache` and the key from the front of `usage_order`.
+14. Return the computed result after storing it in the cache in case of a cache miss.
+15. Finally, return the `wrapper` function from the `mru_cache` decorator.
+
+generate_code:
+from collections import deque
+from functools import wraps
+
+def mru_cache(maxsize=128, typed=False):
+	"""
+	Decorator to wrap a function with a memoizing callable that saves
+	up to `maxsize` results based on a Most Recently Used (MRU)
+	algorithm.
+	"""
+	if not isinstance(maxsize, int) or maxsize < 0:
+		raise TypeError('maxsize must be a non-negative integer')
+	if not isinstance(typed, bool):
+		raise TypeError('typed must be a boolean')
+	if maxsize == 0:
+		def no_cache(func):
+			@wraps(func)
+			def wrapper(*args, **kwargs):
+				return func(*args, **kwargs)
+			return wrapper
+		return no_cache
+
+	cache = {}
+	usage_order = deque()
+
+	def make_key(args, kwargs, typed):
+		key = args
+		if kwargs:
+			key += tuple(sorted(kwargs.items()))
+		if typed:
+			key += tuple(type(v) for v in args)
+			if kwargs:
+				key += tuple(type(v) for k, v in sorted(kwargs.items()))
+		return key
+
+	def wrapper(func):
+		@wraps(func)
+		def memoized_func(*args, **kwargs):
+			key = make_key(args, kwargs, typed)
+			if key in cache:
+				usage_order.remove(key)
+				usage_order.append(key)
+				return cache[key]
+			result = func(*args, **kwargs)
+			cache[key] = result
+			usage_order.append(key)
+			if len(cache) > maxsize:
+				oldest_key = usage_order.popleft()
+				del cache[oldest_key]
+			return result
+		return memoized_func
+	return wrapper
+
+--------------------------------------------------
+No _cache function related information.
+==================== 62b8d23948ba5a41d1c3f498 ====================
+file_path: cachetools/func.py
+project: pexip/os-python-cachetools
+name: lru_cache
+
+prompt:
+Decorator to wrap a function with a memoizing callable that saves
+up to `maxsize` results based on a Least Recently Used (LRU)
+algorithm.
+
+steps:
+1. Define the `lru_cache` decorator function that accepts `maxsize` and `typed` as arguments with default values 128 and False respectively. This function will act as the decorator factory.
+2. Inside `lru_cache`, initialize an empty dictionary called `cache` to store cached results and an empty list called `usage_list` to track the order of key usage.
+3. Define a nested function called `wrapper` that takes `*args` and `**kwargs` to represent the arguments of the function being decorated.
+4. Inside `wrapper`, generate a cache `key` from `args` and `kwargs`. If `typed` is True, include the types of arguments in the key. Use tuples for `args` and sorted keyword items for `kwargs` to ensure hashability and consistent ordering.
+5. Check if the `key` exists in the `cache`.
+6. If the `key` is found in the `cache` (cache hit): retrieve the cached `value` from the `cache`. Update the `usage_list` by removing the `key` from its current position and appending it to the end to mark it as recently used. Return the cached `value`.
+7. If the `key` is not found in the `cache` (cache miss): call the original decorated function with `*args` and `**kwargs` to compute the `value`.
+8. Store the computed `value` in the `cache` with the generated `key`. Append the `key` to the `usage_list`.
+9. Check if the current size of the `cache` exceeds `maxsize`. If it does, remove the least recently used item. This item is at the beginning of the `usage_list`. Remove the first key from `usage_list` and delete the corresponding entry from the `cache`.
+10. Return the computed `value`.
+11. The `lru_cache` function should return the `wrapper` function.
+
+generate_code:
+def lru_cache(maxsize=128, typed=False):
+	"""
+	Decorator to wrap a function with a memoizing callable that saves
+	up to `maxsize` results based on a Least Recently Used (LRU)
+	algorithm.
+	"""
+	cache = {}
+	usage_list = []
+
+	def wrapper(func):
+		def wrapped_function(*args, **kwargs):
+			key = args
+			if kwargs:
+				key += (tuple(sorted(kwargs.items())),)
+			if typed:
+				key += tuple(type(arg) for arg in args)
+				if kwargs:
+					key += tuple((k, type(v)) for k, v in sorted(kwargs.items()))
+
+			if key in cache:
+				value = cache[key]
+				usage_list.remove(key)
+				usage_list.append(key)
+				return value
+			else:
+				value = func(*args, **kwargs)
+				cache[key] = value
+				usage_list.append(key)
+				if len(cache) > maxsize:
+					lru_key = usage_list.pop(0)
+					del cache[lru_key]
+				return value
+		return wrapped_function
+	return wrapper
+No _cache function related information.
+--------------------------------------------------

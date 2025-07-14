@@ -1,0 +1,887 @@
+text:
+<issue>
+Add support for ./manage.py dbshell -c SQL
+Description
+
+At the moment you cannot run specific SQL directly with dbshell:
+./manage.py dbshell -c "select * from auth_group"
+You have to use pipes, that are not always convenient:
+echo "select * from auth_group" | ./manage.py dbshell
+If we add -c argument, it would be in sync with shell command, where you could provide commands already.
+
+</issue>
+
+steps:
+
+1. **Add the `-c` option to the `dbshell` command's argument parser.** This allows users to specify a SQL command directly.
+2. **Modify the `handle` method in the `dbshell` command.** Check if the `-c` option is provided and execute the SQL command using the database client instead of starting an interactive shell.
+3. **Adjust the database client's command execution.** For each database backend (PostgreSQL, MySQL, SQLite, etc.), modify the client to accept the SQL command and execute it non-interactively using the respective command-line tool's syntax.
+
+model_patch:
+
+--- a/django/core/management/commands/dbshell.py
++++ b/django/core/management/commands/dbshell.py
+@@ -13,6 +13,11 @@
+             '--database', action='store', dest='database', default='default',
+             help='Nominates a database onto which to open a shell.',
+         )
++        parser.add_argument(
++            '-c', '--command',
++            help='Execute a SQL command and exit.',
++            action='store', dest='command',
++        )
+
+     def handle(self, **options):
+         """
+@@ -21,7 +26,7 @@
+         """
+         connection = connections[options['database']]
+         try:
+-            connection.client.runshell()
++            connection.client.runshell(options['command'])
+         except OSError:
+             # Note that we're assuming OSError means that the client program
+             # isn't installed. If that's not the case, the error should be
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -26,7 +26,9 @@ class CommandError(Exception):
+     error) is the preferred way to indicate that something has gone
+     wrong in the execution of a command.
+     """
+-    pass
++    def __init__(self, *args, returncode=1, **kwargs):
++        self.returncode = returncode
++        super().__init__(*args, **kwargs)
+
+
+ class SystemCheckError(CommandError):
+@@ -326,8 +328,8 @@ def run_from_argv(self, argv):
+         handle_default_options(options)
+         try:
+             self.execute(*args, **cmd_options)
+-        except Exception as e:
+-            if options.traceback or not isinstance(e, CommandError):
++        except CommandError as e:
++            if options.traceback:
+                 raise
+
+             # SystemCheckError takes care of its own formatting.
+@@ -335,7 +337,7 @@ def run_from_argv(self, argv):
+                 self.stderr.write(str(e), lambda x: x)
+             else:
+                 self.stderr.write('%s: %s' % (e.__class__.__name__, e))
+-            sys.exit(1)
++            sys.exit(e.returncode)
+         finally:
+             try:
+                 connections.close_all()
+diff --git a/django/core/management/commands/dbshell.py b/django/core/management/commands/dbshell.py
+--- a/django/core/management/commands/dbshell.py
++++ b/django/core/management/commands/dbshell.py
+@@ -1,3 +1,5 @@
++import subprocess
++
+ from django.core.management.base import BaseCommand, CommandError
+ from django.db import DEFAULT_DB_ALIAS, connections
+
+@@ -15,17 +17,27 @@ def add_arguments(self, parser):
+             '--database', default=DEFAULT_DB_ALIAS,
+             help='Nominates a database onto which to open a shell. Defaults to the "default" database.',
+         )
++        parameters = parser.add_argument_group('parameters', prefix_chars='--')
++        parameters.add_argument('parameters', nargs='*')
+
+     def handle(self, **options):
+         connection = connections[options['database']]
+         try:
+-            connection.client.runshell()
+-        except OSError:
+-            # Note that we're assuming OSError means that the client program
+-            # isn't installed. There's a possibility OSError would be raised
+-            # for some other reason, in which case this error message would be
+-            # inaccurate. Still, this message catches the common case.
++            connection.client.runshell(options['parameters'])
++        except FileNotFoundError:
++            # Note that we're assuming the FileNotFoundError relates to the
++            # command missing. It could be raised for some other reason, in
++            # which case this error message would be inaccurate. Still, this
++            # message catches the common case.
+             raise CommandError(
+                 'You appear not to have the %r program installed or on your path.' %
+                 connection.client.executable_name
+             )
++        except subprocess.CalledProcessError as e:
++            raise CommandError(
++                '"%s" returned non-zero exit status %s.' % (
++                    ' '.join(e.cmd),
++                    e.returncode,
++                ),
++                returncode=e.returncode,
++            )
+diff --git a/django/db/backends/base/client.py b/django/db/backends/base/client.py
+--- a/django/db/backends/base/client.py
++++ b/django/db/backends/base/client.py
+@@ -8,5 +8,5 @@ def __init__(self, connection):
+         # connection is an instance of BaseDatabaseWrapper.
+         self.connection = connection
+
+-    def runshell(self):
++    def runshell(self, parameters):
+         raise NotImplementedError('subclasses of BaseDatabaseClient must provide a runshell() method')
+diff --git a/django/db/backends/mysql/client.py b/django/db/backends/mysql/client.py
+--- a/django/db/backends/mysql/client.py
++++ b/django/db/backends/mysql/client.py
+@@ -7,7 +7,7 @@ class DatabaseClient(BaseDatabaseClient):
+     executable_name = 'mysql'
+
+     @classmethod
+-    def settings_to_cmd_args(cls, settings_dict):
++    def settings_to_cmd_args(cls, settings_dict, parameters):
+         args = [cls.executable_name]
+         db = settings_dict['OPTIONS'].get('db', settings_dict['NAME'])
+         user = settings_dict['OPTIONS'].get('user', settings_dict['USER'])
+@@ -41,8 +41,9 @@ def settings_to_cmd_args(cls, settings_dict):
+             args += ["--ssl-key=%s" % client_key]
+         if db:
+             args += [db]
++        args.extend(parameters)
+         return args
+
+-    def runshell(self):
+-        args = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)
++    def runshell(self, parameters):
++        args = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict, parameters)
+         subprocess.run(args, check=True)
+diff --git a/django/db/backends/mysql/creation.py b/django/db/backends/mysql/creation.py
+--- a/django/db/backends/mysql/creation.py
++++ b/django/db/backends/mysql/creation.py
+@@ -55,9 +55,9 @@ def _clone_test_db(self, suffix, verbosity, keepdb=False):
+         self._clone_db(source_database_name, target_database_name)
+
+     def _clone_db(self, source_database_name, target_database_name):
+-        dump_args = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)[1:]
++        dump_args = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict, [])[1:]
+         dump_cmd = ['mysqldump', *dump_args[:-1], '--routines', '--events', source_database_name]
+-        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)
++        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict, [])
+         load_cmd[-1] = target_database_name
+
+         with subprocess.Popen(dump_cmd, stdout=subprocess.PIPE) as dump_proc:
+diff --git a/django/db/backends/oracle/client.py b/django/db/backends/oracle/client.py
+--- a/django/db/backends/oracle/client.py
++++ b/django/db/backends/oracle/client.py
+@@ -8,10 +8,11 @@ class DatabaseClient(BaseDatabaseClient):
+     executable_name = 'sqlplus'
+     wrapper_name = 'rlwrap'
+
+-    def runshell(self):
++    def runshell(self, parameters):
+         conn_string = self.connection._connect_string()
+         args = [self.executable_name, "-L", conn_string]
+         wrapper_path = shutil.which(self.wrapper_name)
+         if wrapper_path:
+             args = [wrapper_path, *args]
++        args.extend(parameters)
+         subprocess.run(args, check=True)
+diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -9,7 +9,7 @@ class DatabaseClient(BaseDatabaseClient):
+     executable_name = 'psql'
+
+     @classmethod
+-    def runshell_db(cls, conn_params):
++    def runshell_db(cls, conn_params, parameters):
+         args = [cls.executable_name]
+
+         host = conn_params.get('host', '')
+@@ -29,6 +29,7 @@ def runshell_db(cls, conn_params):
+         if port:
+             args += ['-p', str(port)]
+         args += [dbname]
++        args.extend(parameters)
+
+         sigint_handler = signal.getsignal(signal.SIGINT)
+         subprocess_env = os.environ.copy()
+@@ -50,5 +51,5 @@ def runshell_db(cls, conn_params):
+             # Restore the original SIGINT handler.
+             signal.signal(signal.SIGINT, sigint_handler)
+
+-    def runshell(self):
+-        DatabaseClient.runshell_db(self.connection.get_connection_params())
++    def runshell(self, parameters):
++        self.runshell_db(self.connection.get_connection_params(), parameters)
+diff --git a/django/db/backends/sqlite3/client.py b/django/db/backends/sqlite3/client.py
+--- a/django/db/backends/sqlite3/client.py
++++ b/django/db/backends/sqlite3/client.py
+@@ -6,9 +6,10 @@
+ class DatabaseClient(BaseDatabaseClient):
+     executable_name = 'sqlite3'
+
+-    def runshell(self):
++    def runshell(self, parameters):
+         # TODO: Remove str() when dropping support for PY37.
+         # args parameter accepts path-like objects on Windows since Python 3.8.
+         args = [self.executable_name,
+                 str(self.connection.settings_dict['NAME'])]
++        args.extend(parameters)
+         subprocess.run(args, check=True)
+
+</patch>
+
+--------------------------------------------------
+analyze
+3.Cot and code are inconsistent
+Cot step 3 is not implemented in code
+text:
+<issue>
+Add support to reset sequences on SQLite
+Description
+
+Can use the internal sqlite_sequence table:
+​https://sqlite.org/fileformat2.html#seqtab
+
+</issue>
+
+steps:
+
+1. **Enable Sequence Reset Support in SQLite Features**: Update the `supports_sequence_reset` flag in the SQLite database features from `False` to `True` to indicate that SQLite now supports resetting sequences via the `sqlite_sequence` table.
+
+2. **Modify SQLite Introspection's `get_sequences` Method**: Adjust the method to check if the primary key column of a table uses the `AUTOINCREMENT` keyword. This is done by examining the table's creation SQL. Only include sequences for tables with `AUTOINCREMENT` primary keys, ensuring correct interaction with the `sqlite_sequence` table during resets.
+
+model_patch:
+
+--- a/django/db/backends/sqlite3/features.py
++++ b/django/db/backends/sqlite3/features.py
+@@ -29,7 +29,7 @@
+     can_create_inline_fk = False
+     supports_paramstyle_pyformat = False
+     can_clone_databases = True
+-    supports_sequence_reset = False
++    supports_sequence_reset = True
+     supports_temporal_subtraction = True
+     ignores_table_name_case = True
+     supports_cast_with_precision = False
+--- a/django/db/backends/sqlite3/introspection.py
++++ b/django/db/backends/sqlite3/introspection.py
+@@ -92,5 +92,18 @@
+         return [FieldInfo(
+             name, data_type, None, get_field_size(data_type), None, None,
+             not notnull, default, pk == 1,
+         ) for cid, name, data_type, notnull, default, pk in cursor.fetchall()]
+
+     def get_sequences(self, cursor, table_name, table_fields=()):
+         pk_col = self.get_primary_key_column(cursor, table_name)
+-        return [{'table': table_name, 'column': pk_col}]
++        if not pk_col:
++            return []
++        cursor.execute(
++            "SELECT sql FROM sqlite_master "
++            "WHERE type='table' AND name=%s" % (
++                self.connection.ops.quote_name(table_name),
++            ),
++        )
++        result = cursor.fetchone()
++        if not result:
++            return []
++        sql = result[0]
++        return [{'table': table_name, 'column': pk_col}] if 'AUTOINCREMENT' in sql else []
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/sqlite3/features.py b/django/db/backends/sqlite3/features.py
+--- a/django/db/backends/sqlite3/features.py
++++ b/django/db/backends/sqlite3/features.py
+@@ -26,7 +26,6 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     supports_atomic_references_rename = Database.sqlite_version_info >= (3, 26, 0)
+     can_create_inline_fk = False
+     supports_paramstyle_pyformat = False
+-    supports_sequence_reset = False
+     can_clone_databases = True
+     supports_temporal_subtraction = True
+     ignores_table_name_case = True
+diff --git a/django/db/backends/sqlite3/operations.py b/django/db/backends/sqlite3/operations.py
+--- a/django/db/backends/sqlite3/operations.py
++++ b/django/db/backends/sqlite3/operations.py
+@@ -201,13 +201,33 @@ def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False
+             # Simulate TRUNCATE CASCADE by recursively collecting the tables
+             # referencing the tables to be flushed.
+             tables = set(chain.from_iterable(self._references_graph(table) for table in tables))
+-        # Note: No requirement for reset of auto-incremented indices (cf. other
+-        # sql_flush() implementations). Just return SQL at this point
+-        return ['%s %s %s;' % (
++        sql = ['%s %s %s;' % (
+             style.SQL_KEYWORD('DELETE'),
+             style.SQL_KEYWORD('FROM'),
+             style.SQL_FIELD(self.quote_name(table))
+         ) for table in tables]
++        if reset_sequences:
++            sequences = [{'table': table} for table in tables]
++            sql.extend(self.sequence_reset_by_name_sql(style, sequences))
++        return sql
++
++    def sequence_reset_by_name_sql(self, style, sequences):
++        if not sequences:
++            return []
++        return [
++            '%s %s %s %s = 0 %s %s %s (%s);' % (
++                style.SQL_KEYWORD('UPDATE'),
++                style.SQL_TABLE(self.quote_name('sqlite_sequence')),
++                style.SQL_KEYWORD('SET'),
++                style.SQL_FIELD(self.quote_name('seq')),
++                style.SQL_KEYWORD('WHERE'),
++                style.SQL_FIELD(self.quote_name('name')),
++                style.SQL_KEYWORD('IN'),
++                ', '.join([
++                    "'%s'" % sequence_info['table'] for sequence_info in sequences
++                ]),
++            ),
++        ]
+
+     def adapt_datetimefield_value(self, value):
+         if value is None:
+
+</patch>
+
+--------------------------------------------------
+analyze
+External factors: Improper implementation details: Lack of specific description of function reset sequences on SQLite, resulting in incorrect generation of cots
+
+text:
+<issue>
+Allow makemigrations to skip database consistency checks
+Description
+
+Currently makemigrations always requires an active database connection, due to it executing loader.check_consistent_history() here: ​https://github.com/django/django/blob/290d8471bba35980f3e228f9c171afc40f2550fa/django/core/management/commands/makemigrations.py#L93-L101
+Sometimes you are making a change on a machine that doesn't have a database set up or is configured to use a database on a host that isn't resolvable (i.e a postgres host that's only resolvable within docker-compose). If you run makemigrations on such a machine it will fail while attempting to check the migrations consistency, which is quite annoying. The solution seems to either add a django.db.backends.dummy backend for such cases or start a database server locally.
+I'd like to add a flag to skip the consistency check in these situations, or fail gracefully if the connection to the database isn't available.
+
+</issue>
+
+steps:
+
+1. **Add the new command-line option to `makemigrations` command.**
+   - In `django/core/management/commands/makemigrations.py`, within the `add_arguments` method, introduce a new `--skip-consistency-check` flag. This allows users to skip database consistency checks.
+
+2. **Modify the consistency check execution in the `handle` method.**
+   - In the same file, wrap the existing loop that calls `loader.check_consistent_history(connection)` with a conditional check. If the new `--skip-consistency-check` option is provided, skip executing the loop to avoid database checks.
+
+model_patch:
+
+--- a/django/core/management/commands/makemigrations.py
++++ b/django/core/management/commands/makemigrations.py
+@@ -61,6 +61,11 @@
+             '--check', action='store_true', dest='check_changes',
+             help='Exit with a non-zero status if model changes are missing migrations.',
+         )
++        parser.add_argument(
++            '--skip-consistency-check', action='store_true',
++            dest='skip_consistency_check',
++            help='Skip checking for consistent migration history with the database.',
++        )
+
+     @no_translations
+     def handle(self, *app_labels, **options):
+@@ -100,14 +105,15 @@
+         # Non-default databases are only checked if database routers used.
+         aliases_to_check = connections if settings.DATABASE_ROUTERS else [DEFAULT_DB_ALIAS]
+         for alias in sorted(aliases_to_check):
+-            connection = connections[alias]
+-            if (connection.settings_dict['ENGINE'] != 'django.db.backends.dummy' and any(
+-                    # At least one model must be migrated to the database.
+-                    router.allow_migrate(connection.alias, app_label, model_name=model._meta.object_name)
+-                    for app_label in consistency_check_labels
+-                    for model in apps.get_app_config(app_label).get_models()
+-            )):
+-                loader.check_consistent_history(connection)
++            if not options['skip_consistency_check']:
++                connection = connections[alias]
++                if (connection.settings_dict['ENGINE'] != 'django.db.backends.dummy' and any(
++                        # At least one model must be migrated to the database.
++                        router.allow_migrate(connection.alias, app_label, model_name=model._meta.object_name)
++                        for app_label in consistency_check_labels
++                        for model in apps.get_app_config(app_label).get_models()
++                )):
++                    loader.check_consistent_history(connection)
+
+         # Before anything else, see if there's conflicting apps and drop out
+         # hard if there are any and they don't want to merge
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/commands/makemigrations.py b/django/core/management/commands/makemigrations.py
+--- a/django/core/management/commands/makemigrations.py
++++ b/django/core/management/commands/makemigrations.py
+@@ -1,5 +1,6 @@
+ import os
+ import sys
++import warnings
+ from itertools import takewhile
+
+ from django.apps import apps
+@@ -7,7 +8,7 @@
+ from django.core.management.base import (
+     BaseCommand, CommandError, no_translations,
+ )
+-from django.db import DEFAULT_DB_ALIAS, connections, router
++from django.db import DEFAULT_DB_ALIAS, OperationalError, connections, router
+ from django.db.migrations import Migration
+ from django.db.migrations.autodetector import MigrationAutodetector
+ from django.db.migrations.loader import MigrationLoader
+@@ -98,8 +99,15 @@ def handle(self, *app_labels, **options):
+                     for app_label in consistency_check_labels
+                     for model in apps.get_app_config(app_label).get_models()
+             )):
+-                loader.check_consistent_history(connection)
+-
++                try:
++                    loader.check_consistent_history(connection)
++                except OperationalError as error:
++                    warnings.warn(
++                        "Got an error checking a consistent migration history "
++                        "performed for database connection '%s': %s."
++                        % (alias, error),
++                        RuntimeWarning,
++                    )
+         # Before anything else, see if there's conflicting apps and drop out
+         # hard if there are any and they don't want to merge
+         conflicts = loader.detect_conflicts()
+
+</patch>
+
+--------------------------------------------------
+analyze
+External factors:
+1. Implementation details are unclear: The possible solutions in Prompt are inconsistent with the actual solutions, causing interference to cot generation
+2. Missing context information: From the golden patch, we can see that the OperationalError needs to be imported, but the context lacks relevant information
+
+text:
+<issue>
+Add an absolute_max parameter to formset_factory
+Description
+
+The documentation at ​https://docs.djangoproject.com/en/1.5/topics/forms/formsets/#limiting-the-maximum-number-of-forms seems to indicate (if I understood it correctly) that the purpose of the max_num parameter is to prevent that someone sends a manipulated, excessively large value in the hidden form field that states the number of (extra) forms that are submitted, whereas it is not (directly) related to the number of forms that are actually POSTed, or initialized via parameter initials.
+However, following the example at that page, with MyInitials being a list of e.g. 1500 initial values and request.POST containing more than 1500 formsets:
+>>> ArticleFormSet = formset_factory(ArticleForm, extra=0)
+>>> formset1 = ArticleFormSet(initial=MyInitials)
+>>> formset2 = ArticleFormSet(request.POST)
+Now, accessing formset1.forms[1000] throws an IndexError exception.
+The max_num is at its default value of 1000, but in the above context, it is not expected that formset1 or formset2 is reduced to max_num forms -- I'd have expected each to have the full number of forms as initialized.
+Related thread at django-users: ​http://thread.gmane.org/gmane.comp.python.django.user/152946
+
+</issue>
+
+steps:
+
+1. **Modify the `total_form_count` method in `BaseFormSet`**: In the unbound case (when the formset is initialized with initial data), after computing the total forms based on `initial_forms`, `min_num`, `max_num`, and `extra`, apply the `absolute_max` limit. This ensures that even when initial data exceeds `max_num`, the total forms do not surpass `absolute_max`, thus preventing IndexErrors and potential Denial-of-Service issues.
+
+model_patch:
+
+--- a/django/forms/formsets.py
++++ b/django/forms/formsets.py
+@@ -119,6 +119,7 @@
+                 total_forms = initial_forms
+             elif total_forms > self.max_num >= 0:
+                 total_forms = self.max_num
++        total_forms = min(total_forms, self.absolute_max)
+         return total_forms
+
+     def initial_form_count(self):
+
+
+gold_patch:
+<patch>
+diff --git a/django/forms/formsets.py b/django/forms/formsets.py
+--- a/django/forms/formsets.py
++++ b/django/forms/formsets.py
+@@ -433,16 +433,21 @@ def as_ul(self):
+
+ def formset_factory(form, formset=BaseFormSet, extra=1, can_order=False,
+                     can_delete=False, max_num=None, validate_max=False,
+-                    min_num=None, validate_min=False):
++                    min_num=None, validate_min=False, absolute_max=None):
+     """Return a FormSet for the given form class."""
+     if min_num is None:
+         min_num = DEFAULT_MIN_NUM
+     if max_num is None:
+         max_num = DEFAULT_MAX_NUM
+-    # hard limit on forms instantiated, to prevent memory-exhaustion attacks
+-    # limit is simply max_num + DEFAULT_MAX_NUM (which is 2*DEFAULT_MAX_NUM
+-    # if max_num is None in the first place)
+-    absolute_max = max_num + DEFAULT_MAX_NUM
++    # absolute_max is a hard limit on forms instantiated, to prevent
++    # memory-exhaustion attacks. Default to max_num + DEFAULT_MAX_NUM
++    # (which is 2 * DEFAULT_MAX_NUM if max_num is None in the first place).
++    if absolute_max is None:
++        absolute_max = max_num + DEFAULT_MAX_NUM
++    if max_num > absolute_max:
++        raise ValueError(
++            "'absolute_max' must be greater or equal to 'max_num'."
++        )
+     attrs = {
+         'form': form,
+         'extra': extra,
+diff --git a/django/forms/models.py b/django/forms/models.py
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -862,7 +862,8 @@ def modelformset_factory(model, form=ModelForm, formfield_callback=None,
+                          can_order=False, max_num=None, fields=None, exclude=None,
+                          widgets=None, validate_max=False, localized_fields=None,
+                          labels=None, help_texts=None, error_messages=None,
+-                         min_num=None, validate_min=False, field_classes=None):
++                         min_num=None, validate_min=False, field_classes=None,
++                         absolute_max=None):
+     """Return a FormSet class for the given Django model class."""
+     meta = getattr(form, 'Meta', None)
+     if (getattr(meta, 'fields', fields) is None and
+@@ -879,7 +880,8 @@ def modelformset_factory(model, form=ModelForm, formfield_callback=None,
+                              error_messages=error_messages, field_classes=field_classes)
+     FormSet = formset_factory(form, formset, extra=extra, min_num=min_num, max_num=max_num,
+                               can_order=can_order, can_delete=can_delete,
+-                              validate_min=validate_min, validate_max=validate_max)
++                              validate_min=validate_min, validate_max=validate_max,
++                              absolute_max=absolute_max)
+     FormSet.model = model
+     return FormSet
+
+@@ -1048,7 +1050,8 @@ def inlineformset_factory(parent_model, model, form=ModelForm,
+                           can_delete=True, max_num=None, formfield_callback=None,
+                           widgets=None, validate_max=False, localized_fields=None,
+                           labels=None, help_texts=None, error_messages=None,
+-                          min_num=None, validate_min=False, field_classes=None):
++                          min_num=None, validate_min=False, field_classes=None,
++                          absolute_max=None):
+     """
+     Return an ``InlineFormSet`` for the given kwargs.
+
+@@ -1078,6 +1081,7 @@ def inlineformset_factory(parent_model, model, form=ModelForm,
+         'help_texts': help_texts,
+         'error_messages': error_messages,
+         'field_classes': field_classes,
++        'absolute_max': absolute_max,
+     }
+     FormSet = modelformset_factory(model, **kwargs)
+     FormSet.fk = fk
+
+</patch>
+
+--------------------------------------------------
+analyze
+Internal factors: cot is inconsistent with propt: cot does not generate cot according to the core function implementation requirements
+text:
+<issue>
+Implement autoreload behaviour for cached template loader
+Description
+
+It would be nice to be able get the speed benefit of the cached template loader during development, but without the downside of having to restart the server every time you change a template. It turns out it's possible with just a few changes.
+Because it's not really possible to configure the cached template loader I did have to base this patch on the fix for #25788. Enabling autoreloading for the cached template loader would work like this:
+TEMPLATES = [{
+	'BACKEND': 'django.template.backends.django.DjangoTemplates',
+	'DIRS': [os.path.join(BASE_DIR, 'templates')],
+	'APP_DIRS': True
+	'OPTIONS': {
+		'cache_templates': True,
+		'autoreload': DEBUG
+	}
+}]
+
+</issue>
+
+steps:
+
+1. **Modify Cached Loader's `get_template` Method**: Update the method to check if a cached template's origin is still up-to-date before returning it. If not, invalidate the cache and reload the template.
+2. **Handle TemplateDoesNotExist Exceptions**: When a cached exception exists, attempt to reload the template. If it now exists, update the cache; otherwise, re-raise the exception.
+3. **Integrate with Autoreload**: Ensure the cached loader checks for template changes by leveraging the `origin.uptodate()` method, which tracks file modifications.
+
+model_patch:
+
+--- a/django/template/loaders/cached.py
++++ b/django/template/loaders/cached.py
+@@ -45,6 +45,28 @@
+             if isinstance(cached, type) and issubclass(cached, TemplateDoesNotExist):
+                 raise cached(template_name)
+             elif isinstance(cached, TemplateDoesNotExist):
++                # Check if the template exists now
++                try:
++                    template = super().get_template(template_name, skip)
++                except TemplateDoesNotExist as e:
++                    self.get_template_cache[key] = copy_exception(e) if self.engine.debug else TemplateDoesNotExist
++                    raise copy_exception(cached)
++                else:
++                    self.get_template_cache[key] = template
++                    return template
++                raise copy_exception(cached)
++            # Check if the cached template is still up-to-date
++            if not cached.origin.uptodate():
++                # If not, purge the cached template and try again
++                del self.get_template_cache[key]
++                return self.get_template(template_name, skip)
++            return cached
++
++        try:
++            template = super().get_template(template_name, skip)
++        except TemplateDoesNotExist as e:
++            if self.engine.debug:
++                self.get_template_cache[key] = copy_exception(e)
++            else:
++                self.get_template_cache[key] = TemplateDoesNotExist
++            if isinstance(cached, type) and issubclass(cached, TemplateDoesNotExist):
+                 raise copy_exception(cached)
+             return cached
+-
+         try:
+             template = super().get_template(template_name, skip)
+         except TemplateDoesNotExist as e:
+             self.get_template_cache[key] = copy_exception(e) if self.engine.debug else TemplateDoesNotExist
+             raise
+         else:
+             self.get_template_cache[key] = template
+-
+         return template
+
+
+gold_patch:
+<patch>
+diff --git a/django/template/__init__.py b/django/template/__init__.py
+--- a/django/template/__init__.py
++++ b/django/template/__init__.py
+@@ -64,5 +64,8 @@
+ # Library management
+ from .library import Library                                            # NOQA isort:skip
+
++# Import the .autoreload module to trigger the registrations of signals.
++from . import autoreload                                                # NOQA isort:skip
++
+
+ __all__ += ('Template', 'Context', 'RequestContext')
+diff --git a/django/template/autoreload.py b/django/template/autoreload.py
+new file mode 100644
+--- /dev/null
++++ b/django/template/autoreload.py
+@@ -0,0 +1,50 @@
++from django.dispatch import receiver
++from django.template import engines
++from django.template.backends.django import DjangoTemplates
++from django.utils.autoreload import (
++    autoreload_started, file_changed, is_django_path,
++)
++
++
++def get_template_directories():
++    # Iterate through each template backend and find
++    # any template_loader that has a 'get_dirs' method.
++    # Collect the directories, filtering out Django templates.
++    items = set()
++    for backend in engines.all():
++        if not isinstance(backend, DjangoTemplates):
++            continue
++
++        items.update(backend.engine.dirs)
++
++        for loader in backend.engine.template_loaders:
++            if not hasattr(loader, 'get_dirs'):
++                continue
++            items.update(
++                directory
++                for directory in loader.get_dirs()
++                if not is_django_path(directory)
++            )
++    return items
++
++
++def reset_loaders():
++    for backend in engines.all():
++        if not isinstance(backend, DjangoTemplates):
++            continue
++        for loader in backend.engine.template_loaders:
++            loader.reset()
++
++
++@receiver(autoreload_started, dispatch_uid='template_loaders_watch_changes')
++def watch_for_template_changes(sender, **kwargs):
++    for directory in get_template_directories():
++        sender.watch_dir(directory, '**/*')
++
++
++@receiver(file_changed, dispatch_uid='template_loaders_file_changed')
++def template_changed(sender, file_path, **kwargs):
++    for template_dir in get_template_directories():
++        if template_dir in file_path.parents:
++            reset_loaders()
++            return True
+diff --git a/django/template/loaders/cached.py b/django/template/loaders/cached.py
+--- a/django/template/loaders/cached.py
++++ b/django/template/loaders/cached.py
+@@ -18,6 +18,11 @@ def __init__(self, engine, loaders):
+         self.loaders = engine.get_template_loaders(loaders)
+         super().__init__(engine)
+
++    def get_dirs(self):
++        for loader in self.loaders:
++            if hasattr(loader, "get_dirs"):
++                yield from loader.get_dirs()
++
+     def get_contents(self, origin):
+         return origin.loader.get_contents(origin)
+
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -14,6 +14,7 @@
+ from types import ModuleType
+ from zipimport import zipimporter
+
++import django
+ from django.apps import apps
+ from django.core.signals import request_finished
+ from django.dispatch import Signal
+@@ -45,6 +46,16 @@
+     pywatchman = None
+
+
++def is_django_module(module):
++    """Return True if the given module is nested under Django."""
++    return module.__name__.startswith('django.')
++
++
++def is_django_path(path):
++    """Return True if the given file path is nested under Django."""
++    return Path(django.__file__).parent in Path(path).parents
++
++
+ def check_errors(fn):
+     @functools.wraps(fn)
+     def wrapper(*args, **kwargs):
+@@ -431,8 +442,15 @@ def _get_clock(self, root):
+
+     def _subscribe(self, directory, name, expression):
+         root, rel_path = self._watch_root(directory)
++        # Only receive notifications of files changing, filtering out other types
++        # like special files: https://facebook.github.io/watchman/docs/type
++        only_files_expression = [
++            'allof',
++            ['anyof', ['type', 'f'], ['type', 'l']],
++            expression
++        ]
+         query = {
+-            'expression': expression,
++            'expression': only_files_expression,
+             'fields': ['name'],
+             'since': self._get_clock(root),
+             'dedup_results': True,
+diff --git a/django/utils/translation/reloader.py b/django/utils/translation/reloader.py
+--- a/django/utils/translation/reloader.py
++++ b/django/utils/translation/reloader.py
+@@ -3,11 +3,7 @@
+ from asgiref.local import Local
+
+ from django.apps import apps
+-
+-
+-def _is_django_module(module):
+-    """Return True if the given module is nested under Django."""
+-    return module.__name__.startswith('django.')
++from django.utils.autoreload import is_django_module
+
+
+ def watch_for_translation_changes(sender, **kwargs):
+@@ -19,7 +15,7 @@ def watch_for_translation_changes(sender, **kwargs):
+         directories.extend(
+             Path(config.path) / 'locale'
+             for config in apps.get_app_configs()
+-            if not _is_django_module(config.module)
++            if not is_django_module(config.module)
+         )
+         directories.extend(Path(p) for p in settings.LOCALE_PATHS)
+         for path in directories:
+
+</patch>
+
+--------------------------------------------------
+analyze
+External factors:
+Implementation details are unclear: There is a lack of detailed description for the function oreload behaviour for cached template loader
+Missing context information: Missing modules required to import in golden patch
+text:
+<issue>
+Make django.utils.text.slugify() strip dashes and underscores
+Description
+
+		(last modified by Elinaldo do Nascimento Monteiro)
+
+Bug generation slug
+Example:
+from django.utils import text
+text.slugify("___This is a test ---")
+output: ___this-is-a-test-
+Improvement after correction
+from django.utils import text
+text.slugify("___This is a test ---")
+output: this-is-a-test
+​PR
+
+</issue>
+
+steps:
+
+1. Locate the `slugify` function in `django/utils/text.py`.
+2. Identify the regex substitution steps that currently handle removing unwanted characters and converting spaces/hyphens.
+3. Modify the final substitution step to include stripping leading and trailing underscores and hyphens by appending `.strip('-_')` to the existing regex substitution.
+4. Ensure that the new code correctly removes any leading and trailing dashes and underscores from the resulting slug.
+
+model_patch:
+
+--- a/django/utils/text.py
++++ b/django/utils/text.py
+@@ -401,4 +401,4 @@
+         value = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode('ascii')
+     value = re.sub(r'[^\w\s-]', '', value.lower()).strip()
+     value = re.sub(r'[-\s]+', '-', value)
+-    return value
++    return value.strip('-_')
+
+ def camel_case_to_spaces(value):
+
+
+gold_patch:
+<patch>
+diff --git a/django/utils/text.py b/django/utils/text.py
+--- a/django/utils/text.py
++++ b/django/utils/text.py
+@@ -393,17 +393,18 @@ def unescape_string_literal(s):
+ @keep_lazy_text
+ def slugify(value, allow_unicode=False):
+     """
+-    Convert to ASCII if 'allow_unicode' is False. Convert spaces to hyphens.
+-    Remove characters that aren't alphanumerics, underscores, or hyphens.
+-    Convert to lowercase. Also strip leading and trailing whitespace.
++    Convert to ASCII if 'allow_unicode' is False. Convert spaces or repeated
++    dashes to single dashes. Remove characters that aren't alphanumerics,
++    underscores, or hyphens. Convert to lowercase. Also strip leading and
++    trailing whitespace, dashes, and underscores.
+     """
+     value = str(value)
+     if allow_unicode:
+         value = unicodedata.normalize('NFKC', value)
+     else:
+         value = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode('ascii')
+-    value = re.sub(r'[^\w\s-]', '', value.lower()).strip()
+-    return re.sub(r'[-\s]+', '-', value)
++    value = re.sub(r'[^\w\s-]', '', value.lower())
++    return re.sub(r'[-\s]+', '-', value).strip('-_')
+
+
+ def camel_case_to_spaces(value):
+
+</patch>
+
+--------------------------------------------------
+analyze
+Correct, although the code is redundant, it should be able to pass the test cases

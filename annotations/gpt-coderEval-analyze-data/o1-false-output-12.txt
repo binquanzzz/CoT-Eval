@@ -1,0 +1,435 @@
+
+==================== 62ece4992e6aefcf4aabbd86 ====================
+file_path: tests/unit/mock/yaml_helper.py
+project: ansible-security/ansible_collections.ibm.qradar
+name: _dump_string
+
+prompt:
+Dump to a py2-unicode or py3-string
+
+steps:
+1. Import the YAML library (e.g., PyYAML) to handle serialization.
+2. Check if a custom dumper function is provided.
+3. If no custom dumper is provided, use the default YAML dump function.
+4. Serialize the Python object into YAML format.
+5. Return the resulting YAML string.
+
+generate_code:
+
+import yaml
+
+def _dump_string(obj, dumper=None):
+    if dumper is None:
+        return yaml.dump(obj)
+    return dumper(obj)
+
+
+The code does not consider Python 2, and the correct code will adjust the parameters of yaml.dump according to the Python version
+
+==================== 62ece4992e6aefcf4aabbd87 ====================
+file_path: apphelpers/loggers.py
+project: scrolltech/apphelpers
+name: build_app_logger
+
+prompt:
+General purpose application logger. Useful mainly for debugging
+
+steps:
+1. Import the logging library.
+2. Create or retrieve a logger object with the specified name.
+3. Set the logger's level based on the debug parameter.
+4. Create a FileHandler to write logs to the specified logfile.
+5. Set the FileHandler's level accordingly (debug level if debug is True, info level otherwise).
+6. Create a formatter to define the format of log messages.
+7. Attach the formatter to the handlers.
+8. Add the handlers to the logger.
+9. If debug is True, create a StreamHandler for console output, set its level, and attach it to the logger.
+10. Return the configured logger object.
+
+generate_code:
+
+import logging
+
+def build_app_logger(name='app', logfile='app.log', debug=True):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+
+    file_handler = logging.FileHandler(logfile)
+    file_handler.setLevel(logging.DEBUG if debug else logging.INFO)
+
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    if debug:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.DEBUG)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+
+    return logger
+
+
+
+
+==================== 62ece4992e6aefcf4aabbd89 ====================
+file_path: concert/tests/unit/devices/test_monochromator.py
+project: ufo-kit/concert
+name: gaussian
+
+prompt:
+Gaussian centered around 0.2 with a sigma of 0.1.
+
+steps:
+1. Import the math module for mathematical operations.
+2. Define the function gaussian(x).
+3. Within the function, set the mean (mu) to 0.2 and standard deviation (sigma) to 0.1.
+4. Compute the Gaussian function using the formula:  
+     (1 / (sigma * sqrt(2π))) * exp(-((x - mu)²) / (2 * sigma²))
+5. Return the computed value.
+
+generate_code:
+
+import math
+
+def gaussian(x):
+    mu = 0.2
+    sigma = 0.1
+    return (1 / (sigma * math.sqrt(2 * math.pi))) * math.exp(-((x - mu)**2) / (2 * sigma**2))
+
+
+
+
+==================== 62ece4992e6aefcf4aabbd8a ====================
+file_path: borgmatic/commands/borgmatic.py
+project: witten/borgmatic
+name: load_configurations
+
+prompt:
+Given a sequence of configuration filenames, load and validate each configuration file. Return
+the results as a tuple of: dict of configuration filename to corresponding parsed configuration,
+and sequence of logging.LogRecord instances containing any parse errors.
+
+steps:
+1. Initialize an empty dictionary to store the parsed configurations.
+2. Initialize an empty list to store any logging.LogRecord instances capturing parse errors.
+3. Iterate over each configuration filename in config_filenames.
+4. For each filename, attempt to open and parse the configuration file.
+5. If an error occurs (e.g. file not found, permissions error, parse error), record a logging.LogRecord with error details and continue to the next filename.
+6. If resolve_env is True, replace or resolve environment variables within the parsed configuration.
+7. If overrides are provided, update or merge the parsed configuration with the override values.
+8. Store the successfully parsed and possibly updated configuration in the dictionary with the filename as the key.
+9. After processing all filenames, return a tuple of (dictionary_of_filenames_to_configs, list_of_log_records).
+
+generate_code:
+
+import os
+import logging
+
+def load_configurations(config_filenames, overrides=None, resolve_env=True):
+    configs = {}
+    parse_errors = []
+    
+    for filename in config_filenames:
+        try:
+            with open(filename, 'r') as file:
+                # Example parse logic (assuming JSON for illustration)
+                import json
+                config_data = json.load(file)
+        except Exception as e:
+            # Create a LogRecord for any exception
+            logger = logging.getLogger(__name__)
+            record = logger.makeLogRecord({
+                'msg': f"Error reading {filename}: {e}",
+                'levelno': logging.ERROR,
+                'levelname': 'ERROR'
+            })
+            parse_errors.append(record)
+            continue
+        
+        if resolve_env:
+            # Example environment resolution logic:
+            # Replace placeholders in string values with environment variables
+            def resolve_value(val):
+                if isinstance(val, str):
+                    return os.path.expandvars(val)
+                return val
+            
+            def resolve_env_in_config(conf):
+                if isinstance(conf, dict):
+                    return {k: resolve_env_in_config(resolve_value(v)) for k, v in conf.items()}
+                elif isinstance(conf, list):
+                    return [resolve_env_in_config(resolve_value(i)) for i in conf]
+                else:
+                    return conf
+            
+            config_data = resolve_env_in_config(config_data)
+        
+        if overrides:
+            # Example override logic:
+            # Merge overrides dict into the existing config_data
+            def merge_dict(a, b):
+                for k, v in b.items():
+                    if isinstance(v, dict) and k in a and isinstance(a[k], dict):
+                        merge_dict(a[k], v)
+                    else:
+                        a[k] = v
+            
+            merge_dict(config_data, overrides)
+
+        configs[filename] = config_data
+
+    return configs, parse_errors
+
+
+
+==================== 62e60723d76274f8a4026b76 ====================
+file_path: neo4j/time/__init__.py
+project: neo4j/neo4j-python-driver
+name: from_ticks
+
+prompt:
+Create a time from ticks (nanoseconds since midnight).
+
+:param ticks: nanoseconds since midnight
+:type ticks: int
+:param tz: optional timezone
+:type tz: datetime.tzinfo
+
+:rtype: Time
+
+:raises ValueError: if ticks is out of bounds
+    (0 <= ticks < 86400000000000)
+
+steps:
+1. Check that the ticks parameter is an integer and within the valid range (0 <= ticks < 86400000000000). If not, raise a ValueError.
+2. Compute the hour, minute, second, microsecond, and remaining nanoseconds from the ticks value.
+3. Construct the time object using these computed values.
+4. If a timezone is provided, attach it to the resulting time object.
+5. Return the constructed time object.
+
+generate_code:
+
+class Time:
+    def __init__(self, hour, minute, second, microsecond=0, nanosecond=0, tzinfo=None):
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+        self.microsecond = microsecond
+        self.nanosecond = nanosecond
+        self.tzinfo = tzinfo
+
+    @classmethod
+    def from_ticks(cls, ticks, tz=None):
+        """
+        Create a time from ticks (nanoseconds since midnight).
+
+        :param ticks: nanoseconds since midnight
+        :type ticks: int
+        :param tz: optional timezone
+        :type tz: datetime.tzinfo
+
+        :rtype: Time
+
+        :raises ValueError: if ticks is out of bounds
+                            (0 <= ticks < 86400000000000)
+        """
+        if not isinstance(ticks, int) or ticks < 0 or ticks >= 86400000000000:
+            raise ValueError("ticks must be an integer in range [0, 86400000000000)")
+
+        nano_per_sec = 1_000_000_000
+        nano_per_minute = 60 * nano_per_sec
+        nano_per_hour = 60 * nano_per_minute
+
+        hour, remainder = divmod(ticks, nano_per_hour)
+        minute, remainder = divmod(remainder, nano_per_minute)
+        second, remainder = divmod(remainder, nano_per_sec)
+        microsecond, nanosecond = divmod(remainder, 1000)
+
+        return cls(
+            hour=hour,
+            minute=minute,
+            second=second,
+            microsecond=microsecond,
+            nanosecond=nanosecond,
+            tzinfo=tz
+        )
+
+
+
+==================== 62e60873d76274f8a4026bd8 ====================
+file_path: neo4j/_async/io/_bolt.py
+project: neo4j/neo4j-python-driver
+name: protocol_handlers
+
+prompt:
+Return a dictionary of available Bolt protocol handlers,
+keyed by version tuple. If an explicit protocol version is
+provided, the dictionary will contain either zero or one items,
+depending on whether that version is supported. If no protocol
+version is provided, all available versions will be returned.
+
+:param protocol_version: tuple identifying a specific protocol
+    version (e.g. (3, 5)) or None
+:return: dictionary of version tuple to handler class for all
+    relevant and supported protocol versions
+:raise TypeError: if protocol version is not passed in a tuple
+
+steps:
+1. Define a dictionary containing all supported protocol versions as keys and their corresponding handler classes as values.
+2. Check if protocol_version is None. If so, return the entire dictionary.
+3. If protocol_version is not None, validate that it is a tuple. Raise a TypeError if it is not.
+4. Create a new dictionary with one entry if the requested protocol_version exists in the dictionary of supported handlers; otherwise, leave it empty.
+5. Return the resulting dictionary containing the matching handler or empty if no match was found.
+
+generate_code:
+
+def protocol_handlers(cls, protocol_version=None):
+    supported_handlers = {
+        (3, 0): "Bolt3Handler",
+        (4, 0): "Bolt4Handler",
+        (4, 1): "Bolt41Handler",
+        (4, 2): "Bolt42Handler"
+    }
+    if protocol_version is None:
+        return supported_handlers
+    if not isinstance(protocol_version, tuple):
+        raise TypeError("Protocol version must be passed in a tuple.")
+    handler_dict = {}
+    if protocol_version in supported_handlers:
+        handler_dict[protocol_version] = supported_handlers[protocol_version]
+    return handler_dict
+
+
+
+==================== 62e60e3bd76274f8a4026d1a ====================
+file_path: neo4j/api.py
+project: neo4j/neo4j-python-driver
+name: from_raw_values
+
+prompt:
+Create a Bookmarks object from a list of raw bookmark string values.
+
+You should not need to use this method unless you want to deserialize
+bookmarks.
+
+:param values: ASCII string values (raw bookmarks)
+:type values: Iterable[str]
+
+steps:
+1. Validate and sanitize the input "values"
+2. Initialize an empty list to store bookmark data
+3. Iterate through each value in "values"
+4. Parse each raw string (e.g., splitting information if needed)
+5. Construct bookmark objects or dictionaries with parsed details
+6. Aggregate all bookmark objects in the list
+7. Create and return a new Bookmarks instance using this list
+
+generate_code:
+
+class Bookmarks:
+    def __init__(self, bookmarks):
+        self.bookmarks = bookmarks
+
+    @classmethod
+    def from_raw_values(cls, values):
+        bookmarks_list = []
+        for raw_value in values:
+            parts = raw_value.split('|', 1)
+            title = parts[0].strip()
+            url = parts[1].strip() if len(parts) > 1 else ""
+            bookmarks_list.append({"title": title, "url": url})
+        return cls(bookmarks_list)
+
+
+
+==================== 62b87b199a0c4fa8b80b354c ====================
+file_path: lena/core/split.py
+project: ynikitenko/lena
+name: _get_seq_with_type
+
+prompt:
+Return a (sequence, type) pair.
+Sequence is derived from *seq*
+(or is *seq*, if that is of a sequence type).
+
+steps:
+1. Check if seq is already a sequence type (e.g., list, tuple). If yes, store its type.
+2. If seq is not a sequence type, convert it into a sequence (e.g., wrap it in a list).
+3. Capture the type of the resulting sequence.
+4. Return the sequence and its type as a tuple.
+
+generate_code:
+
+def _get_seq_with_type(seq, bufsize=None):
+    """
+    Return a (sequence, type) pair.
+    Sequence is derived from *seq*
+    (or is *seq*, if that is of a sequence type).
+    """
+    sequence_types = (list, tuple)
+    if isinstance(seq, sequence_types):
+        return seq, type(seq)
+    else:
+        derived_seq = [seq]
+        return derived_seq, type(derived_seq)
+
+
+
+==================== 62b87b4f9a0c4fa8b80b3581 ====================
+file_path: lena/structures/histogram.py
+project: ynikitenko/lena
+name: scale
+
+prompt:
+Compute or set scale (integral of the histogram).
+
+If *other* is ``None``, return scale of this histogram.
+If its scale was not computed before,
+it is computed and stored for subsequent use
+(unless explicitly asked to *recompute*).
+Note that after changing (filling) the histogram
+one must explicitly recompute the scale
+if it was computed before.
+
+If a float *other* is provided, rescale self to *other*.
+
+Histograms with scale equal to zero can't be rescaled.
+:exc:`.LenaValueError` is raised if one tries to do that.
+
+steps:
+1. Determine whether the optional parameter "other" is provided or if it is None.
+2. If "other" is None, either return the previously computed scale or compute the scale of the histogram if needed, especially if recompute=True or the scale is not yet set.
+3. If "other" is a float value, first ensure the previously computed scale is valid or recompute it if recompute=True.
+4. Check if the existing scale is zero. If it is zero, raise a LenaValueError because it cannot be rescaled.
+5. If the scale is not zero, apply the scaling factor to the histogram data by multiplying each bin count by the factor (other / current_scale).
+6. Update the stored scale in the histogram to the new "other" value.
+7. Return the current scale if "other" is None; otherwise, no explicit return is necessary after rescaling.
+
+generate_code:
+
+def scale(self, other=None, recompute=False):
+    if other is None:
+        # if scale is already computed and not forced to recompute, just return it
+        if hasattr(self, '_scale') and not recompute:
+            return self._scale
+        # otherwise compute the scale
+        self._scale = sum(self._hist)  # for example, summing all bins
+        return self._scale
+    else:
+        # ensure scale is ready
+        if not hasattr(self, '_scale') or recompute:
+            self._scale = sum(self._hist)
+        # check if scale is zero
+        if self._scale == 0:
+            raise LenaValueError("Cannot rescale histogram with zero scale.")
+        # rescale histogram
+        factor = other / self._scale
+        self._hist = [x * factor for x in self._hist]
+        # update stored scale
+        self._scale = other
+
+
+--------------------------------------------------
+
+

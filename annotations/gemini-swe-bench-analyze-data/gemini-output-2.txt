@@ -1,0 +1,659 @@
+text:
+<issue>
+Allow migrations directories without __init__.py files
+Description
+
+		(last modified by Tim Graham)
+
+Background: In python 3 a package with no __init__.py is implicitly a namespace package, so it has no __file__ attribute.
+The migrate command currently checks for existence of a __file__ attribute on the migrations package. This check was introduced in #21015, because the __file__ attribute was used in migration file discovery.
+However, in #23406 migration file discovery was changed to use pkgutil.iter_modules (), instead of direct filesystem access. pkgutil. iter_modules() uses the package's __path__ list, which exists on implicit namespace packages.
+As a result, the __file__ check is no longer needed, and in fact prevents migrate from working on namespace packages (implicit or otherwise).
+Related work: #29091
+
+</issue>
+
+steps:
+1. Open the file `django/db/migrations/loader.py`.
+2.  Locate the `load_disk` method within the `MigrationLoader` class.
+3.  Find the following code block within the `try...except...else` block in the `load_disk` method, specifically within the `else` block after successfully importing the module:
+```python
+                # Empty directories are namespaces.
+                # getattr() needed on PY36 and older (replace w/attribute access).
+                if getattr(module, '__file__', None) is None:
+                    self.unmigrated_apps.add(app_config.label)
+                    continue
+```
+4.  Delete or comment out this entire `if` block.
+5.  Save the modified `django/db/migrations/loader.py` file.
+6.  Generate a patch file in git format that represents the changes made to `django/db/migrations/loader.py`. This patch file will remove the check for the `__file__` attribute.
+model_patch:
+
+--- a/django/db/migrations/loader.py
++++ b/django/db/migrations/loader.py
+@@ -85,11 +85,6 @@
+                     continue
+                 raise
+             else:
+-                # Empty directories are namespaces.
+-                # getattr() needed on PY36 and older (replace w/attribute access).
+-                if getattr(module, '__file__', None) is None:
+-                    self.unmigrated_apps.add(app_config.label)
+-                    continue
+                 # Module is not a package (e.g. migrations.py).
+                 if not hasattr(module, '__path__'):
+                     self.unmigrated_apps.add(app_config.label)
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/migrations/loader.py b/django/db/migrations/loader.py
+--- a/django/db/migrations/loader.py
++++ b/django/db/migrations/loader.py
+@@ -84,11 +84,6 @@ def load_disk(self):
+                     continue
+                 raise
+             else:
+-                # Empty directories are namespaces.
+-                # getattr() needed on PY36 and older (replace w/attribute access).
+-                if getattr(module, '__file__', None) is None:
+-                    self.unmigrated_apps.add(app_config.label)
+-                    continue
+                 # Module is not a package (e.g. migrations.py).
+                 if not hasattr(module, '__path__'):
+                     self.unmigrated_apps.add(app_config.label)
+@@ -96,11 +91,14 @@ def load_disk(self):
+                 # Force a reload if it's already loaded (tests need this)
+                 if was_loaded:
+                     reload(module)
+-            self.migrated_apps.add(app_config.label)
+             migration_names = {
+                 name for _, name, is_pkg in pkgutil.iter_modules(module.__path__)
+                 if not is_pkg and name[0] not in '_~'
+             }
++            if migration_names or self.ignore_no_migrations:
++                self.migrated_apps.add(app_config.label)
++            else:
++                self.unmigrated_apps.add(app_config.label)
+             # Load migrations
+             for migration_name in migration_names:
+                 migration_path = '%s.%s' % (module_name, migration_name)
+
+</patch>
+Prompt fuzzy - implementation details - classification process is unclear
+Prompt only explains the check of deletion for __file__, but does not further explain the need to reclassify migrated_apps and unmigrated_apps, which leads to an error.
+--------------------------------------------------
+analyze
+text:
+<issue>
+Support setting Secure, HttpOnly, SameSite on the language cookie
+Description
+
+I propose to add the following settings, with the following default values:
+LANGUAGE_COOKIE_SECURE = False
+LANGUAGE_COOKIE_HTTPONLY = False
+LANGUAGE_COOKIE_SAMESITE = None
+The default values maintain the current behavior.
+These settings do not provide much security value, since the language is not secret or sensitive. This was also discussed briefly here: ​https://github.com/django/django/pull/8380#discussion_r112448195. The reasons I'd like to add them are:
+Sometimes auditors require them.
+I personally prefer to set them unless I have a reason *not* to.
+Browsers are starting to strongly nudge toward HttpOnly and Secure when possible, e.g. ​https://webkit.org/blog/8613/intelligent-tracking-prevention-2-1/.
+
+</issue>
+
+steps:
+1. Open the file `django/conf/global_settings.py`.
+2. Locate the section for language cookie settings, which starts with `LANGUAGE_COOKIE_NAME`.
+3. Add the following lines to define the new settings `LANGUAGE_COOKIE_SECURE`, `LANGUAGE_COOKIE_HTTPONLY`, and `LANGUAGE_COOKIE_SAMESITE` with their default values `False`, `False`, and `None` respectively, immediately after the existing `LANGUAGE_COOKIE_PATH` setting.
+4. Save the changes to `django/conf/global_settings.py`.
+5. Create a patch file using `git diff` command to record the changes.
+model_patch:
+
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -157,6 +157,9 @@
+  LANGUAGE_COOKIE_AGE = None
+  LANGUAGE_COOKIE_DOMAIN = None
+  LANGUAGE_COOKIE_PATH = '/'
++ LANGUAGE_COOKIE_SECURE = False
++ LANGUAGE_COOKIE_HTTPONLY = False
++ LANGUAGE_COOKIE_SAMESITE = None
+
+
+  # If you set this to True, Django will format dates, numbers and calendars
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/conf/global_settings.py b/django/conf/global_settings.py
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -154,6 +154,9 @@ def gettext_noop(s):
+ LANGUAGE_COOKIE_AGE = None
+ LANGUAGE_COOKIE_DOMAIN = None
+ LANGUAGE_COOKIE_PATH = '/'
++LANGUAGE_COOKIE_SECURE = False
++LANGUAGE_COOKIE_HTTPONLY = False
++LANGUAGE_COOKIE_SAMESITE = None
+
+
+ # If you set this to True, Django will format dates, numbers and calendars
+diff --git a/django/views/i18n.py b/django/views/i18n.py
+--- a/django/views/i18n.py
++++ b/django/views/i18n.py
+@@ -55,6 +55,9 @@ def set_language(request):
+                 max_age=settings.LANGUAGE_COOKIE_AGE,
+                 path=settings.LANGUAGE_COOKIE_PATH,
+                 domain=settings.LANGUAGE_COOKIE_DOMAIN,
++                secure=settings.LANGUAGE_COOKIE_SECURE,
++                httponly=settings.LANGUAGE_COOKIE_HTTPONLY,
++                samesite=settings.LANGUAGE_COOKIE_SAMESITE,
+             )
+     return response
+
+
+</patch>
+
+--------------------------------------------------
+analyze
+The details of the Prompt implementation are unclear: Prompt only mentioned adding three new attributes, but did not mention where these three attributes were applied.
+
+text:
+<issue>
+Add support for postgresql client certificates and key to dbshell.
+Description
+
+This bug is very similar to the #28322
+A common security procedure for DB access is to require mutual TLS for the DB connection.
+This involves specifying a server certificate, client certificate, and client key when connecting.
+Django already supports this configuration, it looks like this:
+DATABASES = {
+	'default': {
+		'ENGINE': 'django.db.backends.postgresql',
+		'NAME': os.environ.get('POSTGRES_DB_NAME'),
+		'USER': os.environ.get('POSTGRES_DB_USER'),
+		'HOST': 'postgres',
+		'PORT': '5432',
+		'SCHEMA': os.environ.get('POSTGRES_DB_SCHEMA'),
+		'OPTIONS': {
+			 'sslmode': 'verify-ca',
+			 'sslrootcert': os.environ.get('POSTGRES_CLI_SSL_CA', 'ca.crt'),
+			 'sslcert': os.environ.get('POSTGRES_CLI_SSL_CRT', 'client_cert_chain.crt'),
+			 'sslkey': os.environ.get('POSTGRES_CLI_SSL_KEY', 'client_key.key')
+		}
+	}
+}
+However the dbshell command does not support the client cert params.
+Should be a trivial fix to add in support for the other 'ssl' parameters required here.
+
+</issue>
+
+steps:
+1. Open the file `django/db/backends/postgresql/base.py`.
+2. Locate the `get_new_connection` method within the `DatabaseWrapper` class.
+3. Inside the `get_new_connection` method, before the `Database.connect(**conn_params)` call, extract the SSL related parameters from `conn_params` dictionary. The parameters are `sslmode`, `sslrootcert`, `sslcert`, and `sslkey`. Use `conn_params.pop('sslmode', None)` etc. to extract and remove them from `conn_params`.
+4. Modify the `Database.connect` call to pass these extracted SSL parameters as keyword arguments. For example: `Database.connect(**conn_params, sslmode=sslmode, sslrootcert=sslrootcert, sslcert=sslcert, sslkey=sslkey)`.
+5. Save the changes to `django/db/backends/postgresql/base.py`.
+6. Create a patch file in `git diff` format comparing the modified file with the original file.
+model_patch:
+
+--- a/django/db/backends/postgresql/base.py
++++ b/django/db/backends/postgresql/base.py
+@@ -177,7 +177,11 @@
+
+     def get_new_connection(self, conn_params):
+         connection = Database.connect(**conn_params)
+-
++        sslmode = conn_params.pop('sslmode', None)
++        sslcert = conn_params.pop('sslcert', None)
++        sslkey = conn_params.pop('sslkey', None)
++        sslrootcert = conn_params.pop('sslrootcert', None)
++        connection = Database.connect(**conn_params, sslmode=sslmode, sslcert=sslcert, sslkey=sslkey, sslrootcert=sslrootcert)
+         # self.isolation_level must be set:
+         # - after connecting to the database in order to obtain the database's
+         #   default when no value is explicitly specified in options.
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -17,6 +17,10 @@ def runshell_db(cls, conn_params):
+         dbname = conn_params.get('database', '')
+         user = conn_params.get('user', '')
+         passwd = conn_params.get('password', '')
++        sslmode = conn_params.get('sslmode', '')
++        sslrootcert = conn_params.get('sslrootcert', '')
++        sslcert = conn_params.get('sslcert', '')
++        sslkey = conn_params.get('sslkey', '')
+
+         if user:
+             args += ['-U', user]
+@@ -30,6 +34,14 @@ def runshell_db(cls, conn_params):
+         subprocess_env = os.environ.copy()
+         if passwd:
+             subprocess_env['PGPASSWORD'] = str(passwd)
++        if sslmode:
++            subprocess_env['PGSSLMODE'] = str(sslmode)
++        if sslrootcert:
++            subprocess_env['PGSSLROOTCERT'] = str(sslrootcert)
++        if sslcert:
++            subprocess_env['PGSSLCERT'] = str(sslcert)
++        if sslkey:
++            subprocess_env['PGSSLKEY'] = str(sslkey)
+         try:
+             # Allow SIGINT to pass to psql to abort queries.
+             signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+</patch>
+
+--------------------------------------------------
+analyze
+Cot locates the wrong file for modification.
+text:
+<issue>
+Allow app_label and class to be specified in the name argument for indexes and constraints.
+Description
+
+Allow %(app_label)s and %(class)s to be specified in name argument for BaseConstraint (CheckConstraint, UniqueConstraint) and Index:
+%(class)s should be replaced by the lowercased name of the child class that the field is used in,
+'%(app_label)s should be replaced by the lowercased name of the app the child class is contained within.
+This should allow for specifying check constraints and partial indexes (which name's are mandatory) in abstract models.
+Based on discussion in #30362.
+
+</issue>
+
+steps:
+1. Modify `django/db/models/indexes.py` to handle `%(app_label)s` and `%(class)s` placeholders in the `name` argument of the `Index` class. Add a `_resolve_name` method to perform the replacement.
+2. Modify `django/db/models/constraints.py` to handle `%(app_label)s` and `%(class)s` placeholders in the `name` argument of the `BaseConstraint`, `CheckConstraint`, and `UniqueConstraint` classes. Add a `_resolve_name` method to perform the replacement, similar to `Index`.
+3. Update `django/db/backends/base/schema.py` to ensure that the schema editor uses the potentially processed `name` from `Index` and `BaseConstraint` when generating SQL for index and constraint creation. No significant change might be needed here as the name resolution should happen in the constraint/index objects themselves.
+4. Add tests in `tests/migrations/test_operations.py` to verify the placeholder replacement functionality for `Index`, `UniqueConstraint`, and `CheckConstraint`. Create test models with abstract classes and indexes/constraints using placeholders in names. Check the generated migration operations and the SQL generated by the schema editor during migrations.
+5. Ensure the tests cover different scenarios, including abstract models and concrete models, and that the placeholders are correctly replaced with the app label and class name in lowercase.
+6. Review and refine the code and tests for clarity, correctness, and completeness.
+model_patch:
+
+--- a/django/db/backends/sqlite3/schema.py
++++ b/django/db/backends/sqlite3/schema.py
+@@ -402,7 +402,10 @@
+
+      def add_constraint(self, model, constraint):
+          if isinstance(constraint, UniqueConstraint) and constraint.condition:
+-             super().add_constraint(model, constraint)
++             sql = self.sql_create_unique % {
++                 'name': self.quote_name(constraint.name),
++                 'table': self.quote_name(model._meta.db_table),
++                 'columns': self.format_columns([model._meta.get_field(field).column for field in constraint.fields]),
++             }
+          else:
+              self._remake_table(model)
+
+--- a/django/db/migrations/operations/base.py
++++ b/django/db/migrations/operations/base.py
+@@ -139,7 +139,7 @@
+              ", ".join(map(repr, self._constructor_args[0])),
+              ",".join(" %s=%r" % x for x in self._constructor_args[1].items()),
+          )
+-
++
+
+--- a/django/db/migrations/state.py
++++ b/django/db/migrations/state.py
+@@ -611,4 +611,4 @@
+              (self.bases == other.bases) and
+              (self.managers == other.managers)
+          )
+-
++
+
+--- a/django/db/models/constraints.py
++++ b/django/db/models/constraints.py
+@@ -1,5 +1,6 @@
+ from django.db.models import Deferrable, Index, UniqueConstraint
+ from django.utils.deconstruct import deconstructible
++from django.utils.text import format_lazy
+
+
+ @deconstructible
+@@ -18,6 +19,17 @@
+         self.violation_error_message = violation_error_message
+         super().__init__(fields, name=name, deferrable=deferrable)
+
++    def _resolve_name(self, model):
++        if self.name:
++            return format_lazy(
++                self.name,
++                class_name=model.__name__.lower(),
++                app_label=model._meta.app_label.lower(),
++            )
++        else:
++            return self.name
++
++
+ class UniqueConstraint(BaseConstraint, UniqueConstraint):
+     def __init__(self, *fields, name=None, deferrable=None, condition=None, violation_error_message=None):
+         self.condition = condition
+@@ -25,3 +37,14 @@
+         UniqueConstraint.__init__(self, *fields, name=name, deferrable=deferrable)
+         BaseConstraint.__init__(self, fields, name=name, deferrable=deferrable, violation_error_message=violation_error_message)
+
++    def _resolve_name(self, model):
++        if self.name:
++            return format_lazy(
++                self.name,
++                class_name=model.__name__.lower(),
++                app_label=model._meta.app_label.lower(),
++            )
++        else:
++            return self.name
++
++
+
+--- a/django/db/models/indexes.py
++++ b/django/db/models/indexes.py
+@@ -3,6 +3,7 @@
+ from django.db.models.sql.where import AND
+ from django.db.utils import NotSupportedError
+ from django.utils.deconstruct import deconstructible
++from django.utils.text import format_lazy
+
+
+ @deconstructible
+@@ -27,6 +28,16 @@
+         self.name = name
+         self.condition = condition
+
++    def _resolve_name(self, model):
++        if self.name:
++            return format_lazy(
++                self.name,
++                class_name=model.__name__.lower(),
++                app_label=model._meta.app_label.lower(),
++            )
++        return self.name
++
++
+     def get_sql_create(self, model, schema_editor, using=''):
+         fields = [model._meta.get_field(field_name).column for field_name in self.fields]
+         name = self.name if self.name else schema_editor._create_index_name(model._meta.db_table, fields, suffix='idx')
+@@ -41,7 +52,7 @@
+         if self.condition:
+             where = 'WHERE {}'.format(schema_editor.quote_where_clause(self.condition))
+         return schema_editor._create_index_sql(
+-            model._meta.db_table, fields, name=name, using=using, where=where
++            model._meta.db_table, fields, name=self._resolve_name(model), using=using, where=where
+         )
+
+     def get_sql_destroy(self, model, schema_editor):
+@@ -69,4 +80,4 @@
+
+     def __repr__(self):
+         return "<%s: fields='%s'%s>" % (self.__class__.__name__, self.fields_str, self.extra_repr)
+-
++
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/options.py b/django/db/models/options.py
+--- a/django/db/models/options.py
++++ b/django/db/models/options.py
+@@ -180,6 +180,12 @@ def contribute_to_class(self, cls, name):
+
+             self.unique_together = normalize_together(self.unique_together)
+             self.index_together = normalize_together(self.index_together)
++            # App label/class name interpolation for names of constraints and
++            # indexes.
++            if not getattr(cls._meta, 'abstract', False):
++                for attr_name in {'constraints', 'indexes'}:
++                    objs = getattr(self, attr_name, [])
++                    setattr(self, attr_name, self._format_names_with_class(cls, objs))
+
+             # verbose_name_plural is a special case because it uses a 's'
+             # by default.
+@@ -201,6 +207,18 @@ def contribute_to_class(self, cls, name):
+             self.db_table = "%s_%s" % (self.app_label, self.model_name)
+             self.db_table = truncate_name(self.db_table, connection.ops.max_name_length())
+
++    def _format_names_with_class(self, cls, objs):
++        """App label/class name interpolation for object names."""
++        new_objs = []
++        for obj in objs:
++            obj = obj.clone()
++            obj.name = obj.name % {
++                'app_label': cls._meta.app_label.lower(),
++                'class': cls.__name__.lower(),
++            }
++            new_objs.append(obj)
++        return new_objs
++
+     def _prepare(self, model):
+         if self.order_with_respect_to:
+             # The app registry will not be ready at this point, so we cannot
+
+</patch>
+
+--------------------------------------------------
+analyze
+Cot locates the wrong file for modification.
+
+text:
+<issue>
+Add --skip-checks option to management commands.
+Description
+
+Management commands already have skip_checks stealth option. I propose exposing this option on the command line. This would allow users to skip checks when running a command from the command line. Sometimes in a development environment, it is nice to move ahead with a task at hand rather than getting side tracked fixing a system check.
+
+</issue>
+
+steps:
+
+1.  **Modify `BaseCommand.create_parser` to add `--skip-checks` argument:**
+    Open the file `django/core/management/base.py`.
+    Locate the `create_parser` method within the `BaseCommand` class.
+    Add a new `parser.add_argument` call to include the `--skip-checks` option.
+    This argument should:
+        - Be a boolean flag (`action='store_true'`).
+        - Have the option name `--skip-checks`.
+        - Include a helpful description in the `help` parameter, explaining that it skips system checks.
+
+2.  **Verify `BaseCommand.execute` already handles `skip_checks`:**
+    In the same file `django/core/management/base.py`, locate the `execute` method in the `BaseCommand` class.
+    Confirm that the condition `if self.requires_system_checks and not options.get('skip_checks'):` correctly utilizes the `skip_checks` option from the `options` dictionary to control the execution of system checks. No changes are needed here as the code already supports skipping checks based on this option.
+
+3.  **Generate Patch File:**
+    Use a diff tool (like `git diff` or `diff -u`) to compare the modified `django/core/management/base.py` file with its original version. Generate a patch file in the unified diff format (`.patch`). This patch file will contain the changes made in step 1, which adds the `--skip-checks` argument to the command parser.
+
+model_patch:
+
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -288,6 +288,10 @@
+             '--force-color', action='store_true',
+             help='Force colorization of the command output.',
+         )
++        parser.add_argument(
++            '--skip-checks', action='store_true',
++            help="Don't run system checks.",
++        )
+         self.add_arguments(parser)
+         return parser
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -95,7 +95,7 @@ class DjangoHelpFormatter(HelpFormatter):
+     """
+     show_last = {
+         '--version', '--verbosity', '--traceback', '--settings', '--pythonpath',
+-        '--no-color', '--force-color',
++        '--no-color', '--force-color', '--skip-checks',
+     }
+
+     def _reordered_actions(self, actions):
+@@ -223,7 +223,7 @@ class BaseCommand:
+     requires_system_checks = True
+     # Arguments, common to all commands, which aren't defined by the argument
+     # parser.
+-    base_stealth_options = ('skip_checks', 'stderr', 'stdout')
++    base_stealth_options = ('stderr', 'stdout')
+     # Command-specific options not defined by the argument parser.
+     stealth_options = ()
+
+@@ -286,6 +286,11 @@ def create_parser(self, prog_name, subcommand, **kwargs):
+             '--force-color', action='store_true',
+             help='Force colorization of the command output.',
+         )
++        if self.requires_system_checks:
++            parser.add_argument(
++                '--skip-checks', action='store_true',
++                help='Skip system checks.',
++            )
+         self.add_arguments(parser)
+         return parser
+
+@@ -357,7 +362,7 @@ def execute(self, *args, **options):
+         if options.get('stderr'):
+             self.stderr = OutputWrapper(options['stderr'])
+
+-        if self.requires_system_checks and not options.get('skip_checks'):
++        if self.requires_system_checks and not options['skip_checks']:
+             self.check()
+         if self.requires_migrations_checks:
+             self.check_migrations()
+
+</patch>
+
+--------------------------------------------------
+analyze
+Cot error: The cot process does not determine all modified parts, there are omissions. In addition, the judgment of if self.requires_system_checks is missing in the create_parser function.
+
+text:
+<issue>
+Allow ManyToManyField using a intermediary table to be defined as symmetrical.
+Description
+
+Thanks to the work made by Collin Anderson in #9475 I think we can remove the check
+"fields.E332 Many-to-many fields with intermediate tables must not be symmetrical." with a little adjustment.
+This change was discussed in the django-dev mailing list ​https://groups.google.com/forum/#!topic/django-developers/BuT0-Uq8pyc.
+This would let have
+class Person(models.Model):
+	name = models.CharField(max_length=20)
+	friends = models.ManyToManyField('self', through='Friendship')
+class Friendship(models.Model):
+	first = models.ForeignKey(Person, models.CASCADE, related_name="+")
+	second = models.ForeignKey(Person, models.CASCADE)
+	friendship_date = models.DateTimeField()
+and just do something like
+joe.friends.add(anna, through_defaults={'friendship_date': date.datetime(...)})
+where currently we would have to do
+joe.friends.add(anna, through_defaults={'friendship_date': date.datetime(...)})
+anna.friends.add(joe, through_defaults={'friendship_date': date.datetime(...)})
+
+</issue>
+
+steps:
+
+1. **Identify the code responsible for raising the error.**
+   The issue description points to error "fields.E332 Many-to-many fields with intermediate tables must not be symmetrical.". This error is likely raised within the `ManyToManyField` class definition in `django/db/models/fields/related.py`.
+
+2. **Locate the error check within `ManyToManyField.__init__`.**
+   Examine the `__init__` method of the `ManyToManyField` class in `django/db/models/fields/related.py` to find the conditional statement that raises the `fields.E332` error when `symmetrical=True` and `through` is not `None`.
+
+3. **Remove the symmetry check for ManyToManyFields with intermediary tables.**
+   Modify the conditional statement in `ManyToManyField.__init__` to remove or comment out the part that raises `fields.E332` when `through` is provided and `symmetrical=True`. This will allow defining symmetrical ManyToManyFields with custom intermediary tables.
+
+4. **Create a test case to verify the change.**
+   Navigate to the Django test suite, likely within the `tests` directory, and find a relevant test file for ManyToManyFields, such as `tests/model_fields/test_m2m.py`. Add a new test case in this file to specifically test the symmetrical ManyToManyField with a `through` table. This test case should:
+    1. Define models similar to `Person` and `Friendship` as described in the issue, with a symmetrical `ManyToManyField` on `Person` using `Friendship` as the `through` table.
+    2. Create instances of `Person`.
+    3. Use the `add` method on the symmetrical ManyToManyField to create relationships through the intermediary table, including `through_defaults`.
+    4. Assert that the relationships are correctly created and accessible from both sides of the symmetrical relationship.
+
+5. **Run the Django test suite to ensure the change works and doesn't introduce regressions.**
+   Execute the Django test suite, focusing on the test file where the new test case was added, and ensure all tests pass, including the newly added test case. This confirms that the change allows symmetrical ManyToManyFields with intermediary tables and does not break existing functionalities.
+
+6. **Generate a patch file containing the changes.**
+   Use `git diff` to generate a patch file that includes the modification to `django/db/models/fields/related.py` and the addition of the test case to the relevant test file. Ensure the patch is in a format that can be applied using `git apply`.
+
+model_patch:
+
+--- a/django/db/migrations/state.py
++++ b/django/db/migrations/state.py
+@@ -447,7 +447,7 @@
+ 450                 elif name == 'constraints':
+ 451                     options['constraints'] = [con.clone() for con in model._meta.constraints]
+ 452                 else:
+-453                     options[name] = model._meta.original_attrs[name]
++453                     options[name] = copy.deepcopy(model._meta.original_attrs[name])
+ 454         # If we're ignoring relationships, remove all field-listing model
+ 455         # options (that option basically just means "make a stub model")
+ 456         if exclude_rels:
+@@ -552,7 +552,7 @@
+             # AddIndex must replace their option (e.g 'indexes') rather
+             # than mutating it.
+             options=dict(self.options),
+-            bases=self.bases,
++            bases=tuple(self.bases),
+             managers=list(self.managers),
+         )
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/fields/related.py b/django/db/models/fields/related.py
+--- a/django/db/models/fields/related.py
++++ b/django/db/models/fields/related.py
+@@ -1234,18 +1234,6 @@ def _check_relationship_model(self, from_model=None, **kwargs):
+                 to_model_name = to_model._meta.object_name
+             relationship_model_name = self.remote_field.through._meta.object_name
+             self_referential = from_model == to_model
+-
+-            # Check symmetrical attribute.
+-            if (self_referential and self.remote_field.symmetrical and
+-                    not self.remote_field.through._meta.auto_created):
+-                errors.append(
+-                    checks.Error(
+-                        'Many-to-many fields with intermediate tables must not be symmetrical.',
+-                        obj=self,
+-                        id='fields.E332',
+-                    )
+-                )
+-
+             # Count foreign keys in intermediate model
+             if self_referential:
+                 seen_self = sum(
+diff --git a/django/db/models/fields/related_descriptors.py b/django/db/models/fields/related_descriptors.py
+--- a/django/db/models/fields/related_descriptors.py
++++ b/django/db/models/fields/related_descriptors.py
+@@ -938,11 +938,14 @@ def add(self, *objs, through_defaults=None):
+                     through_defaults=through_defaults,
+                 )
+                 # If this is a symmetrical m2m relation to self, add the mirror
+-                # entry in the m2m table. `through_defaults` aren't used here
+-                # because of the system check error fields.E332: Many-to-many
+-                # fields with intermediate tables must not be symmetrical.
++                # entry in the m2m table.
+                 if self.symmetrical:
+-                    self._add_items(self.target_field_name, self.source_field_name, *objs)
++                    self._add_items(
++                        self.target_field_name,
++                        self.source_field_name,
++                        *objs,
++                        through_defaults=through_defaults,
++                    )
+         add.alters_data = True
+
+         def remove(self, *objs):
+
+</patch>
+
+--------------------------------------------------
+analyze
+Cot error: On the one hand, the fields.E332 error in check_relationship_model was not deleted, and it was not introduced with the through_defaults parameter.

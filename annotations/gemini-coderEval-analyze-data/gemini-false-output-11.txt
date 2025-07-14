@@ -1,0 +1,541 @@
+
+==================== 62ece4982e6aefcf4aabbd6b ====================
+_id: 62ece4982e6aefcf4aabbd6b
+file_path: rows/utils/__init__.py
+project: turicas/rows
+name: subclasses
+
+prompt:
+Return all subclasses of a class, recursively
+
+steps:
+1. Initialize an empty list called `all_subclasses` to store the subclasses that will be found.
+2. Get the direct subclasses of the input class `cls` using the `__subclasses__()` method of the class object. This method returns a list of immediate subclasses.
+3. Iterate through each direct subclass obtained in the previous step.
+4. For each direct subclass, append it to the `all_subclasses` list.
+5. For each direct subclass, recursively call the `subclasses` function with the direct subclass as the input. This recursive call will find all subclasses of the current direct subclass.
+6. Extend the `all_subclasses` list with the list of subclasses returned by the recursive call in the previous step. This ensures that all subclasses down the inheritance hierarchy are collected.
+7. After iterating through all direct subclasses and processing them recursively, return the `all_subclasses` list, which now contains all subclasses of the original input class `cls`.
+
+generate_code:
+def subclasses(cls):
+	"""
+	Return all subclasses of a class, recursively
+	"""
+	all_subclasses = []
+
+	for subclass in cls.__subclasses__():
+		all_subclasses.append(subclass)
+		all_subclasses.extend(subclasses(subclass))
+
+	return all_subclasses
+
+--------------------------------------------------
+analyze:
+External factors: Missing context information: Missing return value details
+The return value of the reference code is set, and the return value of the generated code is list
+
+==================== 62ece4982e6aefcf4aabbd6d ====================
+_id: 62ece4982e6aefcf4aabbd6d
+file_path: shortuuid/main.py
+project: skorokithakis/shortuuid
+name: string_to_int
+
+prompt:
+Convert a string to a number, using the given alphabet.
+
+The input is assumed to have the most significant digit first.
+
+steps:
+1. Determine the base of the number system by calculating the length of the input `alphabet` list.
+2. Create a dictionary to map each character in the `alphabet` to its index (digit value). Iterate through the `alphabet` list and for each character, store it as a key in the dictionary with its index as the value.
+3. Initialize an integer variable `result` to 0. This variable will store the final integer representation of the input string.
+4. Initialize an integer variable `power` to 0. This variable will represent the power of the base, starting from 0 for the rightmost character of the string and increasing by 1 for each position to the left.
+5. Iterate through the input `string` from right to left. For each character in the string:
+6.  Get the digit value of the current character by looking it up in the character-to-digit-value dictionary created in step 2.
+7.  Calculate the contribution of this character to the final integer by multiplying its digit value by the base raised to the power of `power`.
+8.  Add the calculated contribution to the `result` variable.
+9.  Increment the `power` variable by 1 for the next character to the left.
+10. After iterating through all characters in the string, return the final `result` integer.
+
+generate_code:
+def string_to_int(string: str, alphabet: List[str]) -> int:
+	"""
+	Convert a string to a number, using the given alphabet.
+    :param string: a string consist of the letters in alphabet
+    :param alphabet: list of letters
+    :return: int, the corresponding number of the given string using the given transition rule.
+	"""
+	base = len(alphabet)
+	char_to_digit = {char: index for index, char in enumerate(alphabet)}
+	result = 0
+	power = 0
+	for char in reversed(string):
+		digit_value = char_to_digit[char]
+		result += digit_value * (base ** power)
+		power += 1
+	return result
+
+--------------------------------------------------
+Internal factors: ---Cot and Prompt are inconsistent
+Cot's internal implementation logic is unreasonable
+For the first position of a character, it should be treated as a multiple of base^(len(string) - 1) and the current code will be calculated as base^0
+==================== 62ece4982e6aefcf4aabbd6f ====================
+_id: 62ece4982e6aefcf4aabbd6f
+file_path: swh/lister/arch/lister.py
+project: SoftwareHeritage/swh-lister
+name: get_repo_archive
+
+prompt:
+Given an url and a destination path, retrieve and extract .tar.gz archive
+which contains 'desc' file for each package.
+Each .tar.gz archive corresponds to an Arch Linux repo ('core', 'extra', 'community').
+
+Args:
+    url: url of the .tar.gz archive to download
+    destination_path: the path on disk where to extract archive
+
+Returns:
+    a directory Path where the archive has been extracted to.
+
+steps:
+1. Download the .tar.gz archive from the given URL using the `requests` library. Handle potential HTTP errors during the download process.
+2. Create the destination directory specified by `destination_path` if it does not already exist. Ensure that any necessary parent directories are also created.
+3. Open the downloaded archive file using the `tarfile` library in read compressed mode ('r:gz').
+4. Extract all the contents of the opened tar archive to the `destination_path`.
+5. Return the `destination_path` which represents the directory where the archive was extracted.
+
+generate_code:
+from pathlib import Path
+import requests
+import tarfile
+import tempfile
+
+def get_repo_archive(url: str, destination_path: Path) -> Path:
+	"""
+	Given an url and a destination path, retrieve and extract .tar.gz archive which contains 'desc' file for each package
+
+        Args:
+            url: url of the .tar.gz archive to download
+            destination_path: the path on disk where to extract archive
+        Returns:
+                path where the archive is extracted to
+	"""
+	try:
+		response = requests.get(url, stream=True)
+		response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+
+		destination_path.mkdir(parents=True, exist_ok=True)
+
+		with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp_file:
+			for chunk in response.iter_content(chunk_size=8192):
+				tmp_file.write(chunk)
+			tmp_file.flush()
+
+			with tarfile.open(tmp_file.name, "r:gz") as tar:
+				tar.extractall(destination_path)
+		return destination_path
+	except requests.exceptions.RequestException as e:
+		raise Exception(f"Failed to download archive from {url}: {e}")
+	except tarfile.TarError as e:
+		raise Exception(f"Failed to extract archive: {e}")
+	except OSError as e:
+		raise Exception(f"Failed to create destination directory or write files: {e}")
+
+--------------------------------------------------
+analyze:
+External factors: Missing context information: Missing input parameters
+Class method, missing self
+
+==================== 62ece4982e6aefcf4aabbd71 ====================
+_id: 62ece4982e6aefcf4aabbd71
+file_path: makeprojects/util.py
+project: burgerbecky/makeprojects
+name: regex_dict
+
+prompt:
+Convert *.cpp keys to regex keys
+
+Given a dict where the keys are all filenames with wildcards, convert only
+the keys into equivalent regexes and leave the values intact.
+
+Example:
+
+rules = {
+    '*.cpp':
+        {'a': 'arf', 'b': 'bark', 'c': 'coo'},
+    '*.h':
+        {'h': 'help'}
+}
+regex_keys = regex_dict(rules)
+
+Args:
+    item: dict to convert
+Returns:
+    dict with keys converted to regexes
+
+steps:
+1. Initialize an empty dictionary called `regex_dict_result` to store the converted regex keys and their corresponding values.
+2. Iterate through each key-value pair in the input dictionary `item` using a loop, such as `for key, value in item.items():`.
+3. For each `key`, initialize a new string variable, say `regex_key`, with the original `key` value.
+4. Replace all occurrences of the wildcard character `.` in `regex_key` with the escaped regex character `\.` to correctly represent a literal dot in regex. Use the `replace()` method for string manipulation.
+5. Replace all occurrences of the wildcard character `*` in `regex_key` with the regex equivalent `.*` to match zero or more characters. Use the `replace()` method.
+6. Replace all occurrences of the wildcard character `?` in `regex_key` with the regex equivalent `.` to match any single character. Use the `replace()` method.
+7. Add the modified `regex_key` and the original `value` to the `regex_dict_result` dictionary as a new key-value pair.
+8. After iterating through all key-value pairs in the input dictionary, return the `regex_dict_result` dictionary.
+
+generate_code:
+def regex_dict(item):
+	"""
+	Convert *.cpp keys to regex keys.
+Given a dict where the keys are all filenames with wildcards,
+convert only the keys into equivalent regexes and leave the values intact.
+
+Args:
+    item: dict to convert
+Returns:
+    dict with keys converted to regexes
+	"""
+	regex_dict_result = {}
+	for key, value in item.items():
+		regex_key = key
+		regex_key = regex_key.replace('.', '\.')
+		regex_key = regex_key.replace('*', '.*')
+		regex_key = regex_key.replace('?', '.')
+		regex_dict_result[regex_key] = value
+	return regex_dict_result
+analyze:
+External factors: Missing context information: Missing return value details
+The reference code returns a string match object, and the return value of the generated code is a string
+
+--------------------------------------------------
+
+==================== 62ece4982e6aefcf4aabbd72 ====================
+_id: 62ece4982e6aefcf4aabbd72
+file_path: rdiffweb/core/librdiff.py
+project: ikus060/rdiffweb
+name: unquote
+
+prompt:
+Remove quote from the given name.
+
+steps:
+1. Import the `re` module, which is needed for regular expression operations in Python.
+2. Define a regular expression pattern that matches either a single quote or a double quote at the beginning of the string, followed by any characters in between, and ends with the same type of quote that started it. The pattern should account for both single and double quotes.
+3. Use the `re.sub()` function to substitute the matched pattern with an empty string. This effectively removes the quotes from the input name.
+4. Return the modified name after removing the quotes.
+
+generate_code:
+import re
+
+def unquote(name):
+	"""
+	Remove quote from the given name with regular expression.
+    Args:
+        name: input name
+    Returns:
+        name after removal
+	"""
+	pattern = r'^[\'"](.*)[\'"]$'
+	unquoted_name = re.sub(pattern, r'\1', name)
+	return unquoted_name
+
+--------------------------------------------------
+analyze:
+External factors: Missing context information: Missing input parameter details
+The actual reference code input type is byte, and the generated code is str
+
+==================== 62ece4982e6aefcf4aabbd74 ====================
+_id: 62ece4982e6aefcf4aabbd74
+file_path: swh/lister/arch/tests/__init__.py
+project: SoftwareHeritage/swh-lister
+name: prepare_repository_from_archive
+
+prompt:
+Given an existing archive_path, uncompress it.
+Returns a file repo url which can be used as origin url.
+
+This does not deal with the case where the archive passed along does not exist.
+
+steps:
+1. Import necessary modules: `os`, `tarfile`, `zipfile`, `tempfile`, `pathlib`, `typing`.
+2. Define the function `prepare_repository_from_archive` that takes `archive_path`, `filename` (optional), and `tmp_path` as input.
+3. Convert `tmp_path` to a `PosixPath` object if it's a string.
+4. Create a temporary directory using `tempfile.mkdtemp` within the specified `tmp_path`. Store the temporary directory path.
+5. Determine the archive type based on the `archive_path` extension and use the appropriate library (e.g., `zipfile`, `tarfile`) to extract the archive contents to the temporary directory. Handle common archive types like zip, tar.gz, tar.bz2, and tar.
+6. Construct the file repository URL. Start with "file://" and append the absolute path of the temporary directory.
+7. If a `filename` is provided, append it to the file repository URL.
+8. Return the constructed file repository URL string.
+9. Handle potential `FileNotFoundError` during archive extraction (although the docstring says this is not handled). Handle different archive types appropriately using conditional statements.
+
+generate_code:
+import os
+import tarfile
+import zipfile
+import tempfile
+from pathlib import PosixPath
+from typing import Optional, Union
+
+
+def prepare_repository_from_archive(
+    archive_path: str,
+    filename: Optional[str] = None,
+    tmp_path: Union[PosixPath, str] = "/tmp",
+) -> str:
+	"""
+	Given an existing archive_path, uncompress it.
+    Returns a file repo url which can be used as origin url.
+
+    This does not deal with the case where the archive passed along does not exist.
+    @param archive_path : archive file path
+    @param filename: File name
+    @param tmp_path: Temporary file path
+    @return Repo URL
+	"""
+	tmp_path_obj = PosixPath(tmp_path) if isinstance(tmp_path, str) else tmp_path
+	temp_dir = tempfile.mkdtemp(dir=str(tmp_path_obj))
+	repo_path = PosixPath(temp_dir)
+
+	if archive_path.lower().endswith(".zip"):
+		with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+			zip_ref.extractall(temp_dir)
+	elif archive_path.lower().endswith((".tar.gz", ".tgz")):
+		with tarfile.open(archive_path, "r:gz") as tar_ref:
+			tar_ref.extractall(temp_dir)
+	elif archive_path.lower().endswith((".tar.bz2", ".tbz2")):
+		with tarfile.open(archive_path, "r:bz2") as tar_ref:
+			tar_ref.extractall(temp_dir)
+	elif archive_path.lower().endswith(".tar"):
+		with tarfile.open(archive_path, "r:") as tar_ref:
+			tar_ref.extractall(temp_dir)
+	else:
+		raise ValueError(f"Unsupported archive type: {archive_path}")
+
+	repo_url = "file://" + str(repo_path.absolute())
+	if filename:
+		repo_url += "/" + filename
+	return repo_url
+
+--------------------------------------------------
+Internal factors:
+Cot and propt are inconsistent
+==================== 62ece4982e6aefcf4aabbd75 ====================
+_id: 62ece4982e6aefcf4aabbd75
+file_path: src/flashbake/plugins/ignored.py
+project: commandline/flashbake
+name: addignored
+
+prompt:
+Use the git command to obtain the file names, turn it into a list, sort the list for only ignored files, return those files as a single string with each filename separated by a comma.
+
+steps:
+1. Step 1: Construct the git command to list ignored files in a machine-readable format. The command is `git status --ignored --porcelain`.
+2. Step 2: Execute the git command using Python's `subprocess` module to capture its output. Use `subprocess.Popen` with `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE`, and ensure to decode the output as UTF-8.
+3. Step 3: Read the standard output from the executed git command and split it into lines.
+4. Step 4: Initialize an empty list to store the filenames of ignored files.
+5. Step 5: Iterate through each line of the output.
+6. Step 6: For each line, check if it starts with the string '!! '. This prefix indicates an ignored file in `git status --ignored --porcelain` output.
+7. Step 7: If a line starts with '!! ', extract the filename by removing the '!! ' prefix and any leading/trailing whitespace.
+8. Step 8: Append the extracted filename to the list of ignored filenames.
+9. Step 9: After processing all lines, sort the list of ignored filenames alphabetically.
+10. Step 10: Join the sorted list of filenames into a single string, using a comma as the separator.
+11. Step 11: Return the resulting comma-separated string.
+
+generate_code:
+import subprocess
+
+def addignored(ignored):
+	"""
+	Use the git command to obtain the file names。
+    Turn the file names into a list, sort the list for only ignored files
+    return those files as a single string with each filename separated by a comma.
+	"""
+	command = ["git", "status", "--ignored", "--porcelain"]
+	process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	stdout, stderr = process.communicate()
+	if stderr:
+		return ""
+	output = stdout.decode('utf-8')
+	lines = output.strip().split('\n')
+	ignored_files = []
+	for line in lines:
+		if line.startswith('!! '):
+			filename = line[3:].strip()
+			ignored_files.append(filename)
+	ignored_files.sort()
+	return ",".join(ignored_files)
+
+--------------------------------------------------
+External factors:
+Missing context information:
+Missing description of input parameters results in inconsistent meaning of parameters
+
+==================== 62ece4982e6aefcf4aabbd77 ====================
+_id: 62ece4982e6aefcf4aabbd77
+file_path: borgmatic/borg/check.py
+project: witten/borgmatic
+name: parse_frequency
+
+prompt:
+Given a frequency string with a number and a unit of time, return a corresponding
+datetime.timedelta instance or None if the frequency is None or "always".
+
+For instance, given "3 weeks", return datetime.timedelta(weeks=3)
+
+Raise ValueError if the given frequency cannot be parsed.
+
+steps:
+1. *   **Step 1:** Handle `None` or `"always"` input. If the input `frequency` is `None` or `"always"`, return `None`.
+*   **Step 2:** Split the frequency string. Split the input string `frequency` into two parts: the numerical value and the unit of time.
+*   **Step 3:** Convert the numerical value to an integer. Convert the first part of the split string to an integer. Handle potential `ValueError` if the conversion fails.
+*   **Step 4:** Determine the time unit and create the `timedelta` object. Based on the time unit string (second part of the split string), create a `datetime.timedelta` object with the appropriate keyword argument. Handle invalid time units by raising a `ValueError`. Supported time units are 'microseconds', 'milliseconds', 'seconds', 'minutes', 'hours', 'days', and 'weeks'.
+*   **Step 5:** Return the `timedelta` object. Return the created `datetime.timedelta` object.
+
+generate_code:
+import datetime
+
+def parse_frequency(frequency):
+	"""
+	Given a frequency string with a number and a unit of time, return a corresponding
+     datetime.timedelta instance.
+     If the frequency is None or "always", return None.
+     Raise ValueError if the given frequency cannot be parsed.
+     For instance, given "3 timeunit", return datetime.timedelta(timeunit=3)
+
+     @param frequency :  A frequency string "number timeunit"
+
+    @return str, the corresponding datetime
+	"""
+	if frequency is None or frequency == "always":
+		return None
+
+	try:
+		value, unit = frequency.split()
+		value = int(value)
+	except ValueError:
+		raise ValueError("Invalid frequency format.  Expected 'number timeunit'.")
+
+	unit = unit.lower()
+
+	if unit == "microseconds":
+		return datetime.timedelta(microseconds=value)
+	elif unit == "milliseconds":
+		return datetime.timedelta(milliseconds=value)
+	elif unit == "seconds":
+		return datetime.timedelta(seconds=value)
+	elif unit == "minutes":
+		return datetime.timedelta(minutes=value)
+	elif unit == "hours":
+		return datetime.timedelta(hours=value)
+	elif unit == "days":
+		return datetime.timedelta(days=value)
+	elif unit == "weeks":
+		return datetime.timedelta(weeks=value)
+	else:
+		raise ValueError("Invalid time unit: {}".format(unit))
+
+--------------------------------------------------
+External factors: Improving details are unclear
+No explanation is given whether month and year are handled
+
+==================== 62ece4992e6aefcf4aabbd79 ====================
+_id: 62ece4992e6aefcf4aabbd79
+file_path: borgmatic/borg/list.py
+project: witten/borgmatic
+name: make_find_paths
+
+prompt:
+Given a sequence of path fragments or patterns as passed to `--find`, transform all path
+fragments into glob patterns. Pass through existing patterns untouched.
+
+For example, given find_paths of:
+
+  ['foo.txt', 'pp:root/somedir']
+
+... transform that into:
+
+  ['sh:**/*foo.txt*/**', 'pp:root/somedir']
+
+steps:
+1. Initialize an empty list called `transformed_paths`.
+2. Iterate through each `path` in the input sequence `find_paths`.
+3. For each `path`, initialize an empty string called `transformed_path`.
+4. Iterate through each character `char` in the current `path`.
+5. Check if `char` is one of the special glob characters: `*`, `?`, `[`, `]`.
+6. If `char` is a special glob character, append a backslash `\` followed by `char` to `transformed_path`.
+7. Otherwise (if `char` is not a special glob character), append `char` directly to `transformed_path`.
+8. After processing all characters in the `path`, append the `transformed_path` to the `transformed_paths` list.
+9. After processing all paths in `find_paths`, convert the `transformed_paths` list to a tuple.
+10. Return the tuple.
+
+generate_code:
+def make_find_paths(find_paths):
+	"""
+	Given a sequence of path, transform all path into glob patterns. Pass through existing patterns untouched.
+
+    Args:
+        find_paths: sequence of path
+    Returns:
+        tuple of transformed path
+	"""
+	transformed_paths = []
+	glob_chars = ['*', '?', '[', ']']
+	for path in find_paths:
+		transformed_path = ""
+		for char in path:
+			if char in glob_chars:
+				transformed_path += '\\' + char
+			else:
+				transformed_path += char
+		transformed_paths.append(transformed_path)
+	return tuple(transformed_paths)
+
+--------------------------------------------------
+Internal factors:
+Cot and propt are inconsistent
+Missing logic for matching pp prefix in path in cot
+
+==================== 62ece4992e6aefcf4aabbd7b ====================
+_id: 62ece4992e6aefcf4aabbd7b
+file_path: borgmatic/config/generate.py
+project: witten/borgmatic
+name: write_configuration
+
+prompt:
+Given a target config filename and rendered config YAML, write it out to file. Create any
+containing directories as needed. But if the file already exists and overwrite is False,
+abort before writing anything.
+
+steps:
+1. Check if the file specified by `config_filename` exists using `os.path.exists(config_filename)`.
+2. If the file exists and the `overwrite` parameter is `False`, then return from the function without writing anything.
+3. If the file does not exist or the `overwrite` parameter is `True`, proceed to open the file specified by `config_filename` in write mode ('w'). Use a `with open(...)` statement to ensure the file is properly closed after writing.
+4. Inside the `with open(...)` block, set the file permissions to the provided `mode` using `os.chmod(config_filename, mode)`. This should be done immediately after opening the file in write mode to ensure the correct permissions are set upon file creation.
+5. Write the `rendered_config` content to the opened file using `f.write(rendered_config)`.
+6. The `with` statement will automatically close the file when exiting the block.
+7. Return `None` explicitly at the end of the function.
+
+generate_code:
+import os
+
+def write_configuration(config_filename, rendered_config, mode=0o600, overwrite=False):
+	"""
+	Given a rendered config YAML, write it out to target file.
+    But if the file already exists and overwrite is False,
+    abort before writing anything.
+    If the file does not exist, create it.
+    Write to the file otherwise.
+
+    Returns: None
+	"""
+	if os.path.exists(config_filename) and not overwrite:
+		return None
+
+	with open(config_filename, 'w') as f:
+		os.chmod(config_filename, mode)
+		f.write(rendered_config)
+	return None
+Internal factors:
+Logical flow incomplete: Missing exception handling
+
+--------------------------------------------------

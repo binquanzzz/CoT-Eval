@@ -1,0 +1,287 @@
+Statistical results
+
+==================== 6306092373426c38ae68acfa ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: get_spec_defaults
+
+prompt:
+Resolve arguments' values from spec and other sources.
+
+steps:
+1. Identify the relevant spec data source and retrieve it.
+2. Call self._get_defaults() to obtain the default values.
+3. Merge the spec data with the default values, giving priority to spec values when both sources provide a value for the same key.
+4. Return the merged result.
+
+generate_code:
+
+def get_spec_defaults(self):
+    """
+    Resolve arguments' values from spec and other sources with self._get_defaults()
+    """
+    spec_data = getattr(self, 'spec', {})
+    default_values = self._get_defaults()
+    
+    # Merge spec_data with default_values, giving priority to spec_data
+    merged_values = default_values.copy()
+    merged_values.update(spec_data)
+    
+    return merged_values
+
+
+--------------------------------------------------
+
+==================== 6306092973426c38ae68ad01 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: get_deprecated_args
+
+prompt:
+Returning dict with options which deprecate others.
+
+steps:
+1. Access the option specifications by calling self.spec_helper.iterate_option_specs().
+2. Initialize an empty dictionary to store deprecated arguments.
+3. Iterate through each option specification from the iterator.
+4. Identify the options within each specification that deprecate other options.
+5. Insert each deprecating option as a key and its deprecated counterparts as values into the dictionary.
+6. Return the dictionary containing these deprecated arguments.
+
+generate_code:
+
+def get_deprecated_args(self):
+    """
+    Returning dict with options which deprecate others.
+    """
+    deprecated_args = {}
+    for spec in self.spec_helper.iterate_option_specs():
+        # Assuming 'name' is the current option and 'deprecates' is a list of deprecated options
+        option_name = spec.get('name')
+        deprecates = spec.get('deprecates', [])
+        if deprecates:
+            deprecated_args[option_name] = deprecates
+    return deprecated_args
+
+
+--------------------------------------------------
+
+==================== 6306092c73426c38ae68ad02 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: validate_arg_deprecation
+
+prompt:
+Validates and prints the deprecated arguments.
+
+:param cli_args: the dict of arguments from cli
+:param answer_file_args:  the dict of arguments from files
+
+steps:
+1. Identify which arguments are considered deprecated.
+2. Check if any deprecated arguments are present in cli_args or answer_file_args.
+3. Notify (e.g., print a warning) about each deprecated argument that is found.
+
+generate_code:
+
+def validate_arg_deprecation(self, cli_args, answer_file_args):
+    deprecated_args = {
+        "old_arg": "This argument is deprecated and should not be used",
+        "another_old_arg": "This argument is also deprecated"
+    }
+    
+    for arg, message in deprecated_args.items():
+        if arg in cli_args and cli_args[arg] is not None:
+            print(f"WARNING: '{arg}' is deprecated. {message}")
+        if arg in answer_file_args and answer_file_args[arg] is not None:
+            print(f"WARNING: '{arg}' is deprecated in answer file. {message}")
+
+
+--------------------------------------------------
+
+==================== 6306092d73426c38ae68ad04 ====================
+file_path: infrared/core/inspector/helper.py
+project: redhat-openstack/infrared
+name: get_parser_option_specs
+
+prompt:
+Gets all the options for the specified command
+
+:param command_name: the command name (main, virsh, ospd, etc...)
+:return: the list of all command options
+
+steps:
+1. Identify the valid command names (e.g., "main", "virsh", "ospd").
+2. Create a dictionary mapping each command name to its corresponding options.
+3. Use the incoming command_name to retrieve options from the dictionary.
+4. Return the list of options; if command_name is not found, return an empty list or a default list.
+
+generate_code:
+
+def get_parser_option_specs(self, command_name):
+    command_options = {
+        "main": ["--help", "--version", "--config"],
+        "virsh": ["--connect", "--read-only", "--quiet"],
+        "ospd": ["--debug", "--filename", "--timeout"]
+    }
+    return command_options.get(command_name, [])
+
+
+--------------------------------------------------
+
+==================== 6306092d73426c38ae68ad05 ====================
+file_path: infrared/core/inspector/helper.py
+project: redhat-openstack/infrared
+name: get_option_spec
+
+prompt:
+Gets the specification for the specified option name.
+
+steps:
+1. Use self.get_parser_option_specs(command_name) to retrieve all option specs for the given command_name.
+2. Iterate over the returned specs and check if any spec's option name matches the argument_name.
+3. If a matching spec is found, return it. Otherwise, return None.
+
+generate_code:
+
+def get_option_spec(self, command_name, argument_name):
+    specs = self.get_parser_option_specs(command_name)
+    for spec in specs:
+        if spec.get('option_name') == argument_name:
+            return spec
+    return None
+
+
+--------------------------------------------------
+
+==================== 6306092d7426c38ae68ad06 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: get_silent_args
+
+prompt:
+list of silenced argument
+
+:param args: The received arguments.
+:return: list, slienced argument names
+
+steps:
+1. Read the function signature and understand that we need to return a list of argument names considered “silenced.”
+2. Determine the criterion to identify silent arguments based on the docstring (e.g., arguments with a certain flag or specific value).
+3. Iterate through the given arguments and check if each argument meets the silence criterion (e.g., key or value indicates silence).
+4. Collect these argument names in a list.
+5. Return the list of silenced argument names.
+
+generate_code:
+
+def get_silent_args(self, args):
+    silent_args = []
+    for arg_name, arg_value in args.items():
+        # Example criterion: if arg_name contains 'silent' or the value is True
+        if 'silent' in arg_name or arg_value is True:
+            silent_args.append(arg_name)
+    return silent_args
+
+
+--------------------------------------------------
+
+==================== 6306092d73426c38ae68ad07 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: validate_requires_args
+
+prompt:
+Check if all the required arguments have been provided.
+
+steps:
+1. Determine which arguments are mandatory for the function.
+2. Iterate through each required argument.
+3. Check if the required argument is present in the provided args dictionary.
+4. If any required argument is missing, raise an appropriate exception or return an error message.
+5. Otherwise, if all required arguments are present, the validation passes successfully.
+
+generate_code:
+
+def validate_requires_args(self, args):
+    required_args = ["arg1", "arg2", "arg3"]  # Replace with actual required argument names
+    for req in required_args:
+        if req not in args or args[req] is None:
+            raise ValueError(f"Missing required argument: {req}")
+    return True
+
+
+--------------------------------------------------
+
+==================== 6306092d73426c38ae68ad08 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: _get_conditionally_required_args
+
+prompt:
+List arguments with ``required_when`` condition matched.
+
+:param command_name: the command name.
+:param options_spec:  the list of command spec options.
+:param args: the received input arguments
+:return: list, list of argument names with matched ``required_when``
+    condition
+
+steps:
+1. Iterate through each option in options_spec.
+2. Check if the option has a 'required_when' condition defined.
+3. For each 'required_when' condition, determine the condition key (argument name) and expected value.
+4. Compare the actual value from args with the expected value to see if the condition is met.
+5. If the condition is met and the current option is absent in args, mark the option’s name as required.
+6. Collect all such conditionally required option names into a list.
+7. Return the list of conditionally required options.
+
+generate_code:
+def _get_conditionally_required_args(self, command_name, options_spec, args):
+    required_args = []
+    
+    for option in options_spec:
+        option_name = option.get('name')
+        if 'required_when' in option:
+            for condition_key, condition_val in option['required_when'].items():
+                # Get the actual value from args
+                actual_val = args.get(condition_key)
+                
+                # Check if condition is met
+                if actual_val == condition_val:
+                    # If condition is met and the current option is not in args, it's required
+                    if option_name not in args:
+                        required_args.append(option_name)
+                        
+    return required_args
+
+
+--------------------------------------------------
+
+==================== 6306092e73426c38ae68ad09 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: validate_length_args
+
+prompt:
+Check if value of arguments is not longer than length specified.
+
+:param args: The received arguments.
+
+steps:
+1. Identify or define the maximum allowed length for the arguments.
+2. Retrieve the input arguments (e.g., in the form of a dictionary or list of key-value pairs).
+3. Iterate over each argument and extract its value.
+4. Determine the length of each value.
+5. Compare the length of the value with the specified maximum length.
+6. If it exceeds the maximum length, raise an exception or return an appropriate error message.
+7. If all values pass the length check, the function completes successfully.
+
+generate_code:
+
+def validate_length_args(self, args, max_length):
+    for arg_name, arg_value in args.items():
+        if len(str(arg_value)) > max_length:
+            raise ValueError(f"The argument '{arg_name}' exceeds the allowed length of {max_length}.")
+
+
+--------------------------------------------------

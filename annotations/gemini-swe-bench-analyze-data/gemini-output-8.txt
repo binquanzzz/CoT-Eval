@@ -1,0 +1,29 @@
+
+Statistical results
+
+Id: django__django-13341
+analyze:
+The get() method of the TemplateView class has been modified in model_patch, and context = self.get_context_data(**kwargs) is used as a direct delivery method, which will generate an unexpected error.
+
+Id: django__django-13363
+analyze:
+model_patch did not change the class definition part of TruncDate and TruncTime, and did not give a complete class definition for TruncDate and TruncTime. The problem was only fixed in the as_sql method.
+
+Id: django__django-13447
+analyze:
+The modification of model_patch renames the _build_app_dict method to build_app_dict, and changes in access rights of the build_app_dict method may cause some functions to fail to work properly, especially in view rendering, data loading, etc.
+
+Id: django__django-13512
+analyze:
+CoT has a logical error and misses the processing of Django Admin and Forms components.model_patch only modifies the get_db_prep_value method in the django/db/models/fields/json.py file. The function of this method is to convert JSON data into a database storage format, and does not directly affect the display of the Django Admin interface.
+
+[CoT is inconsistent with prompt --- CoT fails to capture key details or special requirements in Prompt
+
+Id: django__django-13528
+analyze:
+The CoT logic is too simple, and the generated code logic is almost the same as before, and the formatted input required by the propt cannot be correctly personalized.
+Id: django__django-13578
+analyze:
+The modified ValidationError of model_patch contains error details f'{error_message} - {errors_detail}'. Where errors_detail is form.errors, which is a dictionary object. If you insert the dictionary object directly into the error message string, it may cause formatting problems or the dictionary content cannot be displayed correctly. In gold_patch, a more appropriate string formatting method is adopted, especially formatting the string by % and ensuring that the error message is embedded in the message as a readable format.
+
+

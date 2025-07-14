@@ -1,0 +1,23 @@
+
+Statistical results
+django__django-13341
+analyze:
+model_patch attempts to cast SimpleLazyObject as a string in the _wrap_url_kwargs_with_deprecation_warning method
+Id: django__django-13363
+analyze:
+model_patch did not change the class definition part of TruncDate and TruncTime, and did not give a complete class definition for TruncDate and TruncTime. The problem was only fixed in the as_sql method.
+Id: django__django-13447
+analyze:
+The modification of model_patch renames the _build_app_dict method to build_app_dict, and changes in access rights of the build_app_dict method may cause some functions to fail to work properly, especially in view rendering, data loading, etc.
+Id: django__django-13512
+analyze:
+model_patch is only modified in some parts of the JSONField class, with a small scope and may miss some processing. gold_patch has made comprehensive modifications to multiple places involving JSON processing, ensuring wider compatibility and correctness.
+Id: django__django-13528
+analyze:
+The generated code logic judgment is incomplete, and the formatted input required by the propt cannot be correctly personalized, and the logic is too simple.
+Id: django__django-13578
+analyze:
+model_patch splicing form._errors enters the ValidationError message directly, which may cause string formatting problems, or _errors is not the expected format.
+gold_patch provides clearer error field information through form.add_prefix(field_name) for field_name in form.errors and formats it with %(field_names)s to ensure the stability of the ValidationError message.
+
+

@@ -1,0 +1,984 @@
+text:
+<issue>
+Improve error messages from forgetting to call .as_view() on a CBV
+Description
+
+		(last modified by Angus Holder)
+
+We can detect early-on that the user has forgotten to call .as_view() on their CBV when passing it into path(). For:
+urlpatterns = [
+	path('home', HomeView)
+]
+The error currently happens only when you first load the route (rather than when constructing the routes), and looks like
+Internal Server Error: /
+Traceback (most recent call last):
+ File "C:\Users\Angus\.virtualenvs\django-WBTbdxDv\lib\site-packages\django\core\handlers\exception.py", line 47, in inner
+	response = get_response(request)
+ File "C:\Users\Angus\.virtualenvs\django-WBTbdxDv\lib\site-packages\django\core\handlers\base.py", line 179, in _get_response
+	response = wrapped_callback(request, *callback_args, **callback_kwargs)
+TypeError: __init__() takes 1 positional argument but 2 were given
+Which is especially hard to work out given that the traceback doesn't even include any of the user's own code, and this is an error that's easy for beginners to run into when first using CBVs.
+My PR changes it to fail early, inside the call to django.urls.path(), with a clear error:
+URL route 'foo' should pass in 'EmptyCBView.as_view()' instead of 'EmptyCBView'
+Pull request: ​https://github.com/django/django/pull/13682
+
+</issue>
+
+steps:
+
+1. Examine the file `django/urls/conf.py` to locate the `path` and `re_path` functions, which are responsible for defining URL patterns.
+2. Within the `path` and `re_path` functions, add a type check for the `view` argument. This check should determine if the `view` is a class but not callable (i.e., not a function or an instance with a `__call__` method). This condition indicates that the user likely passed a CBV directly instead of calling `.as_view()`.
+3. If the condition in step 2 is met, raise a `TypeError`. The error message should be informative, clearly stating that `.as_view()` should be called on the CBV and providing an example of the correct usage. The error message should include the name of the view class.
+4. Create a new test case in `django/tests/urls/tests.py` to verify the new error message. This test case should define URL patterns using `path` and `re_path` and intentionally pass a CBV class directly as the view argument (without `.as_view()`).
+5. Assert in the test case that defining these URL patterns raises the `TypeError` with the expected informative error message.
+6. Generate a patch file using `git diff` to capture the changes made to `django/urls/conf.py` and `django/tests/urls/tests.py`.
+
+model_patch:
+
+--- a/django/urls/conf.py
++++ b/django/urls/conf.py
+@@ -1,5 +1,7 @@
+ import re
+
++from django.views import View
++
+ from .resolvers import RoutePattern, URLResolver, URLPattern
+
+
+@@ -20,6 +22,8 @@
+     """
+     if isinstance(view, (list, tuple)):
+         raise TypeError("view must be a callable or a list/tuple in the first argument to path(). "
++                        "Pass path('%s', views) instead." % route)
++    if isinstance(view, type) and issubclass(view, View):
++        raise TypeError("View classes are not callable, and must be called with `.as_view()`")
+                         "Pass path('%s', views) instead." % route)
+     if isinstance(view, type) and issubclass(view, View):
+         raise TypeError(
+@@ -47,6 +51,8 @@
+     """
+     if isinstance(view, (list, tuple)):
+         raise TypeError("view must be a callable or a list/tuple in the first argument to re_path(). "
++                        "Pass re_path(%r, views) instead." % regex)
++    if isinstance(view, type) and issubclass(view, View):
++        raise TypeError("View classes are not callable, and must be called with `.as_view()`")
+                         "Pass re_path(%r, views) instead." % regex)
+     if isinstance(view, type) and issubclass(view, View):
+         raise TypeError(
+--- a/django/urls/tests.py
++++ b/django/urls/tests.py
+@@ -7,6 +7,7 @@
+
+ from django.core.exceptions import ImproperlyConfigured, ViewDoesNotExist
+ from django.http import HttpResponse
++from django.views import View
+ from django.views.generic import View as GenericView
+
+ from . import converters, path, re_path
+@@ -812,3 +813,25 @@
+     with self.assertRaises(TypeError):
+         path('test/', lambda: 42),
+
++
++class EmptyView(View):
++    pass
++
++
++class EmptyCBViewTest(SimpleTestCase):
++    def test_path_cbv_instantiated_directly(self):
++        with self.assertRaises(TypeError) as e:
++            path('cbv/', EmptyView)
++        self.assertEqual(
++            str(e.exception),
++            "View classes are not callable, and must be called with `.as_view()`"
++        )
++
++    def test_re_path_cbv_instantiated_directly(self):
++        with self.assertRaises(TypeError) as e:
++            re_path(r'^cbv/$', EmptyView)
++        self.assertEqual(
++            str(e.exception),
++            "View classes are not callable, and must be called with `.as_view()`"
++        )
++
+
+
+gold_patch:
+<patch>
+diff --git a/django/urls/conf.py b/django/urls/conf.py
+--- a/django/urls/conf.py
++++ b/django/urls/conf.py
+@@ -55,6 +55,8 @@ def include(arg, namespace=None):
+
+
+ def _path(route, view, kwargs=None, name=None, Pattern=None):
++    from django.views import View
++
+     if isinstance(view, (list, tuple)):
+         # For include(...) processing.
+         pattern = Pattern(route, is_endpoint=False)
+@@ -69,6 +71,12 @@ def _path(route, view, kwargs=None, name=None, Pattern=None):
+     elif callable(view):
+         pattern = Pattern(route, name=name, is_endpoint=True)
+         return URLPattern(pattern, view, kwargs, name)
++    elif isinstance(view, View):
++        view_cls_name = view.__class__.__name__
++        raise TypeError(
++            f'view must be a callable, pass {view_cls_name}.as_view(), not '
++            f'{view_cls_name}().'
++        )
+     else:
+         raise TypeError('view must be a callable or a list/tuple in the case of include().')
+
+diff --git a/django/urls/resolvers.py b/django/urls/resolvers.py
+--- a/django/urls/resolvers.py
++++ b/django/urls/resolvers.py
+@@ -345,6 +345,7 @@ def __repr__(self):
+     def check(self):
+         warnings = self._check_pattern_name()
+         warnings.extend(self.pattern.check())
++        warnings.extend(self._check_callback())
+         return warnings
+
+     def _check_pattern_name(self):
+@@ -361,6 +362,22 @@ def _check_pattern_name(self):
+         else:
+             return []
+
++    def _check_callback(self):
++        from django.views import View
++
++        view = self.callback
++        if inspect.isclass(view) and issubclass(view, View):
++            return [Error(
++                'Your URL pattern %s has an invalid view, pass %s.as_view() '
++                'instead of %s.' % (
++                    self.pattern.describe(),
++                    view.__name__,
++                    view.__name__,
++                ),
++                id='urls.E009',
++            )]
++        return []
++
+     def resolve(self, path):
+         match = self.pattern.match(path)
+         if match:
+
+</patch>
+
+--------------------------------------------------
+analyze
+External factors: lack of repo-level information
+Internal factors: The logical flow is incomplete, and for lists and tuples, it is not treated as include; Code is inconsistent with cot, cot indicates whether 'view' is to be called, while code only determines whether it is a class
+text:
+<issue>
+Add a 'durable' flag to transaction.atomic()
+Description
+
+As discussed ​on Twitter following ​David Seddon's blog post.
+transaction.atomic() guarantees the wrapped database operations is *atomic* - at the end of its wrapped block, operations within that block will all be applied, or all rolled back. In some situations it's also useful to guarantee that the wrapped operations are *durable* - at the end of the wrapped block, all operations have definitely been committed. atomic() doesn't guarantee this at the moment since its use may be wrapped by *another* atomic() higher in the stack, delaying the commit.
+David Seddon's technique to guarantee durability is to wrap atomic() to first check if an atomic() is already active for the current connection (in other words, connection.get_autocommit() returns False), and raise an error if so.
+On Twitter, Ian Foote suggested adding a durable flag to atomic() to add this behaviour to Django, to which Aymeric Augustin said it sounds like a good idea.
+
+</issue>
+
+steps:
+
+1. Modify the `atomic` function signature in `django/db/transaction.py` to include the `durable` parameter with a default value of `False`.
+2. Modify the `Atomic` class's `__init__` method in `django/db/transaction.py` to accept and store the `durable` parameter.
+3. Modify the `Atomic` class's `__enter__` method in `django/db/transaction.py`. Inside `__enter__`, add a check: if `durable` is `True` and `connection.get_autocommit()` is `False` (meaning an outer atomic block is active), raise a `TransactionManagementError`.
+4. Add a new test case class, for example `DurableAtomicTests`, to `tests/transactions/tests.py`.
+5. In `DurableAtomicTests`, create a test method to verify that a nested `atomic(durable=True)` raises a `TransactionManagementError` when an outer `atomic` block is active.
+6. In `DurableAtomicTests`, create a test method to verify that a top-level `atomic(durable=True)` works as expected (commits immediately, although this behaviour is not different from regular atomic, but it's good to have a test case).
+7. In `DurableAtomicTests`, create a test method to verify that a nested `atomic` without `durable=True` inside another `atomic` does not raise an error and works as before.
+8. Generate a patch file containing the changes to `django/db/transaction.py` and `tests/transactions/tests.py`. (Note: Since there is no `tests/transactions/tests.py` provided in the context, I will assume a hypothetical test file location and name. In reality, the test file might be located elsewhere and named differently, and one might need to create it if it doesn't exist. However, for the purpose of this problem, I will assume it exists and proceed with modifications.)
+
+model_patch:
+
+--- a/django/db/transaction.py
++++ b/django/db/transaction.py
+@@ -164,9 +164,10 @@
+      This is a private API.
+      """
+
+-     def __init__(self, using, savepoint):
++     def __init__(self, using, savepoint, durable):
+         self.using = using
+         self.savepoint = savepoint
++        self.durable = durable
+
+      def __enter__(self):
+          connection = get_connection(self.using)
+@@ -181,6 +182,9 @@
+                  # note to deal with this case in __exit__.
+                  connection.in_atomic_block = True
+                  connection.commit_on_exit = False
++            elif self.durable and not connection.get_autocommit():
++                raise TransactionManagementError(
++                    "durable atomic blocks cannot be nested.")
+
+          if connection.in_atomic_block:
+              # We're already in a transaction; create a savepoint, unless we
+@@ -285,13 +289,13 @@
+                      connection.in_atomic_block = False
+
+
+- def atomic(using=None, savepoint=True):
++286 def atomic(using=None, savepoint=True, durable=False):
+      # Bare decorator: @atomic -- although the first argument is called
+      # `using`, it's actually the function being decorated.
+      if callable(using):
+-         return Atomic(DEFAULT_DB_ALIAS, savepoint)(using)
++         return Atomic(DEFAULT_DB_ALIAS, savepoint, durable)(using)
+      # Decorator: @atomic(...) or context manager: with atomic(...): ...
+      else:
+-         return Atomic(using, savepoint)
++         return Atomic(using, savepoint, durable)
+
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/transaction.py b/django/db/transaction.py
+--- a/django/db/transaction.py
++++ b/django/db/transaction.py
+@@ -158,16 +158,30 @@ class Atomic(ContextDecorator):
+
+     Since database connections are thread-local, this is thread-safe.
+
++    An atomic block can be tagged as durable. In this case, raise a
++    RuntimeError if it's nested within another atomic block. This guarantees
++    that database changes in a durable block are committed to the database when
++    the block exists without error.
++
+     This is a private API.
+     """
++    # This private flag is provided only to disable the durability checks in
++    # TestCase.
++    _ensure_durability = True
+
+-    def __init__(self, using, savepoint):
++    def __init__(self, using, savepoint, durable):
+         self.using = using
+         self.savepoint = savepoint
++        self.durable = durable
+
+     def __enter__(self):
+         connection = get_connection(self.using)
+
++        if self.durable and self._ensure_durability and connection.in_atomic_block:
++            raise RuntimeError(
++                'A durable atomic block cannot be nested within another '
++                'atomic block.'
++            )
+         if not connection.in_atomic_block:
+             # Reset state when entering an outermost atomic block.
+             connection.commit_on_exit = True
+@@ -282,14 +296,14 @@ def __exit__(self, exc_type, exc_value, traceback):
+                     connection.in_atomic_block = False
+
+
+-def atomic(using=None, savepoint=True):
++def atomic(using=None, savepoint=True, durable=False):
+     # Bare decorator: @atomic -- although the first argument is called
+     # `using`, it's actually the function being decorated.
+     if callable(using):
+-        return Atomic(DEFAULT_DB_ALIAS, savepoint)(using)
++        return Atomic(DEFAULT_DB_ALIAS, savepoint, durable)(using)
+     # Decorator: @atomic(...) or context manager: with atomic(...): ...
+     else:
+-        return Atomic(using, savepoint)
++        return Atomic(using, savepoint, durable)
+
+
+ def _non_atomic_requests(view, using):
+
+</patch>
+
+--------------------------------------------------
+analyze
+External factors: missing repo-level information, docker image not obtained
+text:
+<issue>
+Add a hook to customize the admin's formsets parameters
+Description
+
+New feature that adds a method on InlineModelAdmin for providing initial data for the inline formset. By default there is no implementation, although one could be implemented to use GET parameters like get_changeform_initial_data, but it wouldn't be trivial due to the list nature of formset initial data.
+
+</issue>
+
+steps:
+
+1. Open the file `django/contrib/admin/options.py`.
+2. Locate the `InlineModelAdmin` class.
+3. Add a new method `get_formset_kwargs(self, request, obj=None)` to the `InlineModelAdmin` class. This method should take `request` and optional `obj` as arguments and return an empty dictionary:
+   ```python
+   def get_formset_kwargs(self, request, obj=None):
+       """Return kwargs for the formset."""
+       return {}
+   ```
+4. In the `InlineModelAdmin.get_formset` method, before calling `modelformset_factory`, call `self.get_formset_kwargs(request, obj)` and update the `defaults` dictionary with the returned kwargs using `defaults.update(self.get_formset_kwargs(request, obj))`.
+5. Open the file `django/contrib/contenttypes/admin.py`.
+6. Locate the `GenericInlineModelAdmin` class.
+7. Add a new method `get_formset_kwargs(self, request, obj=None)` to the `GenericInlineModelAdmin` class. This method should take `request` and optional `obj` as arguments and return an empty dictionary:
+   ```python
+   def get_formset_kwargs(self, request, obj=None):
+       """Return kwargs for the formset."""
+       return {}
+   ```
+8. In the `GenericInlineModelAdmin.get_formset` method, before calling `generic_inlineformset_factory`, call `self.get_formset_kwargs(request, obj)` and update the `defaults` dictionary with the returned kwargs using `defaults.update(self.get_formset_kwargs(request, obj))`.
+9. Generate a patch file containing these changes.
+
+model_patch:
+
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -616,6 +616,10 @@
+         return flatten_fieldsets(self.get_fieldsets(request, obj))
+
+     def get_formset_kwargs(self, request, obj=None):
++        """Return kwargs for the formset."""
++        return {}
++
++    def get_formset(self, request, obj=None, **kwargs):
+         """Return a BaseInlineFormSet class for use in admin views."""
+         if self.declared_fieldsets:
+             fieldsets = self.declared_fieldsets
+@@ -640,7 +644,7 @@
+             'min_num': self.get_min_num(request, obj),
+             'max_num': self.get_max_num(request, obj),
+             'exclude': exclude,
+-            **kwargs
++            **kwargs,
+         }
+
+         if defaults['fields'] is None and not modelform_defines_fields(defaults['form']):
+@@ -648,7 +652,7 @@
+
+         if self.model in self.admin_site._registry:
+             # if parent model is registered, get its formset kwargs
+-            defaults.update(self.admin_site._registry[self.model].get_formset_kwargs(request, obj))
++            defaults.update(self.admin_site._registry[self.model].get_formset_kwargs(request, obj))
+
+         return modelformset_factory(self.model, **defaults)
+
+--- a/django/contrib/contenttypes/admin.py
++++ b/django/contrib/contenttypes/admin.py
+@@ -87,6 +87,10 @@
+      checks_class = GenericInlineModelAdminChecks
+
+      def get_formset(self, request, obj=None, **kwargs):
++        return self.get_inline_formset(request, obj, **kwargs)
++
++    def get_formset_kwargs(self, request, obj=None):
++        """Return kwargs for the formset."""
++        return {}
++
++    def get_inline_formset(self, request, obj=None, **kwargs):
+         if 'fields' in kwargs:
+             fields = kwargs.pop('fields')
+         else:
+@@ -113,7 +117,7 @@
+              'min_num': self.get_min_num(request, obj),
+              'max_num': self.get_max_num(request, obj),
+              'exclude': exclude,
+-             **kwargs,
++             **kwargs
+          }
+
+         if defaults['fields'] is None and not modelform_defines_fields(defaults['form']):
+@@ -121,6 +125,7 @@
+
+         return generic_inlineformset_factory(self.model, **defaults)
+
++
+
+  class GenericStackedInline(GenericInlineModelAdmin):
+      template = 'admin/edit_inline/stacked.html'
+
++
+gold_patch:
+<patch>
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -1946,6 +1946,20 @@ def history_view(self, request, object_id, extra_context=None):
+             "admin/object_history.html"
+         ], context)
+
++    def get_formset_kwargs(self, request, obj, inline, prefix):
++        formset_params = {
++            'instance': obj,
++            'prefix': prefix,
++            'queryset': inline.get_queryset(request),
++        }
++        if request.method == 'POST':
++            formset_params.update({
++                'data': request.POST.copy(),
++                'files': request.FILES,
++                'save_as_new': '_saveasnew' in request.POST
++            })
++        return formset_params
++
+     def _create_formsets(self, request, obj, change):
+         "Helper function to generate formsets for add/change_view."
+         formsets = []
+@@ -1959,17 +1973,7 @@ def _create_formsets(self, request, obj, change):
+             prefixes[prefix] = prefixes.get(prefix, 0) + 1
+             if prefixes[prefix] != 1 or not prefix:
+                 prefix = "%s-%s" % (prefix, prefixes[prefix])
+-            formset_params = {
+-                'instance': obj,
+-                'prefix': prefix,
+-                'queryset': inline.get_queryset(request),
+-            }
+-            if request.method == 'POST':
+-                formset_params.update({
+-                    'data': request.POST.copy(),
+-                    'files': request.FILES,
+-                    'save_as_new': '_saveasnew' in request.POST
+-                })
++            formset_params = self.get_formset_kwargs(request, obj, inline, prefix)
+             formset = FormSet(**formset_params)
+
+             def user_deleted_form(request, obj, formset, index):
+
+</patch>
+
+--------------------------------------------------
+analyze
+External factors: Lack of input information Lack of information on initialization of formset_params
+Internal factors: Lack of exception handling process, no exception handling is made to the returned get_formset_kwargs
+
+text:
+<issue>
+Add support for fixtures compression in dumpdata
+Description
+
+Since loaddata command support compressed fixtures [1] loading, I would propose to add fixtures compression support in dumpdata command.
+[1] ​https://docs.djangoproject.com/en/dev/ref/django-admin/#compressed-fixtures
+
+</issue>
+
+steps:
+
+1. **Add a `--compression` argument to the `dumpdata` command.**
+   Modify the `add_arguments` method in the `Command` class of `dumpdata.py` to include a new argument `--compression`. This argument will accept a compression format string and will default to `None` (no compression).
+2. **Modify the `handle` method in `dumpdata.py` to handle compression.**
+   - Retrieve the `compression` option value from the `options` dictionary in the `handle` method.
+   - Determine the appropriate compression open method and mode based on the `compression` format. Use a dictionary similar to `loaddata`'s `compression_formats` to map format strings to open methods.
+   - Open the output file stream. If a compression format is specified, wrap the file stream with the corresponding compression method. If no compression is specified, use a regular file stream or stdout.
+   - Pass the compression format string to the `serializers.serialize` function as a new `compression` argument.
+3. **Modify the `serializers.serialize` function in `django/core/serializers/__init__.py` to accept and use the compression argument.**
+   - Update the `serialize` function definition to accept a `compression` argument with a default value of `None`.
+   - Inside the `serialize` function, before opening the stream, check the `compression` argument.
+   - If a compression format is provided, use the corresponding compression method to open the stream. The compression methods are similar to those used in `loaddata`. Ensure to handle potential `ImportError` for compression libraries like `bz2` and `lzma`.
+   - The stream should be opened in binary write mode ('wb') when compression is used.
+   - Ensure the compressed stream is properly closed in the `finally` block of the `serialize` function.
+4. **Update the `CommandError` message in `dumpdata.py` for unknown serialization format to include compression format in the check.**
+5. **Update documentation for `dumpdata` command.**
+   - Add documentation for the new `--compression` option in the `dumpdata` command documentation (`docs/ref/django-admin.txt`). Explain the available compression formats (`gzip`, `bz2`, `lzma`, `xz`, `zip`) and how to use the option.
+
+model_patch:
+
+--- a/django/core/management/commands/dumpdata.py
++++ b/django/core/management/commands/dumpdata.py
+@@ -1,3 +1,14 @@
++import gzip
++import os
++import sys
++import zipfile
++
++from io import TextIOWrapper
++
++try:
++    import bz2
++except ImportError:
++    bz2 = None
+ import warnings
+
+ from django.apps import apps
+@@ -6,6 +17,11 @@
+ from django.core.management.base import BaseCommand, CommandError
+ from django.core.management.utils import parse_apps_and_model_labels
+ from django.db import DEFAULT_DB_ALIAS, router
++
++try:
++    import lzma
++except ImportError:
++    lzma = None
+
+
+ class ProxyModelWarning(Warning):
+@@ -65,6 +81,10 @@
+              '--output',
+              help='Specifies file to which the output is written.'
+          )
++        parser.add_argument(
++            '--compression',
++            help='Specifies the compression mode for fixtures.',
++        )
+
+     def handle(self, *app_labels, **options):
+         format = options['format']
+@@ -77,6 +97,7 @@
+         use_natural_primary_keys = options['use_natural_primary_keys']
+         use_base_manager = options['use_base_manager']
+         pks = options['primary_keys']
++        compression = options['compression']
+
+         if pks:
+             primary_keys = [pk.strip() for pk in pks.split(',')]
+@@ -133,12 +154,7 @@
+          # Check that the serialization format exists; this is a shortcut to
+          # avoid collating all the objects and _then_ failing.
+          if format not in serializers.get_public_serializer_formats():
+-             try:
+-                 serializers.get_serializer(format)
+-             except serializers.SerializerDoesNotExist:
+-                 pass
+-
+-             raise CommandError("Unknown serialization format: %s" % format)
++             raise CommandError("Unknown serialization format: %s" % format)
+
+          def get_objects(count_only=False):
+              """
+@@ -187,16 +203,44 @@
+                  progress_output = self.stdout
+                  object_count = sum(get_objects(count_only=True))
+              stream = open(output, 'w') if output else None
++            compression_formats = {
++                'gzip': (gzip.GzipFile, "wb"),
++                'zip': (zipfile.ZipFile, "w"),
++                'bz2': (bz2.BZ2File, "wb") if bz2 else None,
++                'lzma': (lzma.LZMAFile, "wb") if lzma else None,
++                'xz': (lzma.LZMAFile, "wb") if lzma else None,
++            }
++            if compression and compression not in compression_formats:
++                raise CommandError("Unknown compression format: %s" % compression)
++
++            open_method = None
++            if compression:
++                open_method, mode = compression_formats[compression]
++                if open_method is None:
++                    raise CommandError("Compression format '%s' is not available." % compression)
++
++            if output:
++                if open_method:
++                    stream = open_method(output, mode)
++                    stream_wrapper = TextIOWrapper(stream, encoding=self.stdout.encoding)
++                else:
++                    stream = open(output, 'w', encoding=self.stdout.encoding)
++                    stream_wrapper = stream
++            else:
++                stream_wrapper = self.stdout
++
+             try:
+                 serializers.serialize(
+                     format, get_objects(), indent=indent,
+                     use_natural_foreign_keys=use_natural_foreign_keys,
+                     use_natural_primary_keys=use_natural_primary_keys,
+-                     stream=stream or self.stdout, progress_output=progress_output,
++                    stream=stream_wrapper, progress_output=progress_output,
+                     object_count=object_count,
+                 )
+             finally:
+                 if stream:
++                    if compression == 'zip':
++                        stream.close()
+                     stream.close()
+             except Exception as e:
+                 if show_traceback:
+
+ --- a/django/core/serializers/__init__.py
++++ b/django/core/serializers/__init__.py
+@@ -1,5 +1,14 @@
++import gzip
+ import io
+ import os
++import zipfile
++from io import TextIOWrapper
++
++try:
++    import bz2
++except ImportError:
++    bz2 = None
++
+ from django.core.serializers.base import SerializerDoesNotExist
+ from django.core.serializers.json import Serializer as JSONSerializer
+ from django.core.serializers.python import Serializer as PythonSerializer
+@@ -7,6 +16,11 @@
+ from django.core.serializers.xml import Serializer as XMLSerializer
+ from django.utils.module_loading import import_string
+
++try:
++    import lzma
++except ImportError:
++    lzma = None
++
+
+ def get_serializer(format):
+     format = format.lower()
+@@ -41,7 +55,7 @@
+
+
+ def serialize(format, queryset, *, stream=None, fields=None, use_natural_foreign_keys=False,
+-              use_natural_primary_keys=False, progress_output=None, object_count=0, **options):
++              use_natural_primary_keys=False, progress_output=None, object_count=0, compression=None, **options):
+     """
+     Serialize a queryset (or any iterator that yields database objects) as a
+     stream in the specified format.
+@@ -65,8 +79,24 @@
+     if stream is None:
+         stream = io.StringIO()
+     try:
++        compression_formats = {
++            'gzip': gzip.GzipFile,
++            'zip': zipfile.ZipFile,
++            'bz2': bz2.BZ2File if bz2 else None,
++            'lzma': lzma.LZMAFile if lzma else None,
++            'xz': lzma.LZMAFile if lzma else None,
++        }
++        if compression:
++            if compression not in compression_formats:
++                raise SerializerDoesNotExist("Unknown compression format: %s" % compression)
++            open_method = compression_formats[compression]
++            if open_method is None:
++                 raise SerializerDoesNotExist("Compression format '%s' is not available." % compression)
++            if compression == 'zip':
++                 stream = open_method(stream, "w", zipfile.ZIP_DEFLATED)
++            else:
++                stream = open_method(stream, "wb")
+         serializer.serialize(
+-            queryset, stream=stream, fields=fields,
++            queryset, stream=TextIOWrapper(stream, encoding=options.get("encoding", "utf-8")) if hasattr(stream, 'buffer') else stream, fields=fields,
+             use_natural_foreign_keys=use_natural_foreign_keys,
+             use_natural_primary_keys=use_natural_primary_keys,
+             progress_output=progress_output, object_count=object_count,
+@@ -74,6 +104,8 @@
+         )
+         return stream.getvalue()
+     finally:
++        if compression and compression != 'zip':
++            stream.close()
+         if close_stream:
+             stream.close()
+
+--- a/docs/ref/django-admin.txt
++++ b/docs/ref/django-admin.txt
+@@ -1030,6 +1030,15 @@
+ ``--output``
+     Specifies a file to write the serialized data to. By default, the data
+     appears on standard output.
++
++``--compression``
++    Specifies the compression mode for the fixture file. Supported values
++    are ``gzip``, ``bz2``, ``lzma``, ``xz``, and ``zip``.
++
++    When ``zip`` compression is used, dumpdata will write a ZIP file
++    containing a single file with the serialized data. The ZIP file will
++    be created using the ZIP_DEFLATED method.
++
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/commands/dumpdata.py b/django/core/management/commands/dumpdata.py
+--- a/django/core/management/commands/dumpdata.py
++++ b/django/core/management/commands/dumpdata.py
+@@ -1,3 +1,5 @@
++import gzip
++import os
+ import warnings
+
+ from django.apps import apps
+@@ -6,6 +8,18 @@
+ from django.core.management.utils import parse_apps_and_model_labels
+ from django.db import DEFAULT_DB_ALIAS, router
+
++try:
++    import bz2
++    has_bz2 = True
++except ImportError:
++    has_bz2 = False
++
++try:
++    import lzma
++    has_lzma = True
++except ImportError:
++    has_lzma = False
++
+
+ class ProxyModelWarning(Warning):
+     pass
+@@ -184,7 +198,36 @@ def get_objects(count_only=False):
+             if output and self.stdout.isatty() and options['verbosity'] > 0:
+                 progress_output = self.stdout
+                 object_count = sum(get_objects(count_only=True))
+-            stream = open(output, 'w') if output else None
++            if output:
++                file_root, file_ext = os.path.splitext(output)
++                compression_formats = {
++                    '.bz2': (open, {}, file_root),
++                    '.gz': (gzip.open, {}, output),
++                    '.lzma': (open, {}, file_root),
++                    '.xz': (open, {}, file_root),
++                    '.zip': (open, {}, file_root),
++                }
++                if has_bz2:
++                    compression_formats['.bz2'] = (bz2.open, {}, output)
++                if has_lzma:
++                    compression_formats['.lzma'] = (
++                        lzma.open, {'format': lzma.FORMAT_ALONE}, output
++                    )
++                    compression_formats['.xz'] = (lzma.open, {}, output)
++                try:
++                    open_method, kwargs, file_path = compression_formats[file_ext]
++                except KeyError:
++                    open_method, kwargs, file_path = (open, {}, output)
++                if file_path != output:
++                    file_name = os.path.basename(file_path)
++                    warnings.warn(
++                        f"Unsupported file extension ({file_ext}). "
++                        f"Fixtures saved in '{file_name}'.",
++                        RuntimeWarning,
++                    )
++                stream = open_method(file_path, 'wt', **kwargs)
++            else:
++                stream = None
+             try:
+                 serializers.serialize(
+                     format, get_objects(), indent=indent,
+
+</patch>
+
+--------------------------------------------------
+analyze
+The details of compression format selection (parameters vs file extension) and error handling are not clear enough, and there is slight ambiguity.
+
+text:
+<issue>
+Allow postgresql database connections to use postgres services
+Description
+
+		(last modified by levihb)
+
+Postgres offers a way to make database connections through the use of services, which are basically equivalent to MySQL's options files.
+Server, database, username, etc information is stored by default in ~/.pg_service.conf and takes a very similar format to MySQL cnf files:
+[my_alias]
+host=10.0.19.10
+user=postgres
+dbname=postgres
+port=5432
+And password can be stored in ~/.pgpass under a different format.
+I think being able to just add them to the DATABASES config would be useful, similar to how you can add MySQL cnf files. psycopg2 supports it just fine through the service argument/string connect(service='my_alias') connect('service=my_alias').
+At the moment it can be added like this:
+DATABASES = {
+	'default': {
+		'ENGINE': 'django.db.backends.postgresql',
+		'NAME': 'postgres',
+		'OPTIONS': {'service': 'my_alias'}
+	}
+}
+Which works, however it involves repeating the database name. I don't think the database name should be repeated twice because it couples the config and the service file together, and makes it harder to just move it between different environments. I think ideally you would just specify the service, either like this:
+DATABASES = {
+	'default': {
+		'ENGINE': 'django.db.backends.postgresql',
+		'OPTIONS': {'service': 'my_alias'}
+	}
+}
+Or maybe a better way would be?:
+DATABASES = {
+	'default': {
+		'ENGINE': 'django.db.backends.postgresql',
+		'SERVICE': 'my_alias
+	}
+}
+It seems like something that would be super easy to add. I don't mind creating a pull request for it, but would like to know why it hasn't been added, and how it would be recommended to add it.
+
+</issue>
+
+steps:
+1. Open the file `django/db/backends/postgresql/base.py`.
+2. Locate the `get_connection_params` method within the `DatabaseWrapper` class.
+3. Modify the `get_connection_params` method to check for the presence of a `SERVICE` key in the `settings_dict`.
+4. If the `SERVICE` key is found, construct the `conn_params` dictionary. Include the `service` parameter from `settings_dict['SERVICE']` within the `OPTIONS` dictionary, merging it with any existing options. In this case, ignore the individual connection parameters like `NAME`, `USER`, `PASSWORD`, `HOST`, and `PORT` as the service configuration should handle these. However, still include `NAME` in `conn_params` as it might be used elsewhere in Django even if the connection is established using service.
+5. If the `SERVICE` key is not found, retain the original logic of constructing `conn_params` from `NAME`, `USER`, `PASSWORD`, `HOST`, `PORT`, and `OPTIONS`.
+6. Generate a patch file containing the changes made to `django/db/backends/postgresql/base.py`.
+
+model_patch:
+
+--- a/django/db/backends/postgresql/base.py
++++ b/django/db/backends/postgresql/base.py
+@@ -169,10 +169,15 @@
+                 )
+             )
+         conn_params = {
+-            'database': settings_dict['NAME'] or 'postgres',
+             **settings_dict['OPTIONS'],
+         }
+         conn_params.pop('isolation_level', None)
++        if 'SERVICE' in settings_dict:
++            conn_params['service'] = settings_dict['SERVICE']
++            if settings_dict['NAME']:
++                conn_params['database'] = settings_dict['NAME']
++            return conn_params
++        conn_params['database'] = settings_dict['NAME'] or 'postgres'
+         if settings_dict['USER']:
+             conn_params['user'] = settings_dict['USER']
+         if settings_dict['PASSWORD']:
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/postgresql/base.py b/django/db/backends/postgresql/base.py
+--- a/django/db/backends/postgresql/base.py
++++ b/django/db/backends/postgresql/base.py
+@@ -152,10 +152,14 @@ class DatabaseWrapper(BaseDatabaseWrapper):
+     def get_connection_params(self):
+         settings_dict = self.settings_dict
+         # None may be used to connect to the default 'postgres' db
+-        if settings_dict['NAME'] == '':
++        if (
++            settings_dict['NAME'] == '' and
++            not settings_dict.get('OPTIONS', {}).get('service')
++        ):
+             raise ImproperlyConfigured(
+                 "settings.DATABASES is improperly configured. "
+-                "Please supply the NAME value.")
++                "Please supply the NAME or OPTIONS['service'] value."
++            )
+         if len(settings_dict['NAME'] or '') > self.ops.max_name_length():
+             raise ImproperlyConfigured(
+                 "The database name '%s' (%d characters) is longer than "
+@@ -166,10 +170,19 @@ def get_connection_params(self):
+                     self.ops.max_name_length(),
+                 )
+             )
+-        conn_params = {
+-            'database': settings_dict['NAME'] or 'postgres',
+-            **settings_dict['OPTIONS'],
+-        }
++        conn_params = {}
++        if settings_dict['NAME']:
++            conn_params = {
++                'database': settings_dict['NAME'],
++                **settings_dict['OPTIONS'],
++            }
++        elif settings_dict['NAME'] is None:
++            # Connect to the default 'postgres' db.
++            settings_dict.get('OPTIONS', {}).pop('service', None)
++            conn_params = {'database': 'postgres', **settings_dict['OPTIONS']}
++        else:
++            conn_params = {**settings_dict['OPTIONS']}
++
+         conn_params.pop('isolation_level', None)
+         if settings_dict['USER']:
+             conn_params['user'] = settings_dict['USER']
+diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -16,6 +16,7 @@ def settings_to_cmd_args_env(cls, settings_dict, parameters):
+         dbname = settings_dict.get('NAME') or 'postgres'
+         user = settings_dict.get('USER')
+         passwd = settings_dict.get('PASSWORD')
++        service = options.get('service')
+         sslmode = options.get('sslmode')
+         sslrootcert = options.get('sslrootcert')
+         sslcert = options.get('sslcert')
+@@ -33,6 +34,8 @@ def settings_to_cmd_args_env(cls, settings_dict, parameters):
+         env = {}
+         if passwd:
+             env['PGPASSWORD'] = str(passwd)
++        if service:
++            env['PGSERVICE'] = str(service)
+         if sslmode:
+             env['PGSSLMODE'] = str(sslmode)
+         if sslrootcert:
+
+</patch>
+
+--------------------------------------------------
+analyze
+The goal of avoiding duplicate 'NAME' in Prompt is not fully achieved, and the 'NAME' is still required to be retained.
+
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Internal factors: lack of exception handling process, both NAME and SERVICE attributes may not meet the given conditions, and exception handling is required, the logical flow is incomplete, and the processing function is not defined to configure the environment.
+text:
+<issue>
+Add --skip-checks option to the runserver command.
+Description
+
+Rationale:
+It would be consistent with other management commands performing system checks
+It would help people like me who would rather have checks enabled exclusively in CI/CD than wait 15-20 seconds for each project reload during development
+Related StackOverflow question:
+​https://stackoverflow.com/questions/41438593/skip-system-checks-on-django-server-in-debug-mode-in-pycharm/41725866
+
+</issue>
+
+steps:
+1. Modify the `runserver` command (`django/core/management/commands/runserver.py`) to check for the `skip_checks` option in the `inner_run` method.
+2. Conditionally execute `self.check(display_num_errors=True)` in `inner_run` based on the presence of the `skip_checks` option. If `skip_checks` is True, skip the system checks.
+3. Generate a patch file containing the changes to `django/core/management/commands/runserver.py`.
+
+model_patch:
+
+--- a/django/core/management/commands/runserver.py
++++ b/django/core/management/commands/runserver.py
+@@ -118,7 +118,8 @@
+
+          self.stdout.write("Performing system checks...\n\n")
+          self.check(display_num_errors=True)
+-        # Need to check migrations here, so can't use the
++        if options['skip_checks']:
++            self.stdout.write("Skipping system checks.\n\n")
++        else:
++            # Need to check migrations here, so can't use the
+         # requires_migrations_check attribute.
+-        self.check_migrations()
++            self.check_migrations()
+          now = datetime.now().strftime('%B %d, %Y - %X')
+          self.stdout.write(now)
+          self.stdout.write((
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/commands/runserver.py b/django/core/management/commands/runserver.py
+--- a/django/core/management/commands/runserver.py
++++ b/django/core/management/commands/runserver.py
+@@ -51,6 +51,10 @@ def add_arguments(self, parser):
+             '--noreload', action='store_false', dest='use_reloader',
+             help='Tells Django to NOT use the auto-reloader.',
+         )
++        parser.add_argument(
++            '--skip-checks', action='store_true',
++            help='Skip system checks.',
++        )
+
+     def execute(self, *args, **options):
+         if options['no_color']:
+@@ -114,8 +118,9 @@ def inner_run(self, *args, **options):
+         shutdown_message = options.get('shutdown_message', '')
+         quit_command = 'CTRL-BREAK' if sys.platform == 'win32' else 'CONTROL-C'
+
+-        self.stdout.write("Performing system checks...\n\n")
+-        self.check(display_num_errors=True)
++        if not options['skip_checks']:
++            self.stdout.write('Performing system checks...\n\n')
++            self.check(display_num_errors=True)
+         # Need to check migrations here, so can't use the
+         # requires_migrations_check attribute.
+         self.check_migrations()
+
+</patch>
+
+--------------------------------------------------
+analyze
+External factors: lack of context factors. The description only mentions that the system checks should be skipped, and there is no detailed description of which checks should be skipped, resulting in inconsistent two code snippets.
+Internal factors: cot is inconsistent with propt, propt requires adding new command line parameters, while cot directly assumes that the parameters exist and only processes parameters.
+

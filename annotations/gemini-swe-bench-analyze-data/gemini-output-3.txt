@@ -1,0 +1,791 @@
+Statistical results
+
+
+django__django-11514
+text:
+<issue>
+Add Cache-Control: private to never_cache decorator.
+Description
+
+If a Django user wants to ensure that a resource is not cached.
+The user might use never_cache decorator, however, sometimes it doesn't work as he or she expected, which means the resource is cached by CDN.
+The reason why is that CDN providers cache the resource. For example, Fastly needs to set Cache-Control: private for HTTP header with the origin response. The document is below.
+​https://docs.fastly.com/guides/tutorials/cache-control-tutorial#do-not-cache
+Currently Django's never_cache lacks Cache-Control: private, so I suggest to add this header to a response.
+Thanks,
+
+</issue>
+
+steps:
+
+1. Locate the `add_never_cache_headers` function: This function is located in `django/utils/cache.py`.
+2. Modify `add_never_cache_headers`: Add the `private=True` parameter to the `patch_cache_control` function call within `add_never_cache_headers`. This will add `private` to the `Cache-Control` header when `add_never_cache_headers` is called, which is used by the `never_cache` decorator.
+3. Generate patch file: Use `diff -u` command or `git diff` to create a patch file of the changes made to `django/utils/cache.py`. The patch should show the addition of `private=True` to the `patch_cache_control` call in the `add_never_cache_headers` function.
+
+model_patch:
+
+--- a/django/utils/cache.py
++++ b/django/utils/cache.py
+@@ -252,7 +252,7 @@
+     Add headers to a response to indicate that a page should never be cached.
+     """
+     patch_response_headers(response, cache_timeout=-1)
+-    patch_cache_control(response, no_cache=True, no_store=True, must_revalidate=True)
++    patch_cache_control(response, private=True, no_cache=True, no_store=True, must_revalidate=True)
+
+
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/utils/cache.py b/django/utils/cache.py
+--- a/django/utils/cache.py
++++ b/django/utils/cache.py
+@@ -250,7 +250,7 @@ def add_never_cache_headers(response):
+     Add headers to a response to indicate that a page should never be cached.
+     """
+     patch_response_headers(response, cache_timeout=-1)
+-    patch_cache_control(response, no_cache=True, no_store=True, must_revalidate=True)
++    patch_cache_control(response, no_cache=True, no_store=True, must_revalidate=True, private=True)
+
+
+ def patch_vary_headers(response, newheaders):
+
+</patch>
+
+--------------------------------------------------
+analyze
+No problem with the code test yet
+Run log shows Docker image pull failed
+
+
+django__django-11525
+text:
+<issue>
+Raise exceptions in mail_admins()/mail_managers() when settings are not in expected formats.
+Description
+
+Hi,
+First time writing a ticket so I apologize if I do anything improperly here. This issue just arose on a project I've been working on, and it goes as follows:
+Our MANAGERS setting was set like so:
+MANAGERS = ['one@example.com', 'two@example.com']
+And after calling mail_managers, the result was:
+smtplib.SMTPRecipientsRefused: {'=?utf-8?q?h?=': (550, b'5.1.1 <=?utf-8?q?h?=>: Recipient address rejected: User unknown in local recipient table'), '=?utf-8?q?u?=': (550, b'5.1.1 <=?utf-8?q?u?=>: Recipient address rejected: User unknown in local recipient table')}
+After some investigation it became clear that this setting was in the improper format, but that was only because of ​this StackOverflow post. It would be nice if Django failed early if this setting was detected but improperly set, rather than waiting until the consequences become apparent.
+Thank you,
+Kevin
+
+</issue>
+
+steps:
+
+1. Locate the `mail_admins` and `mail_managers` functions. These functions are located in `django/core/mail/__init__.py`.
+2. Open the `django/core/mail/__init__.py` file and find the `mail_admins` function.
+3. Add code at the beginning of the `mail_admins` function to validate the format of the `settings.ADMINS` setting.
+    - Check if `settings.ADMINS` is a list. If not, raise a `TypeError`.
+    - Iterate through each element in the `settings.ADMINS` list.
+    - For each element, check if it is a tuple. If not, raise a `TypeError`.
+    - For each tuple, check if it has a length of 2. If not, raise a `TypeError`.
+4. Open the `django/core/mail/__init__.py` file and find the `mail_managers` function.
+5. Add code at the beginning of the `mail_managers` function to validate the format of the `settings.MANAGERS` setting.
+    - Check if `settings.MANAGERS` is a list. If not, raise a `TypeError`.
+    - Iterate through each element in the `settings.MANAGERS` list.
+    - For each element, check if it is a tuple. If not, raise a `TypeError`.
+    - For each tuple, check if it has a length of 2. If not, raise a `TypeError`.
+6. Generate a patch file in git format containing the changes made to `django/core/mail/__init__.py`.
+
+model_patch:
+
+--- a/django/core/mail/message.py
++++ b/django/core/mail/message.py
+@@ -234,6 +234,15 @@
+         Initialize a single email message (which can be sent to multiple
+         recipients).
+         """
++        if isinstance(to, str):
++            raise TypeError(
++                "'to' argument must be a list or tuple of email addresses, not "
++                "a string. Use getaddresses() if you need to parse a string."
++            )
++        if isinstance(from_email, (list, tuple)):
++            raise TypeError(
++                "'from_email' argument must be a string, not a list or tuple."
++            )
+         if to:
+             if isinstance(to, str):
+                 raise TypeError('"to" argument must be a list or tuple')
+@@ -241,18 +250,6 @@
+         else:
+             self.to = []
+         if cc:
+-            if isinstance(cc, str):
+-                raise TypeError('"cc" argument must be a list or tuple')
+-            self.cc = list(cc)
+-        else:
+-            self.cc = []
+-        if bcc:
+-            if isinstance(bcc, str):
+-                raise TypeError('"bcc" argument must be a list or tuple')
+-            self.bcc = list(bcc)
+-        else:
+-            self.bcc = []
+-        if reply_to:
+             if isinstance(reply_to, str):
+                 raise TypeError('"reply_to" argument must be a list or tuple')
+             self.reply_to = list(reply_to)
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/mail/__init__.py b/django/core/mail/__init__.py
+--- a/django/core/mail/__init__.py
++++ b/django/core/mail/__init__.py
+@@ -91,6 +91,8 @@ def mail_admins(subject, message, fail_silently=False, connection=None,
+     """Send a message to the admins, as defined by the ADMINS setting."""
+     if not settings.ADMINS:
+         return
++    if not all(isinstance(a, (list, tuple)) and len(a) == 2 for a in settings.ADMINS):
++        raise ValueError('The ADMINS setting must be a list of 2-tuples.')
+     mail = EmailMultiAlternatives(
+         '%s%s' % (settings.EMAIL_SUBJECT_PREFIX, subject), message,
+         settings.SERVER_EMAIL, [a[1] for a in settings.ADMINS],
+@@ -106,6 +108,8 @@ def mail_managers(subject, message, fail_silently=False, connection=None,
+     """Send a message to the managers, as defined by the MANAGERS setting."""
+     if not settings.MANAGERS:
+         return
++    if not all(isinstance(a, (list, tuple)) and len(a) == 2 for a in settings.MANAGERS):
++        raise ValueError('The MANAGERS setting must be a list of 2-tuples.')
+     mail = EmailMultiAlternatives(
+         '%s%s' % (settings.EMAIL_SUBJECT_PREFIX, subject), message,
+         settings.SERVER_EMAIL, [a[1] for a in settings.MANAGERS],
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+Prompt fuzzy---missing context information--missing repo-level information
+Promp fuzzy ----implementation details are unclear ----the data structure is unclear
+The correct format for ADMINS and MANAGERS should be (name, email) 2-tuple list.
+
+Text does not indicate that the modified file is django/core/mail/__init__.py, and the generated code modified file is django/core/mail/message.py
+
+The same run log shows that Docker image pull failed
+
+
+django__django-11527
+text:
+<issue>
+sqlsequencereset should inform that no sequences found.
+Description
+
+This just came up on IRC, because someone was expecting sqlsequencereset to provide resets for the auto-increment values for an SQLite table.
+Running python manage.py sqlsequencereset <myapp> provides no output if there are no results returned by connection.ops.sequence_reset_sql (see ​here)
+So the user has no idea if it failed, succeeded, or they got the invocation wrong (assuming they're not familiar enough with Django to know that invoking it wrong will raise a CommandError).
+I'd suggest it should avoid ambiguity, so if len(statements) == 0 it should raise CommandError and say there's nothing to do. Bonus points if it also sniffs the connection backend to know if there is anything it could do, and if there's not, report that sqlsequencereset isn't necessary/available for that backend.
+
+</issue>
+
+steps:
+
+1.  Locate the `sqlsequencereset.py` file within the Django codebase. It is typically found at `django/core/management/commands/sqlsequencereset.py`.
+2.  Open the `sqlsequencereset.py` file and examine the `Command` class, specifically the `handle` method. This method is responsible for executing the logic of the `sqlsequencereset` command.
+3.  Modify the `handle` method to check if the list of SQL statements generated by `connection.ops.sequence_reset_sql` is empty.
+4.  If the list of statements is empty, retrieve the database backend name using `connection.vendor`.
+5.  Based on the database backend name and the empty statement list, implement conditional logic to raise a `CommandError` with an informative message.
+    -   For SQLite backend, raise a `CommandError` indicating that `sqlsequencereset` is not necessary as SQLite handles auto-increment reset automatically.
+    -   For other backends, raise a `CommandError` indicating that no sequences were found to reset for the specified applications.
+6.  If the list of statements is not empty, proceed with the original functionality of the `handle` method, which is to print the generated SQL statements.
+7.  Save the modified `sqlsequencereset.py` file.
+8.  Generate a patch file that includes only the changes made to `sqlsequencereset.py`. This patch file will be used to apply the solution to the codebase.
+
+model_patch:
+
+--- a/django/core/management/commands/sqlsequencereset.py
++++ b/django/core/management/commands/sqlsequencereset.py
+@@ -1,6 +1,7 @@
+ from django.apps import apps
+ from django.core.management.base import BaseCommand, CommandError
+ from django.db import connections, router
++from django.utils.translation import gettext as _
+
+
+ class Command(BaseCommand):
+@@ -34,9 +35,20 @@
+             connection = connections[using]
+             statements = connection.ops.sequence_reset_sql(self.style, model_list)
+             if statements:
+-                output.extend(statements)
++                output.extend(statement + ';' for statement in statements)
+
+         if output:
+             return '\n'.join(output) + '\n'
++        else:
++            backend_name = connections[using].vendor
++            if backend_name == 'sqlite':
++                raise CommandError(
++                    _("Sequences are automatically reset by SQLite.")
++                )
++            else:
++                raise CommandError(
++                    _("No sequences found for %(app_labels)s in database '%(database)s'.") % {
++                        'app_labels': ', '.join(app_labels) or 'all applications',
++                        'database': using,
++                    }
++                )
+         return ''
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/commands/sqlflush.py b/django/core/management/commands/sqlflush.py
+--- a/django/core/management/commands/sqlflush.py
++++ b/django/core/management/commands/sqlflush.py
+@@ -19,4 +19,7 @@ def add_arguments(self, parser):
+         )
+
+     def handle(self, **options):
+-        return '\n'.join(sql_flush(self.style, connections[options['database']], only_django=True))
++        sql_statements = sql_flush(self.style, connections[options['database']], only_django=True)
++        if not sql_statements and options['verbosity'] >= 1:
++            self.stderr.write('No tables found.')
++        return '\n'.join(sql_statements)
+diff --git a/django/core/management/commands/sqlmigrate.py b/django/core/management/commands/sqlmigrate.py
+--- a/django/core/management/commands/sqlmigrate.py
++++ b/django/core/management/commands/sqlmigrate.py
+@@ -63,4 +63,6 @@ def handle(self, *args, **options):
+         # for it
+         plan = [(executor.loader.graph.nodes[targets[0]], options['backwards'])]
+         sql_statements = executor.collect_sql(plan)
++        if not sql_statements and options['verbosity'] >= 1:
++            self.stderr.write('No operations found.')
+         return '\n'.join(sql_statements)
+diff --git a/django/core/management/commands/sqlsequencereset.py b/django/core/management/commands/sqlsequencereset.py
+--- a/django/core/management/commands/sqlsequencereset.py
++++ b/django/core/management/commands/sqlsequencereset.py
+@@ -20,4 +20,6 @@ def handle_app_config(self, app_config, **options):
+         connection = connections[options['database']]
+         models = app_config.get_models(include_auto_created=True)
+         statements = connection.ops.sequence_reset_sql(self.style, models)
++        if not statements and options['verbosity'] >= 1:
++            self.stderr.write('No sequences found.')
+         return '\n'.join(statements)
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+Internal factors---logical flow incomplete--path coverage incomplete
+No checking verbosity in the error code, no output feedback regardless of whether there is a sequence that needs to be reset
+
+The same run log shows that Docker image pull failed
+
+
+django__django-11564
+text:
+<issue>
+Add support for SCRIPT_NAME in STATIC_URL and MEDIA_URL
+Description
+
+		(last modified by Rostyslav Bryzgunov)
+
+By default, {% static '...' %} tag just appends STATIC_URL in the path. When running on sub-path, using SCRIPT_NAME WSGI param, it results in incorrect static URL - it doesn't prepend SCRIPT_NAME prefix.
+This problem can be solved with prepending SCRIPT_NAME to STATIC_URL in settings.py but that doesn't work when SCRIPT_NAME is a dynamic value.
+This can be easily added into default Django static tag and django.contrib.staticfiles tag as following:
+def render(self, context):
+	url = self.url(context)
+	# Updating url here with request.META['SCRIPT_NAME']
+	if self.varname is None:
+		return url
+	context[self.varname] = url
+		return ''
+On more research I found that FileSystemStorage and StaticFilesStorage ignores SCRIPT_NAME as well.
+We might have to do a lot of changes but I think it's worth the efforts.
+
+</issue>
+
+steps:
+1. Modify `PrefixNode.handle_simple` in `django/templatetags/static.py` to prepend `SCRIPT_NAME` to the prefix if `SCRIPT_NAME` is available in `os.environ`.
+2. Modify `StaticNode.handle_simple` in `django/templatetags/static.py` to use the modified `PrefixNode.handle_simple` to get the base URL.
+3. Modify `StaticFilesStorage.url` in `django/contrib/staticfiles/storage.py` to prepend `SCRIPT_NAME` to the generated URL if `SCRIPT_NAME` is available in `os.environ` and the URL does not already start with it.
+model_patch:
+
+--- a/django/templatetags/static.py
++++ b/django/templatetags/static.py
+@@ -1,3 +1,5 @@
++import os
++
+ from urllib.parse import quote, urljoin
+
+ from django import template
+@@ -47,7 +49,11 @@
+         except ImportError:
+             prefix = ''
+         else:
+-            prefix = iri_to_uri(getattr(settings, name, ''))
++            prefix = getattr(settings, name, '')
++            script_name = os.environ.get('SCRIPT_NAME', '')
++            if script_name and prefix.startswith('/'):
++                prefix = script_name + prefix
++            prefix = iri_to_uri(prefix)
+         return prefix
+
+     def render(self, context):
+
+--- a/django/templatetags/static.py
++++ b/django/templatetags/static.py
+@@ -119,7 +119,7 @@
+             from django.contrib.staticfiles.storage import staticfiles_storage
+             return staticfiles_storage.url(path)
+         else:
+-            return urljoin(PrefixNode.handle_simple("STATIC_URL"), quote(path))
++            return urljoin(PrefixNode.handle_simple("STATIC_URL"), quote(path, safe='/~'))
+
+     @classmethod
+     def handle_token(cls, parser, token):
+
+--- a/django/contrib/staticfiles/storage.py
++++ b/django/contrib/staticfiles/storage.py
+@@ -1,3 +1,4 @@
++import os
+ import hashlib
+ import json
+ import os
+@@ -145,7 +146,11 @@
+         """
+         Return the non-hashed URL in DEBUG mode.
+         """
+-        return self._url(self.stored_name, name, force)
++        url = self._url(self.stored_name, name, force)
++        script_name = os.environ.get('SCRIPT_NAME', '')
++        if script_name and url.startswith('/'):
++            url = script_name + url
++        return url
+
+     def url_converter(self, name, hashed_files, template=None):
+         """
+
+
+gold_patch:
+<patch>
+diff --git a/django/conf/__init__.py b/django/conf/__init__.py
+--- a/django/conf/__init__.py
++++ b/django/conf/__init__.py
+@@ -15,7 +15,8 @@
+
+ import django
+ from django.conf import global_settings
+-from django.core.exceptions import ImproperlyConfigured
++from django.core.exceptions import ImproperlyConfigured, ValidationError
++from django.core.validators import URLValidator
+ from django.utils.deprecation import RemovedInDjango40Warning
+ from django.utils.functional import LazyObject, empty
+
+@@ -109,6 +110,26 @@ def configure(self, default_settings=global_settings, **options):
+             setattr(holder, name, value)
+         self._wrapped = holder
+
++    @staticmethod
++    def _add_script_prefix(value):
++        """
++        Add SCRIPT_NAME prefix to relative paths.
++
++        Useful when the app is being served at a subpath and manually prefixing
++        subpath to STATIC_URL and MEDIA_URL in settings is inconvenient.
++        """
++        # Don't apply prefix to valid URLs.
++        try:
++            URLValidator()(value)
++            return value
++        except (ValidationError, AttributeError):
++            pass
++        # Don't apply prefix to absolute paths.
++        if value.startswith('/'):
++            return value
++        from django.urls import get_script_prefix
++        return '%s%s' % (get_script_prefix(), value)
++
+     @property
+     def configured(self):
+         """Return True if the settings have already been configured."""
+@@ -128,6 +149,14 @@ def PASSWORD_RESET_TIMEOUT_DAYS(self):
+             )
+         return self.__getattr__('PASSWORD_RESET_TIMEOUT_DAYS')
+
++    @property
++    def STATIC_URL(self):
++        return self._add_script_prefix(self.__getattr__('STATIC_URL'))
++
++    @property
++    def MEDIA_URL(self):
++        return self._add_script_prefix(self.__getattr__('MEDIA_URL'))
++
+
+ class Settings:
+     def __init__(self, settings_module):
+
+</patch>
+
+--------------------------------------------------
+analyze
+Prompt blurred ---Implementation details are unclear ---Implementation objects are unclear
+--------------------------------------------------------------------------
+Prompt blurred ---Implementation details are unclear ---Implementation objects are unclear
+Internal factors---logical flow is incomplete-path coverage is incomplete
+The problem description does not clearly state that the modification should occur in the Django configuration layer, and only templatetags/static.py is modified, and not in __init__.py.
+
+The error code directly adds a prefix to the static file path generation function, but if SCRIPT_NAME changes dynamically, adding it directly to the place where the URL is generated may cause an error.
+The same run log shows that Docker image pull failed
+
+
+
+
+
+
+django__django-11605
+text:
+<issue>
+Filter by window expression should raise a descriptive error.
+Description
+
+Django has a check that filter does not contain window expressions.
+But it is shallow, neither right side of the expression nor combined expressions are checked.
+class Employee(models.Model):
+	grade = models.IntegerField()
+# raises NotSupportedError
+Employee.objects.annotate(
+	prev_grade=Window(expression=Lag('grade'))
+).filter(prev_grade=F('grade'))
+# Do not raise anything, fail on database backend once executed.
+Employee.objects.annotate(
+	prev_grade=Window(expression=Lag('grade'))
+).filter(grade=F('prev_grade'))
+Employee.objects.annotate(
+	prev_grade=Window(expression=Lag('grade')),
+	dec_grade=F('prev_grade') - Value(1)
+).filter(dec_grade=F('grade'))
+
+</issue>
+
+steps:
+1. Locate the `check_window_functions_allowed` function in `django/db/models/query_utils.py`. This function is already implemented to check for window functions in expressions.
+2. Modify the `check_window_functions_allowed` function to raise a `NotSupportedError` if `allowed_functions` is `False` and a window function is found. Add a descriptive error message explaining that window functions are not allowed in filters.
+3. Modify `QuerySet._add_q()` in `django/db/models/query.py` to call `check_window_functions_allowed` for filter conditions. Pass `allowed_functions=False` to indicate that window functions are not allowed in this context.
+4. Add a test case in `tests/model_tests/expressions.py` to verify the fix. Create a test class `WindowFunctionFilteringErrorTests` and add test methods covering the scenarios described in the issue, ensuring that `NotSupportedError` is raised with the correct message when filtering with window expressions.
+5. Run the tests to confirm the fix and ensure no regressions are introduced.
+model_patch:
+
+--- a/django/db/models/functions/window.py
++++ b/django/db/models/functions/window.py
+@@ -34,8 +34,9 @@
+                 '%s requires a non-null source expression.' %
+                 self.__class__.__name__
+             )
+-        if offset is None or offset <= 0:
++        if offset is not None and offset <= 0:
+             raise ValueError(
++
+                 '%s requires a positive integer for the offset.' %
+                 self.__class__.__name__
+             )
+
+
+ --- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -14,6 +14,7 @@
+ from django.db.models.sql import EmptyResultSet, QuerySet as SQLQuerySet
+ from django.db.models.sql.constants import GET_ITERATOR_CHUNK_SIZE
+ from django.db.models.utils import resolve_expression
++from django.db.models.query_utils import check_window_functions_allowed
+ from django.utils.functional import cached_property
+ from django.utils.hashable import make_hashable
+ from django.utils.regex_utils import _lazy_re_compile
+@@ -422,6 +423,7 @@
+         clone._sticky_ordering = self._sticky_ordering
+         clone._for_write = self._for_write
+         clone._hints = self._hints
++        clone._check_window_functions_in_filter = True
+         return clone
+
+     def _clone(self):
+@@ -794,6 +796,9 @@
+         if q:
+             clause, _ = self._where_class.add_q(q, self.query.get_compiler(self.db), branch_negated=negated, current_negated=negated_chain)
+             if clause:
++                if self._check_window_functions_in_filter:
++                    check_window_functions_allowed(clause, self.query.get_compiler(self.db), _error_message_window_filter)
++
+                 self.query.where.add(clause, AND)
+         return self
+
+@@ -2033,3 +2038,6 @@
+             obj_list.append(self._materialize_single_object(obj))
+
+         return obj_list
++
++
++_error_message_window_filter = 'Window functions are not allowed in filter expressions.'
+
+ --- a/django/db/models/query_utils.py
++++ b/django/db/models/query_utils.py
+@@ -1,5 +1,6 @@
+ from django.core.exceptions import FieldError
+ from django.db.models.constants import LOOKUP_SEP
++from django.db.utils import NotSupportedError
+
+
+ def PathInfo(
+@@ -100,7 +101,7 @@
+     return transforms
+
+
+-def check_window_functions_allowed(expression):
++def check_window_functions_allowed(expression, compiler, error_message, allowed_functions=True):
+     """
+     Raise FieldError if expression uses window functions and they are not
+     allowed in the current context.
+@@ -110,6 +111,8 @@
+     if getattr(expression, 'window_compatible', False):
+         return
+     if getattr(expression, 'window_expression', False):
++        if not allowed_functions:
++            raise NotSupportedError(error_message)
+         return
+     if hasattr(expression, 'get_source_expressions'):
+         for source in expression.get_source_expressions():
+@@ -117,5 +120,5 @@
+                 continue
+             if source is None:
+                 continue
+-            check_window_functions_allowed(source)
++            check_window_functions_allowed(source, compiler, error_message, allowed_functions)
+     return
+
+--- a/tests/model_tests/expressions.py
++++ b/tests/model_tests/expressions.py
+@@ -14,6 +14,7 @@
+     Window,
+ )
+ from django.db.models.functions import (
++    Lag,
+     JSONObject,
+     JSONObjectAgg,
+ )
+@@ -23,6 +24,7 @@
+ from django.test import TestCase, override_settings, skipUnlessDBFeature
+ from django.utils import timezone
+ from django.utils.duration import duration_string
++from django.db.utils import NotSupportedError
+
+
+ class FNameTests(TestCase):
+@@ -1068,3 +1070,26 @@
+         msg = 'JSONObjectAgg() cannot be used with window functions.'
+         with self.assertRaisesMessage(FieldError, msg):
+             list(qs)
++
++
++class WindowFunctionFilteringErrorTests(TestCase):
++    def test_window_function_in_filter_expression(self):
++        with self.assertRaises(NotSupportedError) as e:
++            Employee.objects.annotate(
++                prev_grade=Window(expression=Lag('grade'))
++            ).filter(prev_grade=F('grade'))
++        self.assertEqual(str(e.exception), 'Window functions are not allowed in filter expressions.')
++
++    def test_window_function_in_filter_expression_rhs(self):
++        with self.assertRaises(NotSupportedError) as e:
++            Employee.objects.annotate(
++                prev_grade=Window(expression=Lag('grade'))
++            ).filter(grade=F('prev_grade'))
++        self.assertEqual(str(e.exception), 'Window functions are not allowed in filter expressions.')
++
++    def test_window_function_in_combined_filter_expression(self):
++        with self.assertRaises(NotSupportedError) as e:
++            Employee.objects.annotate(
++                prev_grade=Window(expression=Lag('grade')), dec_grade=F('prev_grade') - Value(1)
++            ).filter(dec_grade=F('grade'))
++        self.assertEqual(str(e.exception), 'Window functions are not allowed in filter expressions.')
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -500,8 +500,6 @@ def as_sql(self, compiler, connection):
+ @deconstructible
+ class F(Combinable):
+     """An object capable of resolving references to existing query objects."""
+-    # Can the expression be used in a WHERE clause?
+-    filterable = True
+
+     def __init__(self, name):
+         """
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1114,6 +1114,17 @@ def check_related_objects(self, field, value, opts):
+                 for v in value:
+                     self.check_query_object_type(v, opts, field)
+
++    def check_filterable(self, expression):
++        """Raise an error if expression cannot be used in a WHERE clause."""
++        if not getattr(expression, 'filterable', 'True'):
++            raise NotSupportedError(
++                expression.__class__.__name__ + ' is disallowed in the filter '
++                'clause.'
++            )
++        if hasattr(expression, 'get_source_expressions'):
++            for expr in expression.get_source_expressions():
++                self.check_filterable(expr)
++
+     def build_lookup(self, lookups, lhs, rhs):
+         """
+         Try to extract transforms and lookup from given lhs.
+@@ -1217,11 +1228,7 @@ def build_filter(self, filter_expr, branch_negated=False, current_negated=False,
+             raise FieldError("Cannot parse keyword query %r" % arg)
+         lookups, parts, reffed_expression = self.solve_lookup_type(arg)
+
+-        if not getattr(reffed_expression, 'filterable', True):
+-            raise NotSupportedError(
+-                reffed_expression.__class__.__name__ + ' is disallowed in '
+-                'the filter clause.'
+-            )
++        self.check_filterable(reffed_expression)
+
+         if not allow_joins and len(parts) > 1:
+             raise FieldError("Joined field references are not permitted in this query")
+@@ -1230,6 +1237,8 @@ def build_filter(self, filter_expr, branch_negated=False, current_negated=False,
+         value = self.resolve_lookup_value(value, can_reuse, allow_joins, simple_col)
+         used_joins = {k for k, v in self.alias_refcount.items() if v > pre_joins.get(k, 0)}
+
++        self.check_filterable(value)
++
+         clause = self.where_class()
+         if reffed_expression:
+             condition = self.build_lookup(lookups, reffed_expression, value)
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+Internal factors---logical flow incomplete--path coverage incomplete
+In step 3, it is mentioned that you modify QuerySet._add_q() to call check_window_functions_allowed, but it does not describe how to deal with combined window expressions. The correct code is solved by recursively calling check_window_functions_allowed
+
+The same run log shows that Docker image pull failed
+
+
+django__django-11669
+text:
+<issue>
+Stop TemplateView automatically passing kwargs into the context
+Description
+
+Only TemplateView pushes self.kwargs to the context. ListView does not, I yet have to check others.
+This is inconsistency and, I think, it should be fixed.
+
+</issue>
+
+steps:
+
+1. **Analyze the issue:** The issue is about the inconsistency of `TemplateView` automatically passing `kwargs` to the template context, while other generic views like `ListView` do not.
+2. **Examine `TemplateView` and `ContextMixin`:** Locate the `TemplateView` class in `django/views/generic/base.py` and the `ContextMixin` class, which `TemplateView` inherits from.
+3. **Identify the code responsible for adding kwargs to the context:**  The `ContextMixin.get_context_data` method is responsible for adding `kwargs` to the context.
+4. **Determine the desired behavior:** The desired behavior is to stop `TemplateView` from automatically passing `kwargs` to the context to achieve consistency with other generic views.
+5. **Override `get_context_data` in `TemplateView`:** To prevent `TemplateView` from automatically including `kwargs` in the context, override the `get_context_data` method in `TemplateView`.
+6. **Implement the overridden `get_context_data`:** In the overridden `get_context_data` method, manually construct the context dictionary, including only 'view' and `extra_context`, and explicitly exclude `kwargs`. This effectively replaces the default behavior inherited from `ContextMixin`.
+7. **Update `TemplateView`'s docstring:**  Modify the docstring of `TemplateView` to accurately reflect the change in behavior regarding `kwargs` being passed to the context. If the original docstring stated that kwargs are passed, it should be updated to reflect that this is no longer the case.
+8. **Generate the patch file:** Create a patch file containing the changes made to `django/views/generic/base.py` to override `get_context_data` in `TemplateView` and update the docstring.
+
+model_patch:
+
+--- a/django/views/generic/base.py
++++ b/django/views/generic/base.py
+@@ -155,11 +155,10 @@
+     Render a template. Pass keyword arguments from the URLconf to the context.
+     """
+     def get(self, request, *args, **kwargs):
+-        context = self.get_context_data(**kwargs)
++        context = self.get_context_data()
+         return self.render_to_response(context)
+
+     def get_context_data(self, **kwargs):
+-        return super().get_context_data()
++        context = {'view': self}
++        if self.extra_context is not None:
++            context.update(self.extra_context)
++        return context
+
+
+gold_patch:
+<patch>
+diff --git a/django/views/generic/base.py b/django/views/generic/base.py
+--- a/django/views/generic/base.py
++++ b/django/views/generic/base.py
+@@ -1,4 +1,5 @@
+ import logging
++import warnings
+ from functools import update_wrapper
+
+ from django.core.exceptions import ImproperlyConfigured
+@@ -9,6 +10,8 @@
+ from django.template.response import TemplateResponse
+ from django.urls import reverse
+ from django.utils.decorators import classonlymethod
++from django.utils.deprecation import RemovedInDjango40Warning
++from django.utils.functional import SimpleLazyObject
+
+ logger = logging.getLogger('django.request')
+
+@@ -152,14 +155,33 @@ def get_template_names(self):
+
+
+ class TemplateView(TemplateResponseMixin, ContextMixin, View):
+-    """
+-    Render a template. Pass keyword arguments from the URLconf to the context.
+-    """
++    """Render a template."""
+     def get(self, request, *args, **kwargs):
+-        context = self.get_context_data(**kwargs)
++        # RemovedInDjango40Warning: when the deprecation ends, replace with:
++        #   context = self.get_context_data()
++        context_kwargs = _wrap_url_kwargs_with_deprecation_warning(kwargs)
++        context = self.get_context_data(**context_kwargs)
+         return self.render_to_response(context)
+
+
++# RemovedInDjango40Warning
++def _wrap_url_kwargs_with_deprecation_warning(url_kwargs):
++    context_kwargs = {}
++    for key, value in url_kwargs.items():
++        # Bind into function closure.
++        @SimpleLazyObject
++        def access_value(key=key, value=value):
++            warnings.warn(
++                'TemplateView passing URL kwargs to the context is '
++                'deprecated. Reference %s in your template through '
++                'view.kwargs instead.' % key,
++                RemovedInDjango40Warning, stacklevel=2,
++            )
++            return value
++        context_kwargs[key] = access_value
++    return context_kwargs
++
++
+ class RedirectView(View):
+     """Provide a redirect on any GET request."""
+     permanent = False
+
+</patch>
+
+--------------------------------------------------
+analyze
+Internal factors---the logical flow is incomplete---the absence of exception handling
+In the generated error code, the get_context_data method is directly modified and kwargs is deleted. The correct code adds a warning to this behavior.
+
+The same run log shows that Docker image pull failed
+

@@ -1,0 +1,1218 @@
+text:
+<issue>
+Allow using ExceptionReporter subclass in django.views.debug.technical_500_response
+Description
+
+		(last modified by Carlton Gibson)
+
+#29714 allows using an ExceptionReporter subclass with AdminEmailHandler.
+Ideally we'd make the similar available for the 500 debug error view.
+​Currently the use of `ExceptionReporter` is hardcoded.
+* Move this to a parameter
+* Provide an example of using, e.g., functools.partial to configure a subclass when specifying handler500.
+Updated for comment:5
+Add ExceptionReporter to the documentation, explaining the relation between the exception reporter class and the filter it uses, and showing a simple override of get_traceback_data().
+Add a DEFAULT_EXCEPTION_REPORTER setting to allow specifying this.
+(At that point we could review deprecating DEFAULT_EXCEPTION_REPORTER_FILTER, as was discussed on #25167 — but maybe that's unnecessary. Thoughts?)
+
+</issue>
+
+steps:
+
+1. Modify the `technical_500_response` function in `django/views/debug.py` to accept a `reporter_class` argument, defaulting to `ExceptionReporter`. Instantiate the reporter using this `reporter_class`.  Read the `DEFAULT_EXCEPTION_REPORTER` setting and use it as the default for `reporter_class` if it's defined.
+2. Add documentation for the `reporter_class` parameter in the `technical_500_response` function documentation in `docs/ref/views.txt`.
+3. Create a new section in `docs/ref/views.txt` to document the `ExceptionReporter` class, explain its relationship with `SafeExceptionReporterFilter`, and provide an example of overriding the `get_traceback_data()` method.
+4. Add documentation for the `DEFAULT_EXCEPTION_REPORTER` setting in `docs/ref/settings.txt` under the "Error handling" section.
+5. Update the documentation for `handler500` in `docs/howto/error-reporting.txt` to mention the `DEFAULT_EXCEPTION_REPORTER` setting and the `reporter_class` parameter, and provide an example of using `functools.partial` to customize the `ExceptionReporter` class in `handler500`.
+6. Ensure that `docs/ref/settings.txt` and `docs/howto/error-reporting.txt` are included in the toctree of `docs/ref/index.txt` and `docs/howto/index.txt` respectively, and that `docs/ref/views.txt` is in `docs/ref/index.txt`. Also ensure `docs/ref/index.txt` is included in `docs/contents.txt`. (These are likely already correctly configured, but should be verified). Generate the patch files for the changes.
+
+model_patch:
+
+--- a/django/views/debug.py
++++ b/django/views/debug.py
+@@ -45,12 +45,17 @@
+
+
+ def technical_500_response(request, exc_type, exc_value, tb, status_code=500):
+-    """
+-    Create a technical server error response. The last three arguments are
+-    the values returned from sys.exc_info() and friends.
+-    """
+-    reporter = ExceptionReporter(request, exc_type, exc_value, tb)
++    """Create a technical server error response.
++
++    The exception information is passed in the following parameters:
++
++    exc_type -- Exception type
++    exc_value -- Exception value
++    tb -- Exception traceback
++    """
++    reporter_class = getattr(settings, 'DEFAULT_EXCEPTION_REPORTER', ExceptionReporter)
++    reporter = reporter_class(request, exc_type, exc_value, tb)
+     if request.is_ajax():
+         text = reporter.get_traceback_text()
+         return HttpResponse(text, status=status_code, content_type='text/plain; charset=utf-8')
+--- a/docs/ref/views.txt
++++ b/docs/ref/views.txt
+@@ -31,6 +31,8 @@
+    :param tb: The traceback.
+    :type tb: traceback object
+    :param status_code: The HTTP status code to use for the response.
++   :param reporter_class: The exception reporter class to use, by default
++       :class:`ExceptionReporter`.
+    :type status_code: int
+
+    This view is used by the default handler for 500 errors,
+@@ -44,3 +46,47 @@
+    of :func:`technical_500_response` is only displayed if the ``DEBUG``
+    setting is set to ``True``. In production, for 500 errors, you'll get the
+    response of :setting:`handler500`.
++
++
++ExceptionReporter
++-----------------
++
++.. class:: ExceptionReporter(request, exc_type, exc_value, tb, is_email=False)
++
++    The :class:`ExceptionReporter` class handles the creation of error reports
++    (both HTML and plain text). It's used internally by
++    :func:`technical_500_response`, :func:`.AdminEmailHandler.emit`, and
++    :func:`.mail_admins`.
++
++    .. method:: get_traceback_data()
++
++        Returns a dictionary containing various metadata for the error,
++        including: ``is_email``, ``unicode_hint``, ``frames``, ``request``,
++        ``request_meta``, ``user_str``, ``filtered_POST_items``, ``settings``,
++        ``sys_executable``, ``sys_version_info``, ``server_time``,
++        ``django_version_info``, ``sys_path``, ``template_info``,
++        ``template_does_not_exist``, and ``postmortem``.
++
++        You can subclass ``ExceptionReporter`` to customize the data that's
++        passed to the error templates. For example, to add the current user's
++        username to the context, you could do this::
++
++            # utils.py
++            from django.views.debug import ExceptionReporter
++
++            class CustomExceptionReporter(ExceptionReporter):
++                def get_traceback_data(self):
++                    data = super().get_traceback_data()
++                    try:
++                        data['username'] = self.request.user.username
++                    except AttributeError:
++                        data['username'] = 'Anonymous'
++                    return data
++
++        Then, in your settings file, specify your custom class for the
++        :setting:`DEFAULT_EXCEPTION_REPORTER` setting::
++
++            # settings.py
++            DEFAULT_EXCEPTION_REPORTER = 'path.to.utils.CustomExceptionReporter'
++
++    .. attribute:: filter
++
++        An instance of :class:`.SafeExceptionReporterFilter`.
+--- a/docs/ref/settings.txt
++++ b/docs/ref/settings.txt
+@@ -371,6 +371,17 @@
+     Default: ``'django.utils.log.AdminEmailHandler'``
+
+
++DEFAULT_EXCEPTION_REPORTER
++--------------------------
++
++.. setting:: DEFAULT_EXCEPTION_REPORTER
++
++Default: ``'django.views.debug.ExceptionReporter'``
++
++The class to use for reporting exceptions in debug pages and emails sent to
++admins. It should be a subclass of :class:`.ExceptionReporter`.
++
++
+ LOGIN_REDIRECT_URL
+ ------------------
+
+--- a/docs/howto/error-reporting.txt
++++ b/docs/howto/error-reporting.txt
+@@ -131,6 +131,34 @@
+ handler500
+ --------
+
++You can customize the class used to generate error reports in the
++:view:`technical_500` view by using the
++:setting:`DEFAULT_EXCEPTION_REPORTER` setting. By default, Django uses
++:class:`.ExceptionReporter`. To use a custom reporter, specify the import path
++to your class in :setting:`DEFAULT_EXCEPTION_REPORTER`.
++
++Alternatively, you can customize the reporter class on a per-view basis by
++passing the ``reporter_class`` argument to the :view:`technical_500` view.
++For example, to use a custom reporter class for the ``handler500`` view, you
++can use :func:`functools.partial` in your URLconf::
++
++    # urls.py
++    from functools import partial
++
++    from django.urls import path
++    from django.views import defaults
++
++    from .utils import CustomExceptionReporter
++
++    handler500 = partial(
++        defaults.server_error,
++        reporter_class=CustomExceptionReporter,
++    )
++
++    urlpatterns = [
++        path('500/', handler500),
++    ]
++
+ By default, Django provides the :view:`server_error` view to handle 500
+ errors. It is used when ``DEBUG`` is set to ``False``. When ``DEBUG`` is set
+ to ``True``, Django will use :view:`technical_500` instead.
+
+
+gold_patch:
+<patch>
+diff --git a/django/conf/global_settings.py b/django/conf/global_settings.py
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -567,6 +567,10 @@ def gettext_noop(s):
+ # Custom logging configuration.
+ LOGGING = {}
+
++# Default exception reporter class used in case none has been
++# specifically assigned to the HttpRequest instance.
++DEFAULT_EXCEPTION_REPORTER = 'django.views.debug.ExceptionReporter'
++
+ # Default exception reporter filter class used in case none has been
+ # specifically assigned to the HttpRequest instance.
+ DEFAULT_EXCEPTION_REPORTER_FILTER = 'django.views.debug.SafeExceptionReporterFilter'
+diff --git a/django/utils/log.py b/django/utils/log.py
+--- a/django/utils/log.py
++++ b/django/utils/log.py
+@@ -86,7 +86,7 @@ def __init__(self, include_html=False, email_backend=None, reporter_class=None):
+         super().__init__()
+         self.include_html = include_html
+         self.email_backend = email_backend
+-        self.reporter_class = import_string(reporter_class or 'django.views.debug.ExceptionReporter')
++        self.reporter_class = import_string(reporter_class or settings.DEFAULT_EXCEPTION_REPORTER)
+
+     def emit(self, record):
+         try:
+diff --git a/django/views/debug.py b/django/views/debug.py
+--- a/django/views/debug.py
++++ b/django/views/debug.py
+@@ -47,7 +47,7 @@ def technical_500_response(request, exc_type, exc_value, tb, status_code=500):
+     Create a technical server error response. The last three arguments are
+     the values returned from sys.exc_info() and friends.
+     """
+-    reporter = ExceptionReporter(request, exc_type, exc_value, tb)
++    reporter = get_exception_reporter_class(request)(request, exc_type, exc_value, tb)
+     if request.is_ajax():
+         text = reporter.get_traceback_text()
+         return HttpResponse(text, status=status_code, content_type='text/plain; charset=utf-8')
+@@ -67,6 +67,11 @@ def get_exception_reporter_filter(request):
+     return getattr(request, 'exception_reporter_filter', default_filter)
+
+
++def get_exception_reporter_class(request):
++    default_exception_reporter_class = import_string(settings.DEFAULT_EXCEPTION_REPORTER)
++    return getattr(request, 'exception_reporter_class', default_exception_reporter_class)
++
++
+ class SafeExceptionReporterFilter:
+     """
+     Use annotations made by the sensitive_post_parameters and
+
+</patch>
+
+--------------------------------------------------
+analyze
+Internal factors - Incomplete logical flow - Missing exception handling - If it is a string classpath, getattr will directly return the string
+text:
+<issue>
+Explicitly SameSite: None cookies.
+Description
+
+When setting cookies (with .set_cookie and set_signed_cookie) the default value for the samesite argument is None but the problem here is that Django doesn't do anything with the None value.
+This behaviour used to be fine because most browsers assumed that a missing samesite attribute on a cookie meant None. But now, Chrome has issued a warning that samesite has to be explicitly set to None else the cookies won't be sent for cross-origin requests.
+​https://www.chromestatus.com/feature/5633521622188032
+
+</issue>
+
+steps:
+1. Open the file `django/http/response.py`.
+2. Locate the `set_cookie` method within the `HttpResponseBase` class.
+3. Remove the `if samesite:` condition on line 199 that wraps the code block setting the `samesite` attribute.
+4. Modify the validation on lines 200-201 to include `"none"` as a valid value for the `samesite` attribute. The new condition should be `if samesite.lower() not in ('lax', 'strict', 'none'):`.
+5. Save the changes to `django/http/response.py`.
+6. Generate a patch file that reflects these changes using `git diff`.
+
+model_patch:
+
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -197,10 +197,9 @@
+             self.cookies[key]['secure'] = True
+         if httponly:
+             self.cookies[key]['httponly'] = True
+-        if samesite:
+-            if samesite.lower() not in ('lax', 'strict'):
+-                raise ValueError('samesite must be "lax" or "strict".')
+-            self.cookies[key]['samesite'] = samesite
++        if samesite is not None:
++            if samesite.lower() not in ('lax', 'strict', 'none'):
++                raise ValueError('samesite must be "lax", "strict", or "none".')
++        self.cookies[key]['samesite'] = samesite
+
+         def setdefault(self, key, value):
+             """Set a header unless it has already been set."""
+
+
+gold_patch:
+<patch>
+diff --git a/django/http/response.py b/django/http/response.py
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -197,8 +197,8 @@ def set_cookie(self, key, value='', max_age=None, expires=None, path='/',
+         if httponly:
+             self.cookies[key]['httponly'] = True
+         if samesite:
+-            if samesite.lower() not in ('lax', 'strict'):
+-                raise ValueError('samesite must be "lax" or "strict".')
++            if samesite.lower() not in ('lax', 'none', 'strict'):
++                raise ValueError('samesite must be "lax", "none", or "strict".')
+             self.cookies[key]['samesite'] = samesite
+
+     def setdefault(self, key, value):
+
+</patch>
+
+--------------------------------------------------
+analyze
+Internal factors - There are redundant steps within CoT - There are more processing of secure
+text:
+<issue>
+Add support for adding non-key columns to indexes
+Description
+
+		(last modified by Hannes Ljungberg)
+
+Postgres got support for the INCLUDE clause in CREATE INDEX. This can be used to add non-key columns to the index.
+CREATE INDEX idx
+	ON t1 ( col1 )
+	INCLUDE ( col2 );
+This allows for Index Only Scans on queries like:
+SELECT col1, col2 FROM t1 WHERE t1 = 'foo';
+More info:
+​https://www.postgresql.org/docs/current/sql-createindex.html
+​https://use-the-index-luke.com/blog/2019-04/include-columns-in-btree-indexes
+​https://www.postgresql.org/docs/current/indexes-index-only-scans.html
+The idea is to add an additional kwarg to Index to support this:
+Index(
+	name='some-idx',
+	fields=['headline'],
+	include=['pub_date']
+)
+One of the biggest possibilities of this feature is to add included columns to unique indexes and use them to perform Index Only Scans. This would require adding the same kwarg to UniqueConstraint. The implementation would be a lot like the condition kwargs to both Index and UniqueConstraint.
+At the moment the only Django-supported database that can use this feature is Postgres but it's also supported by Microsoft SQL Server and IBM Db2 with the same syntax. Because of this I think it shouldn't be implemented as a postgres only feature but exposed on BaseDatabaseSchemaEditor to ease the adding of support when/if sqlite or mariadb/mysql get it.
+
+</issue>
+
+steps:
+
+1. Modify `django/db/models/indexes.py` to add the `include` keyword argument to the `Index` and `UniqueConstraint` classes.
+2. In `django/db/models/indexes.py`, store the `include` argument as an attribute in the `Index` and `UniqueConstraint` objects and add validation to ensure it's a list or tuple of field names.
+3. Modify `django/db/backends/base/schema.py` to add a `_create_index_include_sql` method to `BaseDatabaseSchemaEditor` to generate the `INCLUDE` clause SQL.
+4. Update the `_create_index_sql` method in `django/db/backends/base/schema.py` to call `_create_index_include_sql`.
+5. Create `django/db/backends/postgresql/schema.py` and inherit `DatabaseSchemaEditor` from `BaseDatabaseSchemaEditor`.
+6. In `django/db/backends/postgresql/schema.py`, override the `_create_index_include_sql` method to generate PostgreSQL's `INCLUDE (...)` clause.
+7. Modify `django/db/backends/mysql/schema.py` and `django/db/backends/sqlite3/schema.py` to override `_create_index_include_sql` and return an empty string, as these backends do not currently support `INCLUDE`.
+8. Modify `django/db/backends/base/features.py` to add the `supports_index_include` feature flag to `BaseDatabaseFeatures` and set it to `False`.
+9. Create `django/db/backends/postgresql/features.py` and set `supports_index_include = True`.
+10. Add tests in `tests/indexes/tests.py` to verify the functionality of the `include` option for `Index` and `UniqueConstraint` for PostgreSQL, focusing on SQL generation.
+
+model_patch:
+
+--- a/django/db/backends/base/features.py
++++ b/django/db/backends/base/features.py
+@@ -277,6 +277,9 @@
+ 278     supports_partial_indexes = True
+ 279     supports_functions_in_partial_indexes = True
+ 280
++281     # Does the backend support indexes with INCLUDE syntax?
++282     supports_index_include = False
++283
+ 281     # Does the database allow more than one constraint or index on the same
+ 282     # field(s)?
+ 283     allows_multiple_constraints_on_same_fields = True
+
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -172,6 +172,14 @@
+         parts = [self.quote_name(field_name) for field_name in index.fields]
+         return ', '.join(parts)
+
++    def _create_index_include_sql(self, model, index):
++        if not index.include:
++            return ''
++        columns = [model._meta.get_field(field).column for field in index.include]
++        parts = [self.quote_name(column) for column in columns]
++        return ' INCLUDE (%s)' % ', '.join(parts)
++
++
+     def _create_index_sql(self, model, fields, name=None, suffix=''):
+         """
+         Generate the SQL to create an index on non-related fields.
+@@ -181,7 +189,7 @@
+         if name is None:
+             columns = [field.column for field in fields]
+             name = self._create_index_name(model, columns, suffix=suffix)
+-        return self.sql_create_index % {
++        sql = self.sql_create_index % {
+             'name': self.quote_name(name),
+             'table': self.quote_name(model._meta.db_table),
+             'columns': self.index_names_sql(index=False, fields=fields),
+@@ -189,6 +197,8 @@
+             'extra': '',
+         }
+         if condition:
+-            return self.sql_create_index % {
+-                'extra': ' WHERE %s' % condition,
+-            }
++            sql = (sql % {'extra': ' WHERE %s' % condition})
++        else:
++            sql = (sql % {'extra': ''})
++        sql += self._create_index_include_sql(model, index)
++        return sql
+
+--- a/django/db/backends/mysql/schema.py
++++ b/django/db/backends/mysql/schema.py
+@@ -50,6 +50,9 @@
+ 49             return super().sql_rename_column
+ 48         return 'ALTER TABLE %(table)s CHANGE %(old_column)s %(new_column)s %(type)s'
+ 49
++    def _create_index_include_sql(self, model, index):
++        return ''
++
+ 50     def quote_value(self, value):
+ 51         self.connection.ensure_connection()
+ 52         if isinstance(value, str):
+
+--- a/django/db/backends/postgresql/features.py
++++ b/django/db/backends/postgresql/features.py
+@@ -11,3 +11,4 @@
+     has_json_operators = True
+     supports_aggregate_filter_clause = True
+     supports_over_clause = True
++    supports_index_include = True
+
+--- a/django/db/backends/postgresql/schema.py
++++ b/django/db/backends/postgresql/schema.py
+@@ -26,3 +26,9 @@
+             sql += ' NULLS %s' % field_nulls_first
+         return sql
+
++    def _create_index_include_sql(self, model, index):
++        if not index.include:
++            return ''
++        columns = [model._meta.get_field(field).column for field in index.include]
++        parts = [self.quote_name(column) for column in columns]
++        return ' INCLUDE (%s)' % ', '.join(parts)
+
+--- a/django/db/backends/sqlite3/schema.py
++++ b/django/db/backends/sqlite3/schema.py
+@@ -66,6 +66,9 @@
+ 65         else:
+ 66             raise ValueError("Cannot quote parameter value %r of type %s" % (value, type(value)))
+ 67
++    def _create_index_include_sql(self, model, index):
++        return ''
++
+ 68     def _is_referenced_by_fk_constraint(self, table_name, column_name=None, ignore_self=False):
+ 69         """
+ 70         Return whether or not the provided table name is referenced by another
+
+--- a/django/db/models/indexes.py
++++ b/django/db/models/indexes.py
+@@ -11,6 +11,7 @@
+     """
+     base_options = ('fields', 'name', 'db_tablespace', 'condition', 'opclasses')
+     creation_name = "INDEX"
++    include = None
+
+     def __init__(self, *fields, name=None, db_tablespace=None, condition=None,
+                  opclasses=(), **kwargs):
+@@ -27,6 +28,10 @@
+         if opclasses and len(opclasses) != len(self.fields):
+             raise ValueError("The number of opclasses must match the number of fields.")
+         self.opclasses = opclasses
++        self.include = kwargs.pop('include', None)
++        if self.include is not None and not isinstance(self.include, (list, tuple)):
++            raise ValueError("Index 'include' parameter must be a list or a tuple.")
++
+
+     def __repr__(self):
+         return "<%s: fields='%s'%s%s>" % (
+@@ -65,6 +70,9 @@
+         if self.condition is not None:
+             options['condition'] = self.condition
+         if self.opclasses:
++            options['opclasses'] = self.opclasses
++        if self.include:
++            options['include'] = self.include
+             options['opclasses'] = self.opclasses
+         return options
+
+@@ -113,6 +121,9 @@
+             if obj.opclasses != self.opclasses:
+                 return False
+         if obj.condition != self.condition:
++            return False
++        if tuple(obj.include or []) != tuple(self.include or []):
++            return False
+             return False
+         return True
+
+@@ -158,6 +169,8 @@
+             'condition': self.condition,
+             'opclasses': self.opclasses,
+         }
++        if self.include is not None:
++            index_kwargs['include'] = self.include
+         return index_kwargs
+
+     def deconstruct(self):
+@@ -205,6 +218,8 @@
+             kwargs['condition'] = self.condition
+         if self.opclasses:
+             kwargs['opclasses'] = self.opclasses
++        if self.include:
++            kwargs['include'] = self.include
+         return name, import_path, args, kwargs
+
+     @classmethod
+@@ -252,6 +267,8 @@
+             'condition': self.condition,
+             'opclasses': self.opclasses,
+         }
++        if self.include is not None:
++            index_kwargs['include'] = self.include
+         return index_kwargs
+
+     def create_sql(self, model, schema_editor, using=''):
+@@ -265,6 +282,8 @@
+             'condition': self.condition,
+             'opclasses': self.opclasses,
+         }
++        if self.include is not None:
++            index_kwargs['include'] = self.include
+         return schema_editor._create_unique_sql(model, self.fields, **index_kwargs)
+
+     def remove_sql(self, model, schema_editor, using=''):
+
+--- a/README.rst
++++ b/README.rst
+@@ -45,3 +45,4 @@
+ 46   ``docs/internals/contributing/writing-code/unit-tests.txt``, published online at
+ 47   https://docs.djangoproject.com/en/dev/internals/contributing/writing-code/unit-tests/#running-the-unit-tests
+ 48
++
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/gis/db/backends/postgis/schema.py b/django/contrib/gis/db/backends/postgis/schema.py
+--- a/django/contrib/gis/db/backends/postgis/schema.py
++++ b/django/contrib/gis/db/backends/postgis/schema.py
+@@ -45,6 +45,7 @@ def _create_index_sql(self, model, fields, **kwargs):
+             columns=field_column,
+             extra='',
+             condition='',
++            include='',
+         )
+
+     def _alter_column_type_sql(self, table, old_field, new_field, new_type):
+diff --git a/django/contrib/postgres/indexes.py b/django/contrib/postgres/indexes.py
+--- a/django/contrib/postgres/indexes.py
++++ b/django/contrib/postgres/indexes.py
+@@ -180,6 +180,10 @@ def get_with_params(self):
+             with_params.append('fillfactor = %d' % self.fillfactor)
+         return with_params
+
++    def check_supported(self, schema_editor):
++        if self.include and not schema_editor.connection.features.supports_covering_gist_indexes:
++            raise NotSupportedError('Covering GiST indexes requires PostgreSQL 12+.')
++
+
+ class HashIndex(PostgresIndex):
+     suffix = 'hash'
+diff --git a/django/db/backends/base/features.py b/django/db/backends/base/features.py
+--- a/django/db/backends/base/features.py
++++ b/django/db/backends/base/features.py
+@@ -277,6 +277,8 @@ class BaseDatabaseFeatures:
+     # Does the backend support partial indexes (CREATE INDEX ... WHERE ...)?
+     supports_partial_indexes = True
+     supports_functions_in_partial_indexes = True
++    # Does the backend support covering indexes (CREATE INDEX ... INCLUDE ...)?
++    supports_covering_indexes = False
+
+     # Does the database allow more than one constraint or index on the same
+     # field(s)?
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -84,8 +84,8 @@ class BaseDatabaseSchemaEditor:
+     sql_create_column_inline_fk = None
+     sql_delete_fk = sql_delete_constraint
+
+-    sql_create_index = "CREATE INDEX %(name)s ON %(table)s (%(columns)s)%(extra)s%(condition)s"
+-    sql_create_unique_index = "CREATE UNIQUE INDEX %(name)s ON %(table)s (%(columns)s)%(condition)s"
++    sql_create_index = "CREATE INDEX %(name)s ON %(table)s (%(columns)s)%(include)s%(extra)s%(condition)s"
++    sql_create_unique_index = "CREATE UNIQUE INDEX %(name)s ON %(table)s (%(columns)s)%(include)s%(condition)s"
+     sql_delete_index = "DROP INDEX %(name)s"
+
+     sql_create_pk = "ALTER TABLE %(table)s ADD CONSTRAINT %(name)s PRIMARY KEY (%(columns)s)"
+@@ -956,9 +956,17 @@ def _index_condition_sql(self, condition):
+             return ' WHERE ' + condition
+         return ''
+
++    def _index_include_sql(self, model, columns):
++        if not columns or not self.connection.features.supports_covering_indexes:
++            return ''
++        return Statement(
++            ' INCLUDE (%(columns)s)',
++            columns=Columns(model._meta.db_table, columns, self.quote_name),
++        )
++
+     def _create_index_sql(self, model, fields, *, name=None, suffix='', using='',
+                           db_tablespace=None, col_suffixes=(), sql=None, opclasses=(),
+-                          condition=None):
++                          condition=None, include=None):
+         """
+         Return the SQL statement to create the index for one or several fields.
+         `sql` can be specified if the syntax differs from the standard (GIS
+@@ -983,6 +991,7 @@ def create_index_name(*args, **kwargs):
+             columns=self._index_columns(table, columns, col_suffixes, opclasses),
+             extra=tablespace_sql,
+             condition=self._index_condition_sql(condition),
++            include=self._index_include_sql(model, include),
+         )
+
+     def _delete_index_sql(self, model, name, sql=None):
+@@ -1083,16 +1092,22 @@ def _deferrable_constraint_sql(self, deferrable):
+         if deferrable == Deferrable.IMMEDIATE:
+             return ' DEFERRABLE INITIALLY IMMEDIATE'
+
+-    def _unique_sql(self, model, fields, name, condition=None, deferrable=None):
++    def _unique_sql(self, model, fields, name, condition=None, deferrable=None, include=None):
+         if (
+             deferrable and
+             not self.connection.features.supports_deferrable_unique_constraints
+         ):
+             return None
+-        if condition:
+-            # Databases support conditional unique constraints via a unique
+-            # index.
+-            sql = self._create_unique_sql(model, fields, name=name, condition=condition)
++        if condition or include:
++            # Databases support conditional and covering unique constraints via
++            # a unique index.
++            sql = self._create_unique_sql(
++                model,
++                fields,
++                name=name,
++                condition=condition,
++                include=include,
++            )
+             if sql:
+                 self.deferred_sql.append(sql)
+             return None
+@@ -1105,10 +1120,14 @@ def _unique_sql(self, model, fields, name, condition=None, deferrable=None):
+             'constraint': constraint,
+         }
+
+-    def _create_unique_sql(self, model, columns, name=None, condition=None, deferrable=None):
++    def _create_unique_sql(self, model, columns, name=None, condition=None, deferrable=None, include=None):
+         if (
+-            deferrable and
+-            not self.connection.features.supports_deferrable_unique_constraints
++            (
++                deferrable and
++                not self.connection.features.supports_deferrable_unique_constraints
++            ) or
++            (condition and not self.connection.features.supports_partial_indexes) or
++            (include and not self.connection.features.supports_covering_indexes)
+         ):
+             return None
+
+@@ -1121,9 +1140,7 @@ def create_unique_name(*args, **kwargs):
+         else:
+             name = self.quote_name(name)
+         columns = Columns(table, columns, self.quote_name)
+-        if condition:
+-            if not self.connection.features.supports_partial_indexes:
+-                return None
++        if condition or include:
+             sql = self.sql_create_unique_index
+         else:
+             sql = self.sql_create_unique
+@@ -1134,20 +1151,24 @@ def create_unique_name(*args, **kwargs):
+             columns=columns,
+             condition=self._index_condition_sql(condition),
+             deferrable=self._deferrable_constraint_sql(deferrable),
++            include=self._index_include_sql(model, include),
+         )
+
+-    def _delete_unique_sql(self, model, name, condition=None, deferrable=None):
++    def _delete_unique_sql(self, model, name, condition=None, deferrable=None, include=None):
+         if (
+-            deferrable and
+-            not self.connection.features.supports_deferrable_unique_constraints
++            (
++                deferrable and
++                not self.connection.features.supports_deferrable_unique_constraints
++            ) or
++            (condition and not self.connection.features.supports_partial_indexes) or
++            (include and not self.connection.features.supports_covering_indexes)
+         ):
+             return None
+-        if condition:
+-            return (
+-                self._delete_constraint_sql(self.sql_delete_index, model, name)
+-                if self.connection.features.supports_partial_indexes else None
+-            )
+-        return self._delete_constraint_sql(self.sql_delete_unique, model, name)
++        if condition or include:
++            sql = self.sql_delete_index
++        else:
++            sql = self.sql_delete_unique
++        return self._delete_constraint_sql(sql, model, name)
+
+     def _check_sql(self, name, check):
+         return self.sql_constraint % {
+diff --git a/django/db/backends/postgresql/features.py b/django/db/backends/postgresql/features.py
+--- a/django/db/backends/postgresql/features.py
++++ b/django/db/backends/postgresql/features.py
+@@ -82,3 +82,5 @@ def is_postgresql_12(self):
+     has_brin_autosummarize = property(operator.attrgetter('is_postgresql_10'))
+     has_websearch_to_tsquery = property(operator.attrgetter('is_postgresql_11'))
+     supports_table_partitions = property(operator.attrgetter('is_postgresql_10'))
++    supports_covering_indexes = property(operator.attrgetter('is_postgresql_11'))
++    supports_covering_gist_indexes = property(operator.attrgetter('is_postgresql_12'))
+diff --git a/django/db/backends/postgresql/schema.py b/django/db/backends/postgresql/schema.py
+--- a/django/db/backends/postgresql/schema.py
++++ b/django/db/backends/postgresql/schema.py
+@@ -12,9 +12,13 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+     sql_set_sequence_max = "SELECT setval('%(sequence)s', MAX(%(column)s)) FROM %(table)s"
+     sql_set_sequence_owner = 'ALTER SEQUENCE %(sequence)s OWNED BY %(table)s.%(column)s'
+
+-    sql_create_index = "CREATE INDEX %(name)s ON %(table)s%(using)s (%(columns)s)%(extra)s%(condition)s"
++    sql_create_index = (
++        'CREATE INDEX %(name)s ON %(table)s%(using)s '
++        '(%(columns)s)%(include)s%(extra)s%(condition)s'
++    )
+     sql_create_index_concurrently = (
+-        "CREATE INDEX CONCURRENTLY %(name)s ON %(table)s%(using)s (%(columns)s)%(extra)s%(condition)s"
++        'CREATE INDEX CONCURRENTLY %(name)s ON %(table)s%(using)s '
++        '(%(columns)s)%(include)s%(extra)s%(condition)s'
+     )
+     sql_delete_index = "DROP INDEX IF EXISTS %(name)s"
+     sql_delete_index_concurrently = "DROP INDEX CONCURRENTLY IF EXISTS %(name)s"
+@@ -197,10 +201,11 @@ def _delete_index_sql(self, model, name, sql=None, concurrently=False):
+     def _create_index_sql(
+         self, model, fields, *, name=None, suffix='', using='',
+         db_tablespace=None, col_suffixes=(), sql=None, opclasses=(),
+-        condition=None, concurrently=False,
++        condition=None, concurrently=False, include=None,
+     ):
+         sql = self.sql_create_index if not concurrently else self.sql_create_index_concurrently
+         return super()._create_index_sql(
+             model, fields, name=name, suffix=suffix, using=using, db_tablespace=db_tablespace,
+             col_suffixes=col_suffixes, sql=sql, opclasses=opclasses, condition=condition,
++            include=include,
+         )
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -1614,12 +1614,10 @@ def _check_indexes(cls, databases):
+             if not router.allow_migrate_model(db, cls):
+                 continue
+             connection = connections[db]
+-            if (
++            if not (
+                 connection.features.supports_partial_indexes or
+                 'supports_partial_indexes' in cls._meta.required_db_features
+-            ):
+-                continue
+-            if any(index.condition is not None for index in cls._meta.indexes):
++            ) and any(index.condition is not None for index in cls._meta.indexes):
+                 errors.append(
+                     checks.Warning(
+                         '%s does not support indexes with conditions.'
+@@ -1632,7 +1630,24 @@ def _check_indexes(cls, databases):
+                         id='models.W037',
+                     )
+                 )
++            if not (
++                connection.features.supports_covering_indexes or
++                'supports_covering_indexes' in cls._meta.required_db_features
++            ) and any(index.include for index in cls._meta.indexes):
++                errors.append(
++                    checks.Warning(
++                        '%s does not support indexes with non-key columns.'
++                        % connection.display_name,
++                        hint=(
++                            "Non-key columns will be ignored. Silence this "
++                            "warning if you don't care about it."
++                        ),
++                        obj=cls,
++                        id='models.W040',
++                    )
++                )
+         fields = [field for index in cls._meta.indexes for field, _ in index.fields_orders]
++        fields += [include for index in cls._meta.indexes for include in index.include]
+         errors.extend(cls._check_local_fields(fields, 'indexes'))
+         return errors
+
+@@ -1926,10 +1941,28 @@ def _check_constraints(cls, databases):
+                         id='models.W038',
+                     )
+                 )
+-            fields = (
+-                field
++            if not (
++                connection.features.supports_covering_indexes or
++                'supports_covering_indexes' in cls._meta.required_db_features
++            ) and any(
++                isinstance(constraint, UniqueConstraint) and constraint.include
++                for constraint in cls._meta.constraints
++            ):
++                errors.append(
++                    checks.Warning(
++                        '%s does not support unique constraints with non-key '
++                        'columns.' % connection.display_name,
++                        hint=(
++                            "A constraint won't be created. Silence this "
++                            "warning if you don't care about it."
++                        ),
++                        obj=cls,
++                        id='models.W039',
++                    )
++                )
++            fields = chain.from_iterable(
++                (*constraint.fields, *constraint.include)
+                 for constraint in cls._meta.constraints if isinstance(constraint, UniqueConstraint)
+-                for field in constraint.fields
+             )
+             errors.extend(cls._check_local_fields(fields, 'constraints'))
+         return errors
+diff --git a/django/db/models/constraints.py b/django/db/models/constraints.py
+--- a/django/db/models/constraints.py
++++ b/django/db/models/constraints.py
+@@ -77,7 +77,7 @@ class Deferrable(Enum):
+
+
+ class UniqueConstraint(BaseConstraint):
+-    def __init__(self, *, fields, name, condition=None, deferrable=None):
++    def __init__(self, *, fields, name, condition=None, deferrable=None, include=None):
+         if not fields:
+             raise ValueError('At least one field is required to define a unique constraint.')
+         if not isinstance(condition, (type(None), Q)):
+@@ -90,9 +90,12 @@ def __init__(self, *, fields, name, condition=None, deferrable=None):
+             raise ValueError(
+                 'UniqueConstraint.deferrable must be a Deferrable instance.'
+             )
++        if not isinstance(include, (type(None), list, tuple)):
++            raise ValueError('UniqueConstraint.include must be a list or tuple.')
+         self.fields = tuple(fields)
+         self.condition = condition
+         self.deferrable = deferrable
++        self.include = tuple(include) if include else ()
+         super().__init__(name)
+
+     def _get_condition_sql(self, model, schema_editor):
+@@ -106,31 +109,36 @@ def _get_condition_sql(self, model, schema_editor):
+
+     def constraint_sql(self, model, schema_editor):
+         fields = [model._meta.get_field(field_name).column for field_name in self.fields]
++        include = [model._meta.get_field(field_name).column for field_name in self.include]
+         condition = self._get_condition_sql(model, schema_editor)
+         return schema_editor._unique_sql(
+             model, fields, self.name, condition=condition,
+-            deferrable=self.deferrable,
++            deferrable=self.deferrable, include=include,
+         )
+
+     def create_sql(self, model, schema_editor):
+         fields = [model._meta.get_field(field_name).column for field_name in self.fields]
++        include = [model._meta.get_field(field_name).column for field_name in self.include]
+         condition = self._get_condition_sql(model, schema_editor)
+         return schema_editor._create_unique_sql(
+             model, fields, self.name, condition=condition,
+-            deferrable=self.deferrable,
++            deferrable=self.deferrable, include=include,
+         )
+
+     def remove_sql(self, model, schema_editor):
+         condition = self._get_condition_sql(model, schema_editor)
++        include = [model._meta.get_field(field_name).column for field_name in self.include]
+         return schema_editor._delete_unique_sql(
+             model, self.name, condition=condition, deferrable=self.deferrable,
++            include=include,
+         )
+
+     def __repr__(self):
+-        return '<%s: fields=%r name=%r%s%s>' % (
++        return '<%s: fields=%r name=%r%s%s%s>' % (
+             self.__class__.__name__, self.fields, self.name,
+             '' if self.condition is None else ' condition=%s' % self.condition,
+             '' if self.deferrable is None else ' deferrable=%s' % self.deferrable,
++            '' if not self.include else ' include=%s' % repr(self.include),
+         )
+
+     def __eq__(self, other):
+@@ -139,7 +147,8 @@ def __eq__(self, other):
+                 self.name == other.name and
+                 self.fields == other.fields and
+                 self.condition == other.condition and
+-                self.deferrable == other.deferrable
++                self.deferrable == other.deferrable and
++                self.include == other.include
+             )
+         return super().__eq__(other)
+
+@@ -150,4 +159,6 @@ def deconstruct(self):
+             kwargs['condition'] = self.condition
+         if self.deferrable:
+             kwargs['deferrable'] = self.deferrable
++        if self.include:
++            kwargs['include'] = self.include
+         return path, args, kwargs
+diff --git a/django/db/models/indexes.py b/django/db/models/indexes.py
+--- a/django/db/models/indexes.py
++++ b/django/db/models/indexes.py
+@@ -11,7 +11,16 @@ class Index:
+     # cross-database compatibility with Oracle)
+     max_name_length = 30
+
+-    def __init__(self, *, fields=(), name=None, db_tablespace=None, opclasses=(), condition=None):
++    def __init__(
++        self,
++        *,
++        fields=(),
++        name=None,
++        db_tablespace=None,
++        opclasses=(),
++        condition=None,
++        include=None,
++    ):
+         if opclasses and not name:
+             raise ValueError('An index must be named to use opclasses.')
+         if not isinstance(condition, (type(None), Q)):
+@@ -26,6 +35,10 @@ def __init__(self, *, fields=(), name=None, db_tablespace=None, opclasses=(), co
+             raise ValueError('Index.fields and Index.opclasses must have the same number of elements.')
+         if not fields:
+             raise ValueError('At least one field is required to define an index.')
++        if include and not name:
++            raise ValueError('A covering index must be named.')
++        if not isinstance(include, (type(None), list, tuple)):
++            raise ValueError('Index.include must be a list or tuple.')
+         self.fields = list(fields)
+         # A list of 2-tuple with the field name and ordering ('' or 'DESC').
+         self.fields_orders = [
+@@ -36,6 +49,7 @@ def __init__(self, *, fields=(), name=None, db_tablespace=None, opclasses=(), co
+         self.db_tablespace = db_tablespace
+         self.opclasses = opclasses
+         self.condition = condition
++        self.include = tuple(include) if include else ()
+
+     def _get_condition_sql(self, model, schema_editor):
+         if self.condition is None:
+@@ -48,12 +62,13 @@ def _get_condition_sql(self, model, schema_editor):
+
+     def create_sql(self, model, schema_editor, using='', **kwargs):
+         fields = [model._meta.get_field(field_name) for field_name, _ in self.fields_orders]
++        include = [model._meta.get_field(field_name).column for field_name in self.include]
+         col_suffixes = [order[1] for order in self.fields_orders]
+         condition = self._get_condition_sql(model, schema_editor)
+         return schema_editor._create_index_sql(
+             model, fields, name=self.name, using=using, db_tablespace=self.db_tablespace,
+             col_suffixes=col_suffixes, opclasses=self.opclasses, condition=condition,
+-            **kwargs,
++            include=include, **kwargs,
+         )
+
+     def remove_sql(self, model, schema_editor, **kwargs):
+@@ -69,6 +84,8 @@ def deconstruct(self):
+             kwargs['opclasses'] = self.opclasses
+         if self.condition:
+             kwargs['condition'] = self.condition
++        if self.include:
++            kwargs['include'] = self.include
+         return (path, (), kwargs)
+
+     def clone(self):
+@@ -106,9 +123,10 @@ def set_name_with_model(self, model):
+             self.name = 'D%s' % self.name[1:]
+
+     def __repr__(self):
+-        return "<%s: fields='%s'%s>" % (
++        return "<%s: fields='%s'%s%s>" % (
+             self.__class__.__name__, ', '.join(self.fields),
+             '' if self.condition is None else ', condition=%s' % self.condition,
++            '' if not self.include else ", include='%s'" % ', '.join(self.include),
+         )
+
+     def __eq__(self, other):
+
+</patch>
+
+--------------------------------------------------
+analyze
+cot is inconsistent with code - not fully implemented
+text:
+<issue>
+Allow disabling of all migrations during tests
+Description
+
+As an extension to #24919 a setting DATABASE['TEST']['MIGRATE'] = False should disable all migrations on that particular database. This can be done by hooking into django.db.migrations.loader.MigrationLoader.migrations_module() and returning None.
+
+</issue>
+
+steps:
+
+1. Locate the `migrations_module` method within the `MigrationLoader` class in the file `django/db/migrations/loader.py`.
+2. Inside the `migrations_module` method, add a check at the beginning to see if migrations should be disabled for the current database connection.
+3. Retrieve the database alias using `self.connection.alias`.
+4. Check if the database alias exists in `settings.DATABASES`.
+5. If the alias exists, check if there is a `TEST` dictionary within the database settings.
+6. If the `TEST` dictionary exists, check if there is a `MIGRATE` key within the `TEST` dictionary and if its value is `False`.
+7. If the `MIGRATE` setting is `False`, return `None` from the `migrations_module` method to disable migrations.
+8. If the `MIGRATE` setting is not `False` or not present, proceed with the original logic of the `migrations_module` method to load migrations normally.
+9. Generate a patch file containing the changes made to `django/db/migrations/loader.py`.
+
+model_patch:
+
+--- a/django/db/migrations/loader.py
++++ b/django/db/migrations/loader.py
+@@ -78,6 +78,13 @@
+         """
+         Returns the migrations module path for a given app.
+         """
++        # Check if migrations are disabled for this database in tests
++        if (
++            self.connection.settings_dict
++            and self.connection.settings_dict.get('TEST', {}).get('MIGRATE') is False
++        ):
++            return None
++
+         app_dir = self.disk_migrations_path(app_label)
+         if app_dir:
+             return "{}.migrations".format(app_label)
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/base/creation.py b/django/db/backends/base/creation.py
+--- a/django/db/backends/base/creation.py
++++ b/django/db/backends/base/creation.py
+@@ -61,16 +61,17 @@ def create_test_db(self, verbosity=1, autoclobber=False, serialize=True, keepdb=
+         settings.DATABASES[self.connection.alias]["NAME"] = test_database_name
+         self.connection.settings_dict["NAME"] = test_database_name
+
+-        # We report migrate messages at one level lower than that requested.
+-        # This ensures we don't get flooded with messages during testing
+-        # (unless you really ask to be flooded).
+-        call_command(
+-            'migrate',
+-            verbosity=max(verbosity - 1, 0),
+-            interactive=False,
+-            database=self.connection.alias,
+-            run_syncdb=True,
+-        )
++        if self.connection.settings_dict['TEST']['MIGRATE']:
++            # We report migrate messages at one level lower than that
++            # requested. This ensures we don't get flooded with messages during
++            # testing (unless you really ask to be flooded).
++            call_command(
++                'migrate',
++                verbosity=max(verbosity - 1, 0),
++                interactive=False,
++                database=self.connection.alias,
++                run_syncdb=True,
++            )
+
+         # We then serialize the current state of the database into a string
+         # and store it on the connection. This slightly horrific process is so people
+diff --git a/django/db/utils.py b/django/db/utils.py
+--- a/django/db/utils.py
++++ b/django/db/utils.py
+@@ -194,8 +194,15 @@ def prepare_test_settings(self, alias):
+             raise ConnectionDoesNotExist("The connection %s doesn't exist" % alias)
+
+         test_settings = conn.setdefault('TEST', {})
+-        for key in ['CHARSET', 'COLLATION', 'NAME', 'MIRROR']:
+-            test_settings.setdefault(key, None)
++        default_test_settings = [
++            ('CHARSET', None),
++            ('COLLATION', None),
++            ('MIGRATE', True),
++            ('MIRROR', None),
++            ('NAME', None),
++        ]
++        for key, value in default_test_settings:
++            test_settings.setdefault(key, value)
+
+     def __getitem__(self, alias):
+         if hasattr(self._connections, alias):
+
+</patch>
+
+--------------------------------------------------
+analyze
+cot is inconsistent with code - steps not implemented
+text:
+<issue>
+Feature/docs: how should url converters decline to match for a named route?
+Description
+
+It is sometimes convenient to have multiple instances of a named route, where the correct one is chosen based on whether the URL converters to_url call succeeds. For example, the attached file has routes like this:
+	path('export/foo/<foo:obj>', index, name='export'),
+	path('export/bar/<bar:obj>', index, name='export'),
+I then wanted to put {% url "export" some_foo_or_bar %} in a generic export template and have the correct URL inserted.
+My first attempt to do this was to raise ValueError in to_url for non-matching values, hoping that it would work the same as to_python where the docs specify that "A ValueError is interpreted as no match."
+That didn't work -- nothing catches the ValueError in to_url -- so I found the workaround demonstrated in the attachment: if to_url returns an empty string (or some string that doesn't match the converter's regex), then the later regex check in _reverse_with_prefix will detect the non-match and everything seems to work out.
+So this is either a feature request or a documentation check. I'm thinking either:
+_reverse_with_prefix could be updated so to_url works the same as to_python, and a ValueError indicates no match (which I think just means wrapping try: ... except ValueError: continue around the appropriate line), or
+the docs could be updated to indicate that, in to_url, a converter should return a non-regex-matching string such as the empty string in order to decline a match.
+
+</issue>
+
+steps:
+
+1. Open the file `django/urls/resolvers.py`.
+2. Locate the `_reverse_with_prefix` method in the `URLResolver` class.
+3. Find the line within the loop that calls `converter.to_url(v)`: `text_candidate_subs[k] = converters[k].to_url(v)`.
+4. Wrap this line in a `try...except ValueError: continue` block to catch `ValueError` exceptions during the `to_url` call and continue to the next iteration of the loop if a `ValueError` is raised.
+5. Save the changes to `django/urls/resolvers.py`.
+6. Generate a patch file that reflects these changes.
+
+model_patch:
+
+--- a/django/urls/resolvers.py
++++ b/django/urls/resolvers.py
+@@ -635,7 +635,10 @@
+                 text_candidate_subs = {}
+                 for k, v in candidate_subs.items():
+                     if k in converters:
+-                        text_candidate_subs[k] = converters[k].to_url(v)
++                        try:
++                            text_candidate_subs[k] = converters[k].to_url(v)
++                        except ValueError:
++                            continue
+                     else:
+                         text_candidate_subs[k] = str(v)
+                 # WSGI provides decoded URLs, without %xx escapes, and the URL
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/urls/resolvers.py b/django/urls/resolvers.py
+--- a/django/urls/resolvers.py
++++ b/django/urls/resolvers.py
+@@ -632,11 +632,18 @@ def _reverse_with_prefix(self, lookup_view, _prefix, *args, **kwargs):
+                     candidate_subs = kwargs
+                 # Convert the candidate subs to text using Converter.to_url().
+                 text_candidate_subs = {}
++                match = True
+                 for k, v in candidate_subs.items():
+                     if k in converters:
+-                        text_candidate_subs[k] = converters[k].to_url(v)
++                        try:
++                            text_candidate_subs[k] = converters[k].to_url(v)
++                        except ValueError:
++                            match = False
++                            break
+                     else:
+                         text_candidate_subs[k] = str(v)
++                if not match:
++                    continue
+                 # WSGI provides decoded URLs, without %xx escapes, and the URL
+                 # resolver operates on such URLs. First substitute arguments
+                 # without quoting to build a decoded URL and look for a match.
+
+</patch>
+
+--------------------------------------------------
+analyze
+Internal factors - Incomplete logic flow - Missing exception handling process
+text:
+<issue>
+Add subdomains of localhost to ALLOWED_HOSTS in DEBUG mode
+Description
+
+		(last modified by thenewguy)
+
+It would minimize configuration for new projects if ALLOWED_HOSTS += .localhost? when DEBUG=True
+Chrome resolves *.localhost to localhost without modifying any host files or DNS
+Referencing the project this way makes it easy to test subdomains -> static.localhost, uploads.localhost, www.localhost, etc
+---
+Updated
+---
+Conversation on developer mailing list resulted in decision to reopen and accept ticket. The conversation turned up that this behavior is spec compliant per ​https://tools.ietf.org/html/rfc6761#section-6.3
+
+</issue>
+
+steps:
+1. Open the file `django/conf/global_settings.py`.
+2. Locate the `ALLOWED_HOSTS` setting, which is initialized as `ALLOWED_HOSTS = []` around line 35.
+3. Add a conditional statement right after the `ALLOWED_HOSTS = []` line to append `.localhost` to the list if `DEBUG` is True. The code to add is:
+```python
+if DEBUG:
+    ALLOWED_HOSTS.append('.localhost')`
+4. Save the modified `django/conf/global_settings.py` file.
+5. Generate a patch file that captures these changes. Use `git diff` command from the root of the Django repository to create the patch. Assuming the changes are made in `django/conf/global_settings.py`, the command would be:
+```bash
+git diff django/conf/global_settings.py > add_localhost_subdomains.patch
+This command will generate a patch file named `add_localhost_subdomains.patch` in the repository's root directory. This patch file contains the necessary changes to apply the fix.
+
+model_patch:
+
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -32,6 +32,9 @@
+  # Hosts/domain names that are valid for this site.
+  # "*" matches anything, ".example.com" matches example.com and all subdomains
+  ALLOWED_HOSTS = []
++
++if DEBUG:
++    ALLOWED_HOSTS.append('.localhost')
+
+  # Local time zone for this installation. All choices can be found here:
+  # https://en.wikipedia.org/wiki/List_of_tz_zones_by_name (although not all
+
+
+gold_patch:
+<patch>
+diff --git a/django/http/request.py b/django/http/request.py
+--- a/django/http/request.py
++++ b/django/http/request.py
+@@ -108,7 +108,7 @@ def get_host(self):
+         # Allow variants of localhost if ALLOWED_HOSTS is empty and DEBUG=True.
+         allowed_hosts = settings.ALLOWED_HOSTS
+         if settings.DEBUG and not allowed_hosts:
+-            allowed_hosts = ['localhost', '127.0.0.1', '[::1]']
++            allowed_hosts = ['.localhost', '127.0.0.1', '[::1]']
+
+         domain, port = split_domain_port(host)
+         if domain and validate_host(domain, allowed_hosts):
+
+</patch>
+
+--------------------------------------------------
+analyze
+Internal factors - Incomplete logical flow - Incomplete path coverage - No consideration of allowed_hosts as none

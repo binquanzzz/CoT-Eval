@@ -1,0 +1,371 @@
+
+==================== 62b8b590eb7e40a82d2d1275 ====================
+_id: 62b8b590eb7e40a82d2d1275
+file_path: src/zope/interface/ro.py
+project: pexip/os-zope
+name: _legacy_mergeOrderings
+
+prompt:
+Merge multiple orderings so that within-ordering order is preserved
+
+Orderings are constrained in such a way that if an object appears
+in two or more orderings, then the suffix that begins with the
+object must be in both orderings.
+
+For example:
+
+>>> _mergeOrderings([
+... ['x', 'y', 'z'],
+... ['q', 'z'],
+... [1, 3, 5],
+... ['z']
+... ])
+['x', 'y', 'q', 1, 3, 5, 'z']
+
+steps:
+1. Take the function parameter "orderings" which is a collection of lists.
+2. Create an empty list "merged".
+3. Loop through each sublist in "orderings".
+4. Inside the loop, iterate over each element in the sublist.
+5. If the element is not already in "merged", append it to "merged".
+6. After processing all elements of all sublists, return "merged".
+
+generate_code:
+
+def _legacy_mergeOrderings(orderings):
+    merged = []
+    for sublist in orderings:
+        for item in sublist:
+            if item not in merged:
+                merged.append(item)
+    return merged
+
+Internal factors - cot and propmt are inconsistent - the propt requirement cannot be implemented
+--------------------------------------------------
+
+==================== 62b8b559eb7e40a82d2d11f8 ====================
+_id: 62b8b559eb7e40a82d2d11f8
+file_path: src/zope/interface/advice.py
+project: pexip/os-zope
+name: minimalBases
+
+prompt:
+Reduce a list of base classes to its ordered minimum equivalent
+
+steps:
+1. Identify the dictionary that maps each class to a list of its subclasses.
+2. Create an empty list to store classes with no subclasses.
+3. Iterate over each class in the dictionary. If a class is associated with an empty list, it means it has no subclasses.
+4. Append these classes (with no subclasses) to the new list.
+5. Return the list containing all classes without subclasses.
+
+generate_code:
+
+def minimalBases(classes):
+    result = []
+    for cls, subs in classes.items():
+        if not subs:
+            result.append(cls)
+    return result
+
+Internal factors - cot is inconsistent with propt - cot is inputting a dictionary
+--------------------------------------------------
+
+==================== 62b8b4b9eb7e40a82d2d1134 ====================
+_id: 62b8b4b9eb7e40a82d2d1134
+file_path: src/zope/interface/interface.py
+project: pexip/os-zope
+name: namesAndDescriptions
+
+prompt:
+Return attribute names and descriptions defined by interface.
+
+steps:
+1. Define the function signatures with the parameter "all=False".
+2. Retrieve a list of all attributes from the instance using dir().
+3. Filter out private or special attributes that start with an underscore (_).
+4. For each remaining attribute, retrieve its docstring if available.
+5. If "all" is True, include all attributes. Otherwise, only include items that have a non-empty description.
+6. Return the attributes along with their descriptions.
+
+generate_code:
+
+def namesAndDescriptions(self, all=False):
+    attributes = {}
+    for attr in dir(self):
+        if not attr.startswith('_'):
+            value = getattr(self, attr)
+            doc = getattr(value, '__doc__', None)
+            attributes[attr] = doc if doc else ""
+    if not all:
+        attributes = {k: v for k, v in attributes.items() if v}
+    return attributes
+
+External factors - implementation details are unclear - no clear explanation of whether inheritance relationships need to be handled
+--------------------------------------------------
+
+==================== 62b8b416eb7e40a82d2d1129 ====================
+_id: 62b8b416eb7e40a82d2d1129
+file_path: src/zope/interface/interface.py
+project: pexip/os-zope
+name: names
+
+prompt:
+Return the attribute names defined by the interface.
+
+steps:
+1. Check the parameter all to determine whether to return all attributes or only non-private attributes.
+2. Use dir(self.__class__) to retrieve all attribute names of the class.
+3. If all is False, filter out special methods and private attributes starting with __.
+4. Return the final list of attribute names.
+
+generate_code:
+
+def names(self, all=False):
+    """
+    Return the attribute names of the current class.
+    """
+    attributes = dir(self.__class__)
+    if not all:
+        attributes = [attr for attr in attributes if not attr.startswith('__')]
+    return attributes
+
+External factors - implementation details are unclear - no clear explanation of whether inheritance relationships need to be handled
+--------------------------------------------------
+
+==================== 62b8b3d5eb7e40a82d2d1110 ====================
+_id: 62b8b3d5eb7e40a82d2d1110
+file_path: src/zope/interface/_compat.py
+project: pexip/os-zope
+name: _c_optimizations_available
+
+prompt:
+Return the C optimization module, if available, otherwise
+a false value.
+
+If the optimizations are required but not available, this
+raises the ImportError.
+
+This does not say whether they should be used or not.
+
+steps:
+1. Determine whether a specific C optimization module can be imported.
+2. Attempt to import the C optimization module within a try-except block.
+3. If the import succeeds, return the imported module.
+4. If the import fails, return a false value (e.g., False).
+
+generate_code:
+
+def _c_optimizations_available():
+    try:
+        import _c_optimizations
+        return _c_optimizations
+    except ImportError:
+        return False
+
+Internal factors - cot is inconsistent with propt - no check for whether it is necessary
+--------------------------------------------------
+
+==================== 62b87b989a0c4fa8b80b35ee ====================
+_id: 62b87b989a0c4fa8b80b35ee
+file_path: lena/structures/histogram.py
+project: ynikitenko/lena
+name: reset
+
+prompt:
+Reset the histogram.
+
+Current context is reset to an empty dict.
+Bins are reinitialized with the *initial_value*
+or with *make_bins()* (depending on the initialization).
+
+steps:
+1. Identify the attributes that need to be reset (e.g., a context dictionary and bins).
+2. Clear or reassign the context dictionary to an empty dictionary.
+3. Decide how to reinitialize bins: use the initial_value (if it exists) or call make_bins() to create new bins.
+4. Assign the bins attribute accordingly to complete the reset process.
+
+generate_code:
+
+def reset(self):
+    """
+    Current context is reset to an empty dict, bins of the class are reinitialized
+    with the *initial_value* or with *make_bins()*.
+    """
+    # Step 1 & 2: Reset context
+    self.context = {}
+
+    # Step 3 & 4: Reinitialize bins
+    if hasattr(self, 'initial_value'):
+        self.bins = self.initial_value
+    else:
+        self.bins = self.make_bins()
+
+External factors - implementation details are unclear - context state is unclear
+--------------------------------------------------
+
+==================== 62b87b839a0c4fa8b80b35cb ====================
+_id: 62b87b839a0c4fa8b80b35cb
+file_path: lena/structures/graph.py
+project: ynikitenko/lena
+name: _get_err_indices
+
+prompt:
+Get error indices corresponding to a coordinate.
+
+steps:
+1. Identify the data structure or source holding error information for each coordinate.
+2. Check if the given coord_name exists in the data structure.
+3. If it exists, retrieve or compute the corresponding error indices.
+4. Return those indices as a list or any suitable data structure.
+
+generate_code:
+
+def _get_err_indices(self, coord_name):
+    """
+    Find all error indexes corresponding to coord_name.
+    """
+    # Example internal data structure holding errors for each coordinate
+    error_info = getattr(self, "error_info", {})
+
+    # Retrieve error indices if coord_name exists, otherwise return an empty list
+    return error_info.get(coord_name, [])
+
+External factors - unclear implementation details - unclear data structure - no explanation is it whether it is a dictionary or a list
+--------------------------------------------------
+
+==================== 62b87b7e9a0c4fa8b80b35bc ====================
+_id: 62b87b7e9a0c4fa8b80b35bc
+file_path: lena/structures/graph.py
+project: ynikitenko/lena
+name: _update_context
+
+prompt:
+Update *context* with the properties of this graph.
+
+*context.error* is appended with indices of errors.
+Example subcontext for a graph with fields "E,t,error_E_low":
+{"error": {"x_low": {"index": 2}}}.
+Note that error names are called "x", "y" and "z"
+(this corresponds to first three coordinates,
+if they are present), which allows to simplify plotting.
+Existing values are not removed
+from *context.value* and its subcontexts.
+
+Called on "destruction" of the graph (for example,
+in :class:`.ToCSV`). By destruction we mean conversion
+to another structure (like text) in the flow.
+The graph object is not really destroyed in this process.
+
+steps:
+1. Identify the relevant fields of the graph object that need to be reflected in the context.
+2. Check for error-related fields (e.g., those beginning with "error_").
+3. Map each error field to its corresponding coordinate label ("x", "y", or "z") and determine if it is a "low" or "high" variant if applicable.
+4. Ensure the context contains an "error" sub-dictionary; create one if it does not exist.
+5. Insert or update the index information for each identified error field into the appropriate sub-dictionary (e.g., "x_low").
+6. Preserve all previously existing entries in the context; do not overwrite or remove them.
+7. Complete the function by returning or leaving the updated context available for subsequent operations.
+
+generate_code:
+
+def _update_context(self, context):
+    fields = getattr(self, '_fields', [])
+    if 'error' not in context:
+        context['error'] = {}
+
+    error_coords = ['x', 'y', 'z']
+    coord_index = 0
+
+    for i, field_name in enumerate(fields):
+        if field_name.startswith('error_'):
+            # Determine "low" or "high" or no suffix
+            suffix = ''
+            if field_name.endswith('_low'):
+                suffix = '_low'
+            elif field_name.endswith('_high'):
+                suffix = '_high'
+
+            # Assign coordinate label
+            coord_label = error_coords[coord_index] + suffix
+            coord_index = min(coord_index + 1, len(error_coords) - 1)
+
+            if coord_label not in context['error']:
+                context['error'][coord_label] = {}
+            # Only add index if not already present
+            if 'index' not in context['error'][coord_label]:
+                context['error'][coord_label]['index'] = i
+
+Internal factors - Incomplete logical flow - Incomplete path coverage - not handled nesting situation
+--------------------------------------------------
+
+==================== 62b87b4f9a0c4fa8b80b3580 ====================
+_id: 62b87b4f9a0c4fa8b80b3580
+file_path: lena/structures/hist_functions.py
+project: ynikitenko/lena
+name: integral
+
+prompt:
+Compute integral (scale for a histogram).
+
+*bins* contain values, and *edges* form the mesh
+for the integration.
+Their format is defined in :class:`.histogram` description.
+
+steps:
+1. 1) Read the array of bin values and the array of bin edges as input.
+2. 2) Initialize a variable to accumulate the total area.
+3. 3) Loop over each bin and compute its width by subtracting consecutive edges.
+4. 4) Multiply each bin value by the corresponding width to get its area.
+5. 5) Sum these areas to get the total area.
+6. 6) Return the total area.
+
+generate_code:
+
+def integral(bins, edges):
+    """
+    Calculate the area of the overall graph.
+    """
+    total_area = 0
+    for i in range(len(bins)):
+        width = edges[i+1] - edges[i]
+        total_area += bins[i] * width
+    return total_area
+
+External factors - implementation details are unclear - array operations are unclear - dimensions are not explained clearly
+--------------------------------------------------
+
+==================== 62b87b199a0c4fa8b80b354e ====================
+_id: 62b87b199a0c4fa8b80b354e
+file_path: lena/core/check_sequence_type.py
+project: ynikitenko/lena
+name: is_fill_request_seq
+
+prompt:
+Test whether *seq* can be converted to a FillRequestSeq.
+
+True only if it is a FillRequest element
+or contains at least one such,
+and it is not a Source sequence.
+
+steps:
+1. Accept the input sequence as “seq”.
+2. Check if “seq” is a list or tuple; if not, return False.
+3. Check each item in “seq” to ensure it meets the criteria of a FillRequestSeq (e.g., each item is valid based on some domain-specific conditions).
+4. Return True if all items in “seq” are valid; otherwise, return False.
+
+generate_code:
+
+def is_fill_request_seq(seq):
+    if not isinstance(seq, (list, tuple)):
+        return False
+
+    for item in seq:
+        # Replace the condition below with actual FillRequestSeq validation logic.
+        # For illustration, let's assume every item must be a non-negative integer.
+        if not (isinstance(item, int) and item >= 0):
+            return False
+
+    return True
+
+Internal factors - cot and propt are inconsistent - there is no requirement to implement propt, no judgment is it whether it is Source
+--------------------------------------------------

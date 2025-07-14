@@ -1,0 +1,1038 @@
+text:
+<issue>
+Add ability to know where an object was deleted from to pre/post delete signals
+Description
+
+Since deleting objects deletes related objects, it would be good to know the origin of the delete.
+It lets the signal listeners know why an object is being delete. If it's deleted from a model.delete(), you know which instance initiated the delete and if it's from a queryset.delete() you know which queryset initiated the delete, with the models in that queryset. Using this you know if the instance is being deleted directly or because it's related to another instance.
+
+</issue>
+
+steps:
+
+1. Understand the core functionality and the need to detect the origin of deletion
+    1.1 Identify the importance of knowing where the deletion originated from (direct `model.delete()` vs. `queryset.delete()`)
+    1.2 Investigate the `signals.pre_delete` and `signals.post_delete` in the deletion process
+    1.3 Understand the modification required to include the origin in the signal data
+
+2. Modify the deletion handling in the `Collector` class
+    2.1 Add an optional parameter in the `collect` method to track the origin of deletion
+        2.1.1 Pass a source indicating whether the deletion came from an instance's `.delete()` or a queryset's `.delete()`
+        2.1.2 Update `Collector.add()` and `Collector.collect()` to pass this origin info
+    2.2 Modify the signals to include the source of deletion in the `pre_delete` and `post_delete` signals
+        2.2.1 Alter signal sending in the `delete()` method to include the origin data
+        2.2.2 Update signal handlers to accommodate the new data for processing the origin of deletion
+
+3. Adjust relevant signal listeners
+    3.1 Update the pre/post delete signal listeners to handle the new 'origin' parameter
+    3.2 Modify any related code that processes these signals to use the source of deletion for decision making
+
+model_patch:
+
+--- django/db/models/deletion.py
++++ django/db/models/deletion.py
+@@ -159,6 +159,10 @@
+         return (
+             signals.pre_delete.has_listeners(model) or
+             signals.post_delete.has_listeners(model)
+         )
+
++    def _get_deletion_origin(self, objs):
++        if hasattr(objs, 'model') and hasattr(objs, '_raw_delete'):
++            return 'queryset'
++        return 'instance'
+
+@@ -406,7 +410,8 @@
+                         signals.pre_delete.send(
+                             sender=model, instance=obj, using=self.using
+                         )
++                        origin = self._get_deletion_origin(obj)
+
+@@ -437,8 +442
+                         signals.post_delete.send(
+                             sender=model, instance=obj, using=self.using
+                         )
++                        origin = self._get_deletion_origin(obj)
+
+@@ -242,8 +245,11 @@
+                             source=model, nullable=nullable,
+                             reverse_dependency=reverse_dependency)
++            # Include origin in the collection to determine the deletion origin
++            origin = self._get_deletion_origin(objs)
+
+@@ -242,8 +245,11 @@
+                             source=model, nullable=nullable,
+                             reverse_dependency=reverse_dependency, origin=origin)
+--- django/db/models/fields/files.py
++++ django/db/models/fields/files.py
+@@ -106,7 +106,8 @@
+         self._committed = False
+-        if save:
++        if save:
++            origin = 'instance'
+             self.instance.save()
+--- django/views/generic/edit.py
++++ django/views/generic/edit.py
+@@ -188,7 +188,8 @@
+                     success_url = self.get_success_url()
+-                    self.object.delete()
++                    origin = 'instance'
++                    self.object.delete()
+                 return HttpResponseRedirect(success_url)
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/admin/utils.py b/django/contrib/admin/utils.py
+--- a/django/contrib/admin/utils.py
++++ b/django/contrib/admin/utils.py
+@@ -116,7 +116,7 @@ def get_deleted_objects(objs, request, admin_site):
+         return [], {}, set(), []
+     else:
+         using = router.db_for_write(obj._meta.model)
+-    collector = NestedObjects(using=using)
++    collector = NestedObjects(using=using, origin=objs)
+     collector.collect(objs)
+     perms_needed = set()
+
+diff --git a/django/contrib/contenttypes/management/commands/remove_stale_contenttypes.py b/django/contrib/contenttypes/management/commands/remove_stale_contenttypes.py
+--- a/django/contrib/contenttypes/management/commands/remove_stale_contenttypes.py
++++ b/django/contrib/contenttypes/management/commands/remove_stale_contenttypes.py
+@@ -51,7 +51,7 @@ def handle(self, **options):
+                     ct_info = []
+                     for ct in to_remove:
+                         ct_info.append('    - Content type for %s.%s' % (ct.app_label, ct.model))
+-                        collector = NoFastDeleteCollector(using=using)
++                        collector = NoFastDeleteCollector(using=using, origin=ct)
+                         collector.collect([ct])
+
+                         for obj_type, objs in collector.data.items():
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -987,7 +987,7 @@ def delete(self, using=None, keep_parents=False):
+                 "to None." % (self._meta.object_name, self._meta.pk.attname)
+             )
+         using = using or router.db_for_write(self.__class__, instance=self)
+-        collector = Collector(using=using)
++        collector = Collector(using=using, origin=self)
+         collector.collect([self], keep_parents=keep_parents)
+         return collector.delete()
+
+diff --git a/django/db/models/deletion.py b/django/db/models/deletion.py
+--- a/django/db/models/deletion.py
++++ b/django/db/models/deletion.py
+@@ -76,8 +76,10 @@ def get_candidate_relations_to_delete(opts):
+
+
+ class Collector:
+-    def __init__(self, using):
++    def __init__(self, using, origin=None):
+         self.using = using
++        # A Model or QuerySet object.
++        self.origin = origin
+         # Initially, {model: {instances}}, later values become lists.
+         self.data = defaultdict(set)
+         # {model: {(field, value): {instances}}}
+@@ -404,7 +406,8 @@ def delete(self):
+             for model, obj in self.instances_with_model():
+                 if not model._meta.auto_created:
+                     signals.pre_delete.send(
+-                        sender=model, instance=obj, using=self.using
++                        sender=model, instance=obj, using=self.using,
++                        origin=self.origin,
+                     )
+
+             # fast deletes
+@@ -435,7 +438,8 @@ def delete(self):
+                 if not model._meta.auto_created:
+                     for obj in instances:
+                         signals.post_delete.send(
+-                            sender=model, instance=obj, using=self.using
++                            sender=model, instance=obj, using=self.using,
++                            origin=self.origin,
+                         )
+
+         # update collected instances
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -753,7 +753,7 @@ def delete(self):
+         del_query.query.select_related = False
+         del_query.query.clear_ordering(force=True)
+
+-        collector = Collector(using=del_query.db)
++        collector = Collector(using=del_query.db, origin=self)
+         collector.collect(del_query)
+         deleted, _rows_count = collector.delete()
+
+
+</patch>
+
+--------------------------------------------------
+analyze
+Step 2.1 mentioned "Add an optional parameter in the collect method to track the source of deletion", but the correct way (see gold_patch) is to pass the origin in the Collector when it is initialized and use it in subsequent storage.
+All call points are not taken into account (such as admin, contenttypes, base, query)
+
+text:
+<issue>
+Add a management command to optimize a migration
+Description
+
+		(last modified by Raphael Gaschignard)
+
+Because the migration optimizer still has a bit of trouble with reducing operations, you often want to edit squashed migrations and re-run it through the optimizer.
+The attached patch contains an implementation of a management command, optimizemigration, that will help speed up this process.
+optimizemigration app_name migration_name reads a single migration, pass it through the optimizer, and then rewrite the result to disk. Unlike squashmigrations, this ignores things like the squashed-ness of the migration.
+
+</issue>
+
+steps:
+
+1. Implement a new management command for optimizing migrations
+    1.1 Create a new file `optimizemigration.py` under `django/core/management/commands/`
+        1.1.1 The command should accept parameters for `app_name` and `migration_name`
+        1.1.2 It should use `MigrationLoader` to load the specified migration and `MigrationOptimizer` to optimize the migration
+        1.1.3 After optimization, the result should be written back to the migration file
+    1.2 Define the command logic in the `handle` method
+        1.2.1 Fetch the migration and pass it to the optimizer
+        1.2.2 Replace the old migration with the optimized one
+        1.2.3 Handle file writing and any errors during the process
+    1.3 Ensure the migration squashing feature (if applicable) is ignored while optimizing
+    1.4 Add verbose output to show the user the changes that have been made during the process
+2. Update `optimizer.py` to support handling single migration optimization
+    2.1 Add logic in `optimize` method to handle cases where only a single migration is passed
+    2.2 Optimize migration operations in a way that the output file is smaller and has minimal operations
+    2.3 Ensure that the optimizations are stable and applicable without breaking dependencies
+3. Ensure that the new command works with the existing Django migration flow
+    3.1 Test the new management command with different migration files to ensure the optimization is applied correctly
+    3.2 Ensure that the command writes the result back to the correct migration file and maintains compatibility with the existing migration history
+4. Documentation update
+    4.1 Update the README file to mention the new `optimizemigration` command
+    4.2 Provide example usage and describe the behavior of the new command
+    4.3 Document any limitations or considerations for using the command in a production environment
+
+model_patch:
+
+--- django/core/management/commands/optimizemigration.py
++++ django/core/management/commands/optimizemigration.py
+@@ -0,0 +1,60 @@
++import os
++from django.core.management.base import BaseCommand, CommandError
++from django.db.migrations.loader import MigrationLoader
++from django.db.migrations.writer import MigrationWriter
++from django.db.migrations.optimizer import MigrationOptimizer
++
++class Command(BaseCommand):
++    help = "Optimizes the specified migration file by reducing redundant operations."
++
++    def add_arguments(self, parser):
++        parser.add_argument(
++            "app_label", help="App label of the application containing the migration."
++        )
++        parser.add_argument(
++            "migration_name", help="The name of the migration to optimize."
++        )
++        parser.add_argument(
++            "--noinput",
++            "--no-input",
++            action="store_false",
++            dest="interactive",
++            help="Tells Django to NOT prompt the user for input of any kind.",
++        )
++        parser.add_argument(
++            "--verbosity",
++            type=int,
++            default=1,
++            choices=[0, 1, 2, 3],
++            help="Verbosity level of output.",
++        )
++
++    def handle(self, *args, **options):
++        app_label = options["app_label"]
++        migration_name = options["migration_name"]
++        verbosity = options["verbosity"]
++        interactive = options["interactive"]
++
++        # Load the migration loader
++        loader = MigrationLoader(None)
++        try:
++            migration = loader.get_migration(app_label, migration_name)
++        except KeyError:
++            raise CommandError(f"Migration '{migration_name}' not found for app '{app_label}'.")
++
++        # Optimize the migration
++        optimizer = MigrationOptimizer()
++        optimized_operations = optimizer.optimize(migration.operations, app_label)
++
++        # Write the optimized migration back to the file
++        new_migration = type(
++            "Migration",
++            (migration.__class__,),
++            {
++                "dependencies": migration.dependencies,
++                "operations": optimized_operations,
++                "replaces": migration.replaces,
++            },
++        )(migration.name, app_label)
++        writer = MigrationWriter(new_migration, include_header=True)
++
++        # Write to disk
++        if os.path.exists(writer.path):
++            raise CommandError(f"Migration file '{new_migration.name}' already exists.")
++        with open(writer.path, "w", encoding="utf-8") as fh:
++            fh.write(writer.as_string())
++
++        if verbosity > 0:
++            self.stdout.write(self.style.SUCCESS(f"Optimized migration: {new_migration.name}"))
++
+--- django/db/migrations/optimizer.py
++++ django/db/migrations/optimizer.py
+@@ -41,7 +41,8 @@
+         for i, operation in enumerate(operations):
+             right = True  # Should we reduce on the right or on the left.
+             # Compare it to each operation after it
+             for j, other in enumerate(operations[i + 1 :]):
+                 result = operation.reduce(other, app_label)
+                 if isinstance(result, list):
+                     in_between = operations[i + 1 : i + j + 1]
+                     if right:
+                         new_operations.extend(in_between)
+                         new_operations.extend(result)
+                     elif all(op.reduce(other, app_label) is True for op in in_between):
+                         # Perform a left reduction if all of the in-between
+                         # operations can optimize through other.
+                         new_operations.extend(result)
+                         new_operations.extend(in_between)
+                     else:
+                         # Otherwise keep trying.
+                         new_operations.append(operation)
+                         break
+                     new_operations.extend(operations[i + j + 2 :])
+                     return new_operations
+                 elif not result:
+                     # Can't perform a right reduction.
+                     right = False
+             else:
+                 new_operations.append(operation)
++        if not new_operations:
++            new_operations = operations
+         return new_operations
+--- django/core/management/README.rst
++++ django/core/management/README.rst
+@@ -49,6 +49,16 @@
+ .. _migrations: https://docs.djangoproject.com/en/stable/topics/migrations/
+
++Optimizing Migrations
++=====================
++
++The `optimizemigration` command helps optimize an existing migration by reducing redundant operations.
++
++To use the command:
++
++    python manage.py optimizemigration <app_label> <migration_name>
++
++This command will process the given migration, optimize its operations, and write the result back to the disk.
++Note that squashed migrations will be ignored during the optimization process.
++
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/commands/optimizemigration.py b/django/core/management/commands/optimizemigration.py
+new file mode 100644
+--- /dev/null
++++ b/django/core/management/commands/optimizemigration.py
+@@ -0,0 +1,121 @@
++import sys
++
++from django.apps import apps
++from django.core.management.base import BaseCommand, CommandError
++from django.core.management.utils import run_formatters
++from django.db import migrations
++from django.db.migrations.exceptions import AmbiguityError
++from django.db.migrations.loader import MigrationLoader
++from django.db.migrations.optimizer import MigrationOptimizer
++from django.db.migrations.writer import MigrationWriter
++from django.utils.version import get_docs_version
++
++
++class Command(BaseCommand):
++    help = "Optimizes the operations for the named migration."
++
++    def add_arguments(self, parser):
++        parser.add_argument(
++            "app_label",
++            help="App label of the application to optimize the migration for.",
++        )
++        parser.add_argument(
++            "migration_name", help="Migration name to optimize the operations for."
++        )
++        parser.add_argument(
++            "--check",
++            action="store_true",
++            help="Exit with a non-zero status if the migration can be optimized.",
++        )
++
++    def handle(self, *args, **options):
++        verbosity = options["verbosity"]
++        app_label = options["app_label"]
++        migration_name = options["migration_name"]
++        check = options["check"]
++
++        # Validate app_label.
++        try:
++            apps.get_app_config(app_label)
++        except LookupError as err:
++            raise CommandError(str(err))
++
++        # Load the current graph state.
++        loader = MigrationLoader(None)
++        if app_label not in loader.migrated_apps:
++            raise CommandError(f"App '{app_label}' does not have migrations.")
++        # Find a migration.
++        try:
++            migration = loader.get_migration_by_prefix(app_label, migration_name)
++        except AmbiguityError:
++            raise CommandError(
++                f"More than one migration matches '{migration_name}' in app "
++                f"'{app_label}'. Please be more specific."
++            )
++        except KeyError:
++            raise CommandError(
++                f"Cannot find a migration matching '{migration_name}' from app "
++                f"'{app_label}'."
++            )
++
++        # Optimize the migration.
++        optimizer = MigrationOptimizer()
++        new_operations = optimizer.optimize(migration.operations, migration.app_label)
++        if len(migration.operations) == len(new_operations):
++            if verbosity > 0:
++                self.stdout.write("No optimizations possible.")
++            return
++        else:
++            if verbosity > 0:
++                self.stdout.write(
++                    "Optimizing from %d operations to %d operations."
++                    % (len(migration.operations), len(new_operations))
++                )
++            if check:
++                sys.exit(1)
++
++        # Set the new migration optimizations.
++        migration.operations = new_operations
++
++        # Write out the optimized migration file.
++        writer = MigrationWriter(migration)
++        migration_file_string = writer.as_string()
++        if writer.needs_manual_porting:
++            if migration.replaces:
++                raise CommandError(
++                    "Migration will require manual porting but is already a squashed "
++                    "migration.\nTransition to a normal migration first: "
++                    "https://docs.djangoproject.com/en/%s/topics/migrations/"
++                    "#squashing-migrations" % get_docs_version()
++                )
++            # Make a new migration with those operations.
++            subclass = type(
++                "Migration",
++                (migrations.Migration,),
++                {
++                    "dependencies": migration.dependencies,
++                    "operations": new_operations,
++                    "replaces": [(migration.app_label, migration.name)],
++                },
++            )
++            optimized_migration_name = "%s_optimized" % migration.name
++            optimized_migration = subclass(optimized_migration_name, app_label)
++            writer = MigrationWriter(optimized_migration)
++            migration_file_string = writer.as_string()
++            if verbosity > 0:
++                self.stdout.write(
++                    self.style.MIGRATE_HEADING("Manual porting required") + "\n"
++                    "  Your migrations contained functions that must be manually "
++                    "copied over,\n"
++                    "  as we could not safely copy their implementation.\n"
++                    "  See the comment at the top of the optimized migration for "
++                    "details."
++                )
++        with open(writer.path, "w", encoding="utf-8") as fh:
++            fh.write(migration_file_string)
++        run_formatters([writer.path])
++
++        if verbosity > 0:
++            self.stdout.write(
++                self.style.MIGRATE_HEADING(f"Optimized migration {writer.path}")
++            )
+
+</patch>
+
+--------------------------------------------------
+analyze
+text:
+<issue>
+Technical 404 debug page reported incorrect view name for CBVs.
+Description
+
+Technical 404 debug page reported incorrect view name for CBVs, e.g.
+Raised by: 	view_tests.views.<class 'view_tests.views.Http404View'>
+instead of
+Raised by: 	view_tests.views.Http404View
+Regression in 0c0b87725bbcffca3bc3a7a2c649995695a5ae3b.
+Thanks Keryn Knight for the report.
+
+</issue>
+
+steps:
+
+1. Investigate the issue with the incorrect view name on the technical 404 debug page.
+   1.1 Review the traceback logic in `django/views/debug.py`.
+       1.1.1 Identify the part where the `caller` (view name) is determined.
+       1.1.2 Confirm that the correct view class is being referenced when generating the debug message.
+   1.2 Verify that CBVs (Class-Based Views) are being handled properly in the traceback generation.
+       1.2.1 Check if the `caller` is returning the full view class path instead of just the class name.
+       1.2.2 Ensure that the `view_class` is being correctly extracted when resolving the view.
+
+2. Modify the code in `django/views/debug.py` to correctly format the view name for CBVs.
+   2.1 Adjust the `caller` assignment logic to handle both function-based views (FBVs) and class-based views (CBVs).
+       2.1.1 Check if the object has a `view_class` attribute to determine if it's a CBV.
+       2.1.2 For CBVs, use `obj.__class__.__name__` to extract just the class name.
+   2.2 Refactor the code that generates the `caller` string to avoid including unnecessary information, such as the full class path.
+       2.2.1 Implement a check to exclude the full class path and show only the class name for CBVs.
+
+3. Test the change to confirm the debug message now reports the correct view name.
+   3.1 Perform a test to ensure that when a CBV triggers a 404 error, the debug page shows the correct class name, not the full class path.
+   3.2 Validate that FBVs continue to show the function name correctly.
+
+
+model_patch:
+
+--- django/views/debug.py
++++ django/views/debug.py
+@@ -539,9 +539,12 @@
+         caller = ''
+         try:
+             resolver_match = resolve(request.path)
+         except Http404:
+             pass
+         else:
+             obj = resolver_match.func
+
+-            if hasattr(obj, 'view_class'):
+-                caller = obj.view_class
++            if hasattr(obj, '__class__') and hasattr(obj.__class__, '__name__'):
++                # If the view is a CBV, only show the class name, not the full path
++                caller = obj.__class__.__name__
+             elif hasattr(obj, '__name__'):
+                 caller = obj.__name__
+             elif hasattr(obj, '__class__') and hasattr(obj.__class__, '__name__'):
+                 caller = obj.__class__.__name__
+
+             if hasattr(obj, '__module__'):
+                 module = obj.__module__
+                 caller = '%s.%s' % (module, caller)
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/views/debug.py b/django/views/debug.py
+--- a/django/views/debug.py
++++ b/django/views/debug.py
+@@ -545,8 +545,9 @@ def technical_404_response(request, exception):
+         obj = resolver_match.func
+
+         if hasattr(obj, 'view_class'):
+-            caller = obj.view_class
+-        elif hasattr(obj, '__name__'):
++            obj = obj.view_class
++
++        if hasattr(obj, '__name__'):
+             caller = obj.__name__
+         elif hasattr(obj, '__class__') and hasattr(obj.__class__, '__name__'):
+             caller = obj.__class__.__name__
+
+</patch>
+
+--------------------------------------------------
+analyze
+There is an essential error in step 2.1.2. In the CBV scenario, the correct way to deal with it should be to get the name of the class corresponding to the view_class attribute (i.e. obj.view_class.name), rather than taking the class name of the obj object itself (obj.class.name). This error logic causes model-patch to incorrectly check obj.class.name, while gold-patch is correct to get the path of __name__ after replacing obj with view_class.
+
+
+
+text:
+<issue>
+Support prefetch_related() with Queryset.iterator()
+Description
+
+		(last modified by Asif Saifuddin Auvi)
+
+I was surprised when I found out that prefetch_related calls are ignored when using Queryset.iterator. I noticed in the docs here ​https://docs.djangoproject.com/en/dev/ref/models/querysets/#iterator that it is because the "these two optimizations do not make sense together." That may have been true in the past, but it is definitely not the case now. The iterator allows chunking (by default 2000) and it would be very helpful to prefetch related for each chunk.
+
+</issue>
+
+steps:
+
+1. **Understand the issue**
+    1.1 Investigate the problem in detail, which is that `prefetch_related()` is being ignored when using `Queryset.iterator()`.
+    1.2 The Django documentation mentions that these two features (prefetch_related and iterator) are incompatible due to optimizations conflicting in the past.
+    1.3 However, the need arises to combine chunking with prefetching efficiently for large datasets.
+
+2. **Examine the codebase**
+    2.1 Review the relevant files:
+        2.1.1 `django/http/multipartparser.py` — to understand how iterators are handled.
+        2.1.2 Identify places where querysets with prefetching or iteration are used.
+    2.2 Understand how `iterator()` works in Django, particularly its behavior with respect to memory and how it handles database rows chunk by chunk.
+
+3. **Design a solution**
+    3.1 Add a feature that allows `prefetch_related()` to function correctly with `iterator()`.
+    3.2 The key is to modify the iterator to ensure that prefetching occurs for each chunk in the iterator, not just before iteration begins.
+    3.3 Ensure that any changes made for this solution do not disrupt the overall design of the system, especially how chunks are fetched and how related objects are preloaded.
+
+4. **Implement the solution**
+    4.1 Modify the way the queryset interacts with the iterator, so each chunk is prefetched as needed.
+    4.2 Introduce a condition or modification to the iterator to handle `prefetch_related()` in chunks rather than disabling it entirely.
+    4.3 Test the solution thoroughly to ensure it works across various database backends and with different query configurations.
+
+5. **Testing and validation**
+    5.1 Write unit tests to verify that the combined use of `prefetch_related()` and `iterator()` is functioning correctly.
+    5.2 Run performance benchmarks to validate that the optimization does not degrade performance when dealing with large datasets.
+    5.3 Ensure that other features relying on `iterator()` (such as file uploads in `multipartparser.py`) are not negatively impacted by this change.
+
+
+model_patch:
+
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -1791,7 +1791,7 @@
+         return iterator
+
+     def iterator(self):
+-        """
+-        An iterator that yields results in chunks for performance. Prefetching is not compatible with this method.
+-        """
++        if self._prefetch_related_lookups:
++            return self._iterator_with_prefetch()
+         # Original iterator code continues here...
+         return super().iterator()
+
++    def _iterator_with_prefetch(self):
++        """
++        Custom iterator that supports chunking while prefetching related objects.
++        """
++        chunk_size = 2000
++        prefetch_related = self._prefetch_related_lookups
++
++        # Process the queryset in chunks and prefetch related objects for each chunk
++        for start in range(0, self.count(), chunk_size):
++            chunk = self[start:start + chunk_size]
++            chunk.prefetch_related(*prefetch_related)
++            for obj in chunk:
++                yield obj
++
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -5,7 +5,7 @@
+ import copy
+ import operator
+ import warnings
+-from itertools import chain
++from itertools import chain, islice
+
+ import django
+ from django.conf import settings
+@@ -23,6 +23,7 @@
+ from django.db.models.sql.constants import CURSOR, GET_ITERATOR_CHUNK_SIZE
+ from django.db.models.utils import create_namedtuple_class, resolve_callables
+ from django.utils import timezone
++from django.utils.deprecation import RemovedInDjango50Warning
+ from django.utils.functional import cached_property, partition
+
+ # The maximum number of results to fetch in a get() query.
+@@ -356,14 +357,40 @@ def __or__(self, other):
+     ####################################
+
+     def _iterator(self, use_chunked_fetch, chunk_size):
+-        yield from self._iterable_class(self, chunked_fetch=use_chunked_fetch, chunk_size=chunk_size)
++        iterable = self._iterable_class(
++            self,
++            chunked_fetch=use_chunked_fetch,
++            chunk_size=chunk_size or 2000,
++        )
++        if not self._prefetch_related_lookups or chunk_size is None:
++            yield from iterable
++            return
++
++        iterator = iter(iterable)
++        while results := list(islice(iterator, chunk_size)):
++            prefetch_related_objects(results, *self._prefetch_related_lookups)
++            yield from results
+
+-    def iterator(self, chunk_size=2000):
++    def iterator(self, chunk_size=None):
+         """
+         An iterator over the results from applying this QuerySet to the
+-        database.
+-        """
+-        if chunk_size <= 0:
++        database. chunk_size must be provided for QuerySets that prefetch
++        related objects. Otherwise, a default chunk_size of 2000 is supplied.
++        """
++        if chunk_size is None:
++            if self._prefetch_related_lookups:
++                # When the deprecation ends, replace with:
++                # raise ValueError(
++                #     'chunk_size must be provided when using '
++                #     'QuerySet.iterator() after prefetch_related().'
++                # )
++                warnings.warn(
++                    'Using QuerySet.iterator() after prefetch_related() '
++                    'without specifying chunk_size is deprecated.',
++                    category=RemovedInDjango50Warning,
++                    stacklevel=2,
++                )
++        elif chunk_size <= 0:
+             raise ValueError('Chunk size must be strictly positive.')
+         use_chunked_fetch = not connections[self.db].settings_dict.get('DISABLE_SERVER_SIDE_CURSORS')
+         return self._iterator(use_chunked_fetch, chunk_size)
+
+</patch>
+
+--------------------------------------------------
+analyze:
+Step's overall idea is to preload each chunk during the iteration process, but it does not explicitly require the creation of new auxiliary methods. Gold-patch is implemented by modifying the internal iteration function (_iterator), using islice to chunk and calling prefetch_related_objects. These tools are not pointed out in propt.
+
+
+text:
+<issue>
+Session ID should be cleansed from error reporting
+Description
+
+the session ID should be cleansed when reporting errors, just like other credentials. A patch is available at ​https://github.com/django/django/pull/15352.
+See also #29714 and ​https://groups.google.com/g/django-developers/c/H5hJxpwYFcw.
+A quick github search yielded multiple occasions where session IDs ended up in public bug reports:
+​https://github.com/GibbsConsulting/django-plotly-dash/issues/376
+​https://github.com/ome/omero-mapr/issues/42
+​https://github.com/jhelbert/great_teaching_network/issues/220
+​https://github.com/dzone/osqa/issues/355
+I am sure you could find many more. This could potentially be exploited by automatically searching for such requests and hijacking the associated accounts.
+
+</issue>
+
+steps:
+
+1. Identify where session ID is being reported in error logging.
+   1.1 Review the relevant files in the Django project where error reporting takes place (likely in `global_settings.py`, or in middleware).
+   1.2 Look for instances where session data might be included in logs, such as in error responses or exception reports.
+
+2. Modify the exception reporting to sanitize session data.
+   2.1 In `global_settings.py`, locate the exception reporter class (`DEFAULT_EXCEPTION_REPORTER`).
+   2.2 Modify the exception reporter to cleanse session ID from error logs.
+      2.2.1 Implement logic that removes or masks the session ID before it is reported.
+      2.2.2 Ensure any other sensitive data is similarly cleansed (if necessary).
+
+3. Test the changes to ensure session IDs are no longer reported in error logs.
+   3.1 Create test cases where errors are triggered to verify that the session ID is not part of the logs.
+   3.2 Ensure the changes do not negatively affect other error logging functionality.
+
+model_patch:
+
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -598,7 +598,7 @@
+     DEFAULT_EXCEPTION_REPORTER = "django.views.debug.ExceptionReporter"
+     DEFAULT_EXCEPTION_REPORTER_FILTER = "django.views.debug.SafeExceptionReporterFilter"
+
+     # Custom ExceptionReporterFilter class to clean sensitive data like session IDs
+     class SafeExceptionReporterFilter(django.views.debug.SafeExceptionReporterFilter):
+-        def get_safe_repr(self, value):
++        def get_safe_repr(self, value, context=None):
+             # Cleanse session data from the error report
+             if isinstance(value, dict):
+                 if 'sessionid' in value:
+                     value['sessionid'] = '****'
+             return super().get_safe_repr(value, context)
+
+--- a/django/views/debug.py
++++ b/django/views/debug.py
+@@ -100,7 +100,7 @@
+
+ class SafeExceptionReporterFilter:
+     """
+     Custom exception filter for masking sensitive data like session ID
+     """
+     def get_safe_repr(self, value, context=None):
+-        # Mask sensitive session data
++        # Cleanse sensitive session data
+         if isinstance(value, dict):
+             if 'sessionid' in value:
+                 value['sessionid'] = '****'
+         return repr(value)
+
+
+gold_patch:
+<patch>
+diff --git a/django/views/debug.py b/django/views/debug.py
+--- a/django/views/debug.py
++++ b/django/views/debug.py
+@@ -110,7 +110,7 @@ class SafeExceptionReporterFilter:
+
+     cleansed_substitute = "********************"
+     hidden_settings = _lazy_re_compile(
+-        "API|TOKEN|KEY|SECRET|PASS|SIGNATURE", flags=re.I
++        "API|TOKEN|KEY|SECRET|PASS|SIGNATURE|HTTP_COOKIE", flags=re.I
+     )
+
+     def cleanse_setting(self, key, value):
+@@ -118,10 +118,13 @@ def cleanse_setting(self, key, value):
+         Cleanse an individual setting key/value of sensitive content. If the
+         value is a dictionary, recursively cleanse the keys in that dictionary.
+         """
+-        try:
+-            is_sensitive = self.hidden_settings.search(key)
+-        except TypeError:
+-            is_sensitive = False
++        if key == settings.SESSION_COOKIE_NAME:
++            is_sensitive = True
++        else:
++            try:
++                is_sensitive = self.hidden_settings.search(key)
++            except TypeError:
++                is_sensitive = False
+
+         if is_sensitive:
+             cleansed = self.cleansed_substitute
+@@ -158,6 +161,14 @@ def get_safe_request_meta(self, request):
+             return {}
+         return {k: self.cleanse_setting(k, v) for k, v in request.META.items()}
+
++    def get_safe_cookies(self, request):
++        """
++        Return a dictionary of request.COOKIES with sensitive values redacted.
++        """
++        if not hasattr(request, "COOKIES"):
++            return {}
++        return {k: self.cleanse_setting(k, v) for k, v in request.COOKIES.items()}
++
+     def is_active(self, request):
+         """
+         This filter is to add safety in production environments (i.e. DEBUG
+@@ -359,6 +370,7 @@ def get_traceback_data(self):
+             "frames": frames,
+             "request": self.request,
+             "request_meta": self.filter.get_safe_request_meta(self.request),
++            "request_COOKIES_items": self.filter.get_safe_cookies(self.request).items(),
+             "user_str": user_str,
+             "filtered_POST_items": list(
+                 self.filter.get_post_parameters(self.request).items()
+@@ -376,7 +388,6 @@ def get_traceback_data(self):
+         if self.request is not None:
+             c["request_GET_items"] = self.request.GET.items()
+             c["request_FILES_items"] = self.request.FILES.items()
+-            c["request_COOKIES_items"] = self.request.COOKIES.items()
+             c["request_insecure_uri"] = self._get_raw_insecure_uri()
+             c["raising_view_name"] = get_caller(self.request)
+
+
+</patch>
+
+--------------------------------------------------
+analyze
+The step does not mention the need to clean sensitive information in multiple parts of the exception reporting data (such as GET, POST, META, COOKIES), resulting in insufficient scope and depth of the correction scheme.
+
+text:
+<issue>
+Allow parallel test runner to work with Windows/macOS `spawn` process start method.
+Description
+
+		(last modified by Brandon Navra)
+
+Python 3.8 on MacOS has changed the default start method for the multiprocessing module from fork to spawn: ​https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods.
+When running tests with the --parallel flag, this causes the worker processes to fail with django.core.exceptions.AppRegistryNotReady: Apps aren't loaded yet. as they no longer have a copy of the parent memory state. It can also cause the workers to fail to find the cloned dbs ( {{django.db.utils.OperationalError: FATAL: database "xxx_1" does not exist}} ) as the db test prefix is missing.
+I have attached a patch which changes django.test.runner._init_worker (the worker initialiser for ParallelTestSuite) to run django.setup() and set the db name to one with the test_ prefix.
+
+</issue>
+
+steps:
+
+1. **Understand the problem and identify affected parts**
+   1.1 Python 3.8+ on macOS has changed the default multiprocessing start method to `spawn`, which causes issues with worker processes.
+   1.2 The issue arises due to the workers not inheriting the parent process's memory state, leading to errors such as `django.core.exceptions.AppRegistryNotReady` and `django.db.utils.OperationalError`.
+   1.3 The main concern is ensuring Django's app registry is properly loaded and setting the test database name appropriately for each worker.
+
+2. **Apply the patch to initialize worker processes correctly**
+   2.1 Update the worker initialization logic to call `django.setup()` to ensure the app registry is loaded.
+   2.2 Modify the `django.test.runner._init_worker` function, ensuring that the worker processes can properly interact with the test database. This involves updating the test database name with the `test_` prefix.
+   2.3 Test the implementation on both macOS and Windows to ensure compatibility with the `spawn` process start method.
+
+3. **Create a patch for the changes**
+   3.1 Modify the necessary files to implement the fixes: Ensure that `django.setup()` is called in the worker initialization and that the database name is set with the correct prefix.
+   3.2 Ensure that the changes are backward-compatible with the default `fork` start method on Unix-based systems.
+
+4. **Test the solution**
+   4.1 Run the tests with the `--parallel` flag on both macOS and Windows to verify that the issue is resolved.
+   4.2 Ensure that no other test failures or database-related issues are present during the tests.
+
+model_patch:
+
+--- a/django/test/runner.py
++++ b/django/test/runner.py
+@@ -1,10 +1,11 @@
+ import django
+ from django.apps import apps
+ from django.core import signals
+ from django.db import connections
+ from django.test.utils import setup_databases
++from django import setup
+ import os
+ import multiprocessing
+ import time
+ import sys
+
+ def _init_worker():
++    django.setup()  # Ensure Django setup is done in worker process
+     # Initialize the database for the worker
+     connection = connections['default']
+     connection.settings_dict['NAME'] = "test_" + connection.settings_dict['NAME']
+     setup_databases(verbosity=0, interactive=False)
+
+   ...
+
+--- a/django/db/backends/base/creation.py
++++ b/django/db/backends/base/creation.py
+@@ -10,6 +10,7 @@
+
+ class BaseDatabaseCreation:
+     ...
+
+     def create_test_db(
+         self, verbosity=1, autoclobber=False, serialize=True, keepdb=False
+     ):
+         # Create the test database with 'test_' prefix
+         test_database_name = self._get_test_db_name()
++        test_database_name = "test_" + test_database_name  # Add 'test_' prefix
+         ...
+         return test_database_name
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/sqlite3/creation.py b/django/db/backends/sqlite3/creation.py
+--- a/django/db/backends/sqlite3/creation.py
++++ b/django/db/backends/sqlite3/creation.py
+@@ -1,8 +1,11 @@
++import multiprocessing
+ import os
+ import shutil
++import sqlite3
+ import sys
+ from pathlib import Path
+
++from django.db import NotSupportedError
+ from django.db.backends.base.creation import BaseDatabaseCreation
+
+
+@@ -51,16 +54,26 @@ def _create_test_db(self, verbosity, autoclobber, keepdb=False):
+     def get_test_db_clone_settings(self, suffix):
+         orig_settings_dict = self.connection.settings_dict
+         source_database_name = orig_settings_dict["NAME"]
+-        if self.is_in_memory_db(source_database_name):
++
++        if not self.is_in_memory_db(source_database_name):
++            root, ext = os.path.splitext(source_database_name)
++            return {**orig_settings_dict, "NAME": f"{root}_{suffix}{ext}"}
++
++        start_method = multiprocessing.get_start_method()
++        if start_method == "fork":
+             return orig_settings_dict
+-        else:
+-            root, ext = os.path.splitext(orig_settings_dict["NAME"])
+-            return {**orig_settings_dict, "NAME": "{}_{}{}".format(root, suffix, ext)}
++        if start_method == "spawn":
++            return {
++                **orig_settings_dict,
++                "NAME": f"{self.connection.alias}_{suffix}.sqlite3",
++            }
++        raise NotSupportedError(
++            f"Cloning with start method {start_method!r} is not supported."
++        )
+
+     def _clone_test_db(self, suffix, verbosity, keepdb=False):
+         source_database_name = self.connection.settings_dict["NAME"]
+         target_database_name = self.get_test_db_clone_settings(suffix)["NAME"]
+-        # Forking automatically makes a copy of an in-memory database.
+         if not self.is_in_memory_db(source_database_name):
+             # Erase the old test database
+             if os.access(target_database_name, os.F_OK):
+@@ -85,6 +98,12 @@ def _clone_test_db(self, suffix, verbosity, keepdb=False):
+             except Exception as e:
+                 self.log("Got an error cloning the test database: %s" % e)
+                 sys.exit(2)
++        # Forking automatically makes a copy of an in-memory database.
++        # Spawn requires migrating to disk which will be re-opened in
++        # setup_worker_connection.
++        elif multiprocessing.get_start_method() == "spawn":
++            ondisk_db = sqlite3.connect(target_database_name, uri=True)
++            self.connection.connection.backup(ondisk_db)
+
+     def _destroy_test_db(self, test_database_name, verbosity):
+         if test_database_name and not self.is_in_memory_db(test_database_name):
+@@ -106,3 +125,34 @@ def test_db_signature(self):
+         else:
+             sig.append(test_database_name)
+         return tuple(sig)
++
++    def setup_worker_connection(self, _worker_id):
++        settings_dict = self.get_test_db_clone_settings(_worker_id)
++        # connection.settings_dict must be updated in place for changes to be
++        # reflected in django.db.connections. Otherwise new threads would
++        # connect to the default database instead of the appropriate clone.
++        start_method = multiprocessing.get_start_method()
++        if start_method == "fork":
++            # Update settings_dict in place.
++            self.connection.settings_dict.update(settings_dict)
++            self.connection.close()
++        elif start_method == "spawn":
++            alias = self.connection.alias
++            connection_str = (
++                f"file:memorydb_{alias}_{_worker_id}?mode=memory&cache=shared"
++            )
++            source_db = self.connection.Database.connect(
++                f"file:{alias}_{_worker_id}.sqlite3", uri=True
++            )
++            target_db = sqlite3.connect(connection_str, uri=True)
++            source_db.backup(target_db)
++            source_db.close()
++            # Update settings_dict in place.
++            self.connection.settings_dict.update(settings_dict)
++            self.connection.settings_dict["NAME"] = connection_str
++            # Re-open connection to in-memory database before closing copy
++            # connection.
++            self.connection.connect()
++            target_db.close()
++            if os.environ.get("RUNNING_DJANGOS_TEST_SUITE") == "true":
++                self.mark_expected_failures_and_skips()
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -130,7 +130,7 @@ def iter_modules_and_files(modules, extra_files):
+         # cause issues here.
+         if not isinstance(module, ModuleType):
+             continue
+-        if module.__name__ == "__main__":
++        if module.__name__ in ("__main__", "__mp_main__"):
+             # __main__ (usually manage.py) doesn't always have a __spec__ set.
+             # Handle this by falling back to using __file__, resolved below.
+             # See https://docs.python.org/reference/import.html#main-spec
+
+</patch>
+
+--------------------------------------------------
+analyze:
+Cot has severe deviations in the file location of the patch. The correct code adjusts the creation.py file, while Cot locates the runner.py file. The problems caused by the pawn mode not only affect the initialization of the worker process, but also lead to a series of subsequent problems such as database cloning, connection backup, etc. Step did not recognize these dependencies, so it incorrectly limited the scope of the changes to the code files initialized by the worker.
+

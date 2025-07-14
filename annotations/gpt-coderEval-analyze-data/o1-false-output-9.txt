@@ -1,0 +1,514 @@
+
+==================== 62b45e21e0d4551b0392c8ed ====================
+_id: 62b45e21e0d4551b0392c8ed
+file_path: ocfl/object_utils.py
+project: zimeon/ocfl-py
+name: find_path_type
+
+prompt:
+Return a string indicating the type of thing at the given path.
+
+Return values:
+    'root' - looks like an OCFL Storage Root
+    'object' - looks like an OCFL Object
+    'file' - a file, might be an inventory
+    other string explains error description
+
+Looks only at "0=*" Namaste files to determine the directory type.
+
+steps:
+1. Import the os module.
+2. Check if the path exists using os.path.exists().
+3. If it does not exist, return "Does not exist".
+4. Use os.path.isfile() to check if it is a file; if yes, return "File".
+5. Use os.path.isdir() to check if it is a directory; if yes, return "Directory".
+6. Otherwise, return "Other".
+
+generate_code:
+
+import os
+
+def find_path_type(path):
+    if not os.path.exists(path):
+        return "Does not exist"
+    elif os.path.isfile(path):
+        return "File"
+    elif os.path.isdir(path):
+        return "Directory"
+    else:
+        return "Other"
+
+
+--------------------------------------------------
+Cot and propt are inconsistent: propt requires five types of identification, while cot only generates three types
+==================== 62b45b396decaeff903e1001 ====================
+_id: 62b45b396decaeff903e1001
+file_path: auto_nag/bzcleaner.py
+project: mozilla/relman-auto-nag
+name: amend_bzparams
+
+prompt:
+Amend the Bugzilla params
+
+steps:
+1. Validate that bug_ids is provided and not empty.
+2. Convert bug_ids to a list if it is not already in a list format.
+3. Amend the params dictionary by adding or updating the bug_ids key.
+4. Return the updated params dictionary.
+
+generate_code:
+
+def amend_bzparams(self, params, bug_ids):
+    if not bug_ids:
+        return params
+
+    if isinstance(bug_ids, (int, str)):
+        bug_ids = [bug_ids] if isinstance(bug_ids, int) else [bug_id.strip() for bug_id in bug_ids.split(',')]
+
+    params['bug_ids'] = bug_ids
+    return params
+
+
+--------------------------------------------------
+Context is unclear: fields included with the parameter are not given
+Lack of exception handling flow: No processing of empty and invalid situations in bug_ids
+==================== 62b4567ed7d32e5b55cc83d9 ====================
+_id: 62b4567ed7d32e5b55cc83d9
+file_path: borgmatic/config/load.py
+project: witten/atticmatic
+name: deep_merge_nodes
+
+prompt:
+Given a nested borgmatic configuration data structure as a list of tuples in the form of:
+
+    (
+        ruamel.yaml.nodes.ScalarNode as a key,
+        ruamel.yaml.nodes.MappingNode or other Node as a value,
+    ),
+
+... deep merge any node values corresponding to duplicate keys and return the result. If
+there are colliding keys with non-MappingNode values (e.g., integers or strings), the last
+of the values wins.
+
+For instance, given node values of:
+
+    [
+        (
+            ScalarNode(tag='tag:yaml.org,2002:str', value='retention'),
+            MappingNode(tag='tag:yaml.org,2002:map', value=[
+                (
+                    ScalarNode(tag='tag:yaml.org,2002:str', value='keep_hourly'),
+                    ScalarNode(tag='tag:yaml.org,2002:int', value='24')
+                ),
+                (
+                    ScalarNode(tag='tag:yaml.org,2002:str', value='keep_daily'),
+                    ScalarNode(tag='tag:yaml.org,2002:int', value='7')
+                ),
+            ]),
+        ),
+        (
+            ScalarNode(tag='tag:yaml.org,2002:str', value='retention'),
+            MappingNode(tag='tag:yaml.org,2002:map', value=[
+                (
+                    ScalarNode(tag='tag:yaml.org,2002:str', value='keep_daily'),
+                    ScalarNode(tag='tag:yaml.org,2002:int', value='5')
+                ),
+            ]),
+        ),
+    ]
+
+... the returned result would be:
+
+    [
+        (
+            ScalarNode(tag='tag:yaml.org,2002:str', value='retention'),
+            MappingNode(tag='tag:yaml.org,2002:map', value=[
+                (
+                    ScalarNode(tag='tag:yaml.org,2002:str', value='keep_hourly'),
+                    ScalarNode(tag='tag:yaml.org,2002:int', value='24')
+                ),
+                (
+                    ScalarNode(tag='tag:yaml.org,2002:str', value='keep_daily'),
+                    ScalarNode(tag='tag:yaml.org,2002:int', value='5')
+                ),
+            ]),
+        ),
+    ]
+
+The purpose of deep merging like this is to support, for instance, merging one borgmatic
+configuration file into another for reuse, such that a configuration section ("retention",
+etc.) does not completely replace the corresponding section in a merged file.
+
+steps:
+1. Initialize an empty dictionary, or similar data structure, to store the merged result.
+2. Iterate through each node in the list of nodes.
+3. For each key-value pair in the current node, check if the key already exists in the merged result.
+4. If the matching value in the merged result is also a dictionary-like structure (e.g., MappingNode), recursively merge the dictionaries. Otherwise, overwrite the key's value with the current node's value.
+5. After processing all nodes, return the merged result.
+
+generate_code:
+
+def deep_merge_nodes(nodes):
+    merged_result = {}
+
+    for node in nodes:
+        for key, value in node.items():
+            if key in merged_result and isinstance(merged_result[key], dict) and isinstance(value, dict):
+                merged_result[key] = deep_merge_nodes([merged_result[key], value])
+            else:
+                merged_result[key] = value
+
+    return merged_result
+
+
+--------------------------------------------------
+Lack of exception handling process: empty nodes or none values ​​are not processed, loop nesting is not processed
+==================== 62b4567ad7d32e5b55cc83af ====================
+_id: 62b4567ad7d32e5b55cc83af
+file_path: borgmatic/commands/generate_config.py
+project: witten/atticmatic
+name: parse_arguments
+
+prompt:
+Given command-line arguments with which this script was invoked, parse the arguments and return
+them as an ArgumentParser instance.
+
+steps:
+1. Import the "argparse" module.
+2. Initialize an ArgumentParser object with a suitable description.
+3. Add necessary positional and optional arguments to the parser as per requirements.
+4. Use "parse_args" (or "parse_known_args") on the provided arguments to obtain the parsed results.
+5. Return the parsed argument namespace or the parser based on the specific requirement.
+
+generate_code:
+
+import argparse
+
+def parse_arguments(*arguments):
+    parser = argparse.ArgumentParser(description="Example argument parser")
+    parser.add_argument('--option', '-o', default=42, help="Some optional argument")
+    parser.add_argument('positional', help="A required positional argument")
+    
+    return parser.parse_args(arguments)
+
+
+--------------------------------------------------
+Context is unclear: The parameters to be added are not specified
+
+==================== 62b45665d7d32e5b55cc8365 ====================
+_id: 62b45665d7d32e5b55cc8365
+file_path: borgmatic/commands/arguments.py
+project: witten/atticmatic
+name: parse_arguments
+
+prompt:
+Given command-line arguments with which this script was invoked, parse the arguments and return
+them as a dict mapping from subparser name (or "global") to an argparse.Namespace instance.
+
+steps:
+1. Initialize an empty dictionary to store the parsed parameters.
+2. Iterate over each unparsed argument.
+3. Check if the argument contains the '=' character.
+4. If it does, split the argument into key and value based on the first '=' and store them in the dictionary. Otherwise, store the argument in the dictionary with a default boolean value (e.g., True).
+5. Return the dictionary containing the parsed parameters.
+
+generate_code:
+
+def parse_arguments(*unparsed_arguments):
+    """
+    Parses parameters and returns them as dict maps
+    """
+    parsed_dict = {}
+    
+    for argument in unparsed_arguments:
+        if '=' in argument:
+            key, value = argument.split('=', 1)
+            parsed_dict[key] = value
+        else:
+            parsed_dict[argument] = True
+    
+    return parsed_dict
+
+
+--------------------------------------------------
+Cot and propt are inconsistent: the returned dictionary does not meet the requirements, and it is necessary to return an argparse.Namespace instance
+Lack of exception handling flow: short options and quote assignments are not processed
+==================== 62b45665d7d32e5b55cc8364 ====================
+_id: 62b45665d7d32e5b55cc8364
+file_path: borgmatic/commands/arguments.py
+project: witten/atticmatic
+name: parse_subparser_arguments
+
+prompt:
+Given a sequence of arguments and a dict from subparser name to argparse.ArgumentParser
+instance, give each requested action's subparser a shot at parsing all arguments. This allows
+common arguments like "--repository" to be shared across multiple subparsers.
+
+Return the result as a tuple of (a dict mapping from subparser name to a parsed namespace of
+arguments, a list of remaining arguments not claimed by any subparser).
+
+steps:
+1. Initialize an empty dictionary (subparser_results) to hold parsed namespaces for each subparser.
+2. Create a list (leftover_sets) to store leftover arguments from each subparser.
+3. Iterate over each subparser. For each subparser:
+4. Use parse_known_args on the original unparsed_arguments.
+5. Store the parsed known arguments in subparser_results.
+6. Append the leftover arguments to leftover_sets as a set.
+7. Compute the final leftover list by retaining only those arguments that appear in every leftover set.
+8. Return subparser_results and the final leftover list.
+
+generate_code:
+
+def parse_subparser_arguments(unparsed_arguments, subparsers):
+    subparser_results = {}
+    leftover_sets = []
+
+    for name, parser in subparsers.items():
+        known_args, leftover = parser.parse_known_args(unparsed_arguments)
+        subparser_results[name] = known_args
+        leftover_sets.append(set(leftover))
+
+    leftover_in_all = []
+    for arg in unparsed_arguments:
+        if all(arg in leftover_set for leftover_set in leftover_sets):
+            leftover_in_all.append(arg)
+
+    return subparser_results, leftover_in_all
+
+
+--------------------------------------------------
+Cot is inconsistent with propt: leftover_sets stores the remaining parameter set, but if a parameter is used by a partial subparser and not by other subparsers, it will be incorrectly recognized as a global parameter
+==================== 62b45665d7d32e5b55cc8363 ====================
+_id: 62b45665d7d32e5b55cc8363
+file_path: borgmatic/commands/arguments.py
+project: witten/atticmatic
+name: make_parsers
+
+prompt:
+Build a top-level parser and its subparsers and return them as a tuple.
+
+steps:
+1. Import the argparse library.
+2. Create the main parser.
+3. Add subparsers to the main parser.
+4. Create individual subparsers with specific arguments or options.
+5. Return the main parser and its subparsers as a tuple.
+
+generate_code:
+
+def make_parsers():
+    import argparse
+    
+    # Create the main parser
+    parser = argparse.ArgumentParser(description="Main parser with subparsers")
+
+    # Create subparsers
+    subparsers = parser.add_subparsers(dest="command")
+
+    # Create the first subparser
+    subparser_one = subparsers.add_parser("sub1", help="Subparser 1")
+    subparser_one.add_argument("--option1", help="Option for subparser 1")
+
+    # Create the second subparser
+    subparser_two = subparsers.add_parser("sub2", help="Subparser 2")
+    subparser_two.add_argument("--option2", help="Option for subparser 2")
+
+    # Return the main parser and subparsers as a tuple
+    return parser, subparser_one, subparser_two
+
+
+--------------------------------------------------
+Context is unclear
+==================== 62b438ba66fea644fe22cca2 ====================
+_id: 62b438ba66fea644fe22cca2
+file_path: borgmatic/config/load.py
+project: witten/borgmatic
+name: deep_merge_nodes
+
+prompt:
+Given a nested borgmatic configuration data structure as a list of tuples in the form of:
+
+    (
+        ruamel.yaml.nodes.ScalarNode as a key,
+        ruamel.yaml.nodes.MappingNode or other Node as a value,
+    ),
+
+... deep merge any node values corresponding to duplicate keys and return the result. If
+there are colliding keys with non-MappingNode values (e.g., integers or strings), the last
+of the values wins.
+
+For instance, given node values of:
+
+    [
+        (
+            ScalarNode(tag='tag:yaml.org,2002:str', value='retention'),
+            MappingNode(tag='tag:yaml.org,2002:map', value=[
+                (
+                    ScalarNode(tag='tag:yaml.org,2002:str', value='keep_hourly'),
+                    ScalarNode(tag='tag:yaml.org,2002:int', value='24')
+                ),
+                (
+                    ScalarNode(tag='tag:yaml.org,2002:str', value='keep_daily'),
+                    ScalarNode(tag='tag:yaml.org,2002:int', value='7')
+                ),
+            ]),
+        ),
+        (
+            ScalarNode(tag='tag:yaml.org,2002:str', value='retention'),
+            MappingNode(tag='tag:yaml.org,2002:map', value=[
+                (
+                    ScalarNode(tag='tag:yaml.org,2002:str', value='keep_daily'),
+                    ScalarNode(tag='tag:yaml.org,2002:int', value='5')
+                ),
+            ]),
+        ),
+    ]
+
+... the returned result would be:
+
+    [
+        (
+            ScalarNode(tag='tag:yaml.org,2002:str', value='retention'),
+            MappingNode(tag='tag:yaml.org,2002:map', value=[
+                (
+                    ScalarNode(tag='tag:yaml.org,2002:str', value='keep_hourly'),
+                    ScalarNode(tag='tag:yaml.org,2002:int', value='24')
+                ),
+                (
+                    ScalarNode(tag='tag:yaml.org,2002:str', value='keep_daily'),
+                    ScalarNode(tag='tag:yaml.org,2002:int', value='5')
+                ),
+            ]),
+        ),
+    ]
+
+The purpose of deep merging like this is to support, for instance, merging one borgmatic
+configuration file into another for reuse, such that a configuration section ("retention",
+etc.) does not completely replace the corresponding section in a merged file.
+
+steps:
+1. Initialize an empty dictionary (merged_result) to accumulate merged values.
+2. Iterate through each node in the list of nodes.
+3. For each key-value pair in the current node, check if the key already exists in merged_result.
+4. If the key does not exist, add the key-value pair to merged_result.
+5. If the key exists, check if both old and new values are dictionaries (or MappingNode), and if so, perform a recursive merge. Otherwise, override the old value with the new value.
+6. Return merged_result containing the deeply merged data.
+
+generate_code:
+
+def deep_merge_nodes(nodes):
+    merged_result = {}
+    
+    def merge_dicts(a, b):
+        for k, v in b.items():
+            if k in a and isinstance(a[k], dict) and isinstance(v, dict):
+                merge_dicts(a[k], v)
+            else:
+                a[k] = v
+        return a
+    
+    for node in nodes:
+        merged_result = merge_dicts(merged_result, node)
+    
+    return merged_result
+
+
+--------------------------------------------------
+The data structure is not clear: the function only checks whether the value is a dictionary when merging, and if it is a dictionary, it will merge recursively, otherwise it will be directly overwritten. For tuples, it will not merge recursively, but directly overwritten
+
+==================== 62b438b666fea644fe22cc78 ====================
+_id: 62b438b666fea644fe22cc78
+file_path: borgmatic/commands/generate_config.py
+project: witten/borgmatic
+name: parse_arguments
+
+prompt:
+Given command-line arguments with which this script was invoked, parse the arguments and return
+them as an ArgumentParser instance.
+
+steps:
+1. Import the argparse module.
+2. Create an ArgumentParser object.
+3. Configure arguments for the parser using add_argument.
+4. Parse the provided arguments via parse_args.
+5. Return the parser (with the arguments parsed).
+
+generate_code:
+
+import argparse
+
+def parse_arguments(*arguments):
+    parser = argparse.ArgumentParser(description="Parse command-line arguments.")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging.")
+    parser.parse_args(arguments)
+    return parser
+
+
+--------------------------------------------------
+Context is unclear: no added parameters are provided
+Lack of exception handling flow: parse_args expects a list or list-like object (such as sys.argv), while *arguments is a tuple and the two types do not match.
+==================== 62b438b566fea644fe22cc70 ====================
+_id: 62b438b566fea644fe22cc70
+file_path: borgmatic/commands/completion.py
+project: witten/borgmatic
+name: bash_completion
+
+prompt:
+Return a bash completion script for the borgmatic command. Produce this by introspecting
+borgmatic's command-line argument parsers.
+
+steps:
+1. Import or build the borgmatic argument parser.
+2. Retrieve all available subcommands and their respective parsers.
+3. Extract arguments from each parser, including global and subcommand-specific flags.
+4. Format the extracted commands and arguments for bash completion.
+5. Print or return the completion script content.
+
+generate_code:
+
+import argparse
+
+def bash_completion():
+    # Hypothetical function to build or retrieve the borgmatic argument parser
+    parser = build_borgmatic_parser()
+    
+    completions = []
+    
+    # Gather global arguments
+    for action in parser._actions:
+        if action.option_strings:
+            completions.extend(action.option_strings)
+    
+    # Gather subcommands and their arguments
+    subparsers_actions = [
+        action for action in parser._actions 
+        if isinstance(action, argparse._SubParsersAction)
+    ]
+    for subparsers_action in subparsers_actions:
+        for subcommand, subparser in subparsers_action.choices.items():
+            completions.append(subcommand)
+            for action in subparser._actions:
+                if action.option_strings:
+                    completions.extend(action.option_strings)
+    
+    # Print or format the completions in a way that's consumable by bash completion
+    for completion in sorted(set(completions)):
+        print(completion)
+
+def build_borgmatic_parser():
+    # This is a mock parser setup for example purposes.
+    # Replace with the actual borgmatic parser construction logic.
+    parser = argparse.ArgumentParser(prog="borgmatic")
+    parser.add_argument("-c", "--config", help="Config file path")
+    subparsers = parser.add_subparsers(title="subcommands", dest="command")
+    
+    init_parser = subparsers.add_parser("init", help="Initialize something")
+    init_parser.add_argument("--example", help="Example flag for init")
+
+    backup_parser = subparsers.add_parser("backup", help="Backup command")
+    backup_parser.add_argument("-v", "--verbose", action="store_true", help="Increase output verbosity")
+
+    return parser
+Logical flow is incomplete: The function only outputs a list of completion options, but does not generate a complete Bash completion script. The Bash completion script needs to include specific function and command registration logic; short options are not processed
+
+--------------------------------------------------

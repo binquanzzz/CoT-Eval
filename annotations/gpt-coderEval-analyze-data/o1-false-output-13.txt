@@ -1,0 +1,845 @@
+
+==================== 62b87b519a0c4fa8b80b3583 ====================
+file_path: lena/structures/graph.py
+project: ynikitenko/lena
+name: scale
+
+prompt:
+Get or set the scale of the graph.
+
+If *other* is ``None``, return the scale of this graph.
+
+If a numeric *other* is provided, rescale to that value.
+If the graph has unknown or zero scale,
+rescaling that will raise :exc:`~.LenaValueError`.
+
+To get meaningful results, graph's fields are used.
+Only the last coordinate is rescaled.
+For example, if the graph has *x* and *y* coordinates,
+then *y* will be rescaled, and for a 3-dimensional graph
+*z* will be rescaled.
+All errors are rescaled together with their coordinate.
+
+steps:
+1. Check if “other” is None; if so, simply return the current scale value.
+2. If “other” is not None, verify if the current scale is valid (not zero or unknown). Raise an error if it is not valid.
+3. Calculate the scaling factor as “other / current_scale”.
+4. Apply this factor to the last coordinate of each point in the graph’s data, as well as its associated errors.
+5. Update the current scale to “other”.
+
+generate_code:
+
+def scale(self, other=None):
+    # If other is None, return the current scale
+    if other is None:
+        return self._scale
+
+    # If current scale is zero or unknown, raise an error
+    if not self._scale or self._scale == 0:
+        raise ValueError("Cannot rescale when current scale is zero or unknown.")
+
+    # Calculate the factor by which to rescale
+    factor = other / self._scale
+
+    # Scale the last coordinate and its associated errors
+    # Assuming self.data is a list of tuples or lists
+    # where the last element is the value to be scaled
+    # and optional error can be stored as well
+    new_data = []
+    for point in self.data:
+        point_list = list(point)
+        # Scale the last coordinate
+        point_list[-1] *= factor
+        # If there's an error value in point_list, scale it accordingly
+        # (This part depends on how errors are stored,
+        # so adjust if needed)
+        new_data.append(tuple(point_list))
+
+    self.data = new_data
+
+    # Update the scale to the new value
+    self._scale = other
+
+gold_code:
+    def scale(self, other=None):
+        # this method is called scale() for uniformity with histograms
+        # And this looks really good: explicit for computations
+        # (not a subtle graph.scale, like a constant field (which is,
+        #  however, the case in graph - but not in other structures))
+        # and easy to remember (set_scale? rescale? change_scale_to?..)
+
+        # We modify the graph in place,
+        # because that would be redundant (not optimal)
+        # to create a new graph
+        # if we only want to change the scale of the existing one.
+
+        if other is None:
+            return self._scale
+
+        if not self._scale:
+            raise lena.core.LenaValueError(
+                "can't rescale a graph with zero or unknown scale"
+            )
+
+        last_coord_ind = self.dim - 1
+        last_coord_name = self.field_names[last_coord_ind]
+
+        last_coord_indices = ([last_coord_ind] +
+                self._get_err_indices(last_coord_name)
+        )
+
+        # In Python 2 3/2 is 1, so we want to be safe;
+        # the downside is that integer-valued graphs
+        # will become floating, but that is doubtfully an issue.
+        # Remove when/if dropping support for Python 2.
+        rescale = float(other) / self._scale
+
+        mul = operator.mul
+        partial = functools.partial
+
+        # a version with lambda is about 50% slower:
+        # timeit.timeit('[*map(lambda val: val*2, vals)]', \
+        #     setup='vals = list(range(45)); from operator import mul; \
+        #     from functools import partial')
+        # 3.159
+        # same setup for
+        # timeit.timeit('[*map(partial(mul, 2), vals)]',...):
+        # 2.075
+        # 
+        # [*map(...)] is very slightly faster than list(map(...)),
+        # but it's unavailable in Python 2 (and anyway less readable).
+
+        # rescale arrays of values and errors
+        for ind, arr in enumerate(self.coords):
+            if ind in last_coord_indices:
+                # Python lists are faster than arrays,
+                # https://stackoverflow.com/a/62399645/952234
+                # (because each time taking a value from an array
+                #  creates a Python object)
+                self.coords[ind] = list(map(partial(mul, rescale),
+                                            arr))
+
+        self._scale = other
+
+        # as suggested in PEP 8
+        return None
+
+analyze:
+CoT and code are logically correct, but there is no repo_level information, and fabricated properties and methods are used.
+--------------------------------------------------
+
+==================== 62b87b869a0c4fa8b80b35e1 ====================
+file_path: lena/structures/hist_functions.py
+project: ynikitenko/lena
+name: hist_to_graph
+
+prompt:
+Convert a :class:`.histogram` to a :class:`.graph`.
+
+*make_value* is a function to set the value of a graph's point.
+By default it is bin content.
+*make_value* accepts a single value (bin content) without context.
+
+This option could be used to create graph's error bars.
+For example, to create a graph with errors
+from a histogram where bins contain
+a named tuple with fields *mean*, *mean_error* and a context
+one could use
+
+>>> make_value = lambda bin_: (bin_.mean, bin_.mean_error)
+
+*get_coordinate* defines what the coordinate
+of a graph point created from a histogram bin will be.
+It can be "left" (default), "right" and "middle".
+
+*field_names* set field names of the graph. Their number
+must be the same as the dimension of the result.
+For a *make_value* above they would be
+*("x", "y_mean", "y_mean_error")*.
+
+*scale* becomes the graph's scale (unknown by default).
+If it is ``True``, it uses the histogram scale.
+
+*hist* must contain only numeric bins (without context)
+or *make_value* must remove context when creating a numeric graph.
+
+Return the resulting graph.
+
+steps:
+1. Parse the parameters and set a default make_value if none is provided.
+2. Decide the x-coordinate of each bin based on get_coordinate ("left", "right", "middle").
+3. Iterate through each bin of the histogram, compute its x-coordinate and value using make_value.
+4. Collect the resulting (x, y, ...) points in a data structure aligned with field_names.
+5. Determine the graph’s scale: if scale is True, use the histogram’s scale; otherwise use the provided value.
+6. Create and return the graph object with the gathered data, field names, and scale.
+
+generate_code:
+
+class Graph:
+    def __init__(self, data, field_names, scale=None):
+        self.data = data
+        self.field_names = field_names
+        self.scale = scale
+
+def hist_to_graph(hist, make_value=None, get_coordinate="left",
+                  field_names=("x", "y"), scale=None):
+    if make_value is None:
+        make_value = lambda val: val
+
+    if scale is True:
+        scale = getattr(hist, 'scale', None)
+    
+    data = []
+    for bin_ in hist.bins:
+        left, right = bin_.edges
+        if get_coordinate == "left":
+            x_coord = left
+        elif get_coordinate == "right":
+            x_coord = right
+        else:  # "middle"
+            x_coord = 0.5 * (left + right)
+        
+        value = make_value(bin_.content)
+        if not isinstance(value, tuple):
+            value = (value,)
+        
+        # Build the point entry for the graph
+        point = (x_coord,) + value
+        data.append(point)
+
+    graph = Graph(data, field_names, scale)
+    return graph
+
+gold_code:
+
+analyze:
+Similar to the first one of gemini. The overall logic of CoT and code is correct, but the wrong methods and properties are used due to the lack of context information.
+--------------------------------------------------
+
+==================== 62b8d22a48ba5a41d1c3f47d ====================
+file_path: cachetools/cache.py
+project: pexip/os-python-cachetools
+name: pop
+
+prompt:
+D.pop(k[,d]) -> v, remove specified key and return the corresponding value.
+If key is not found, d is returned if given, otherwise KeyError is raised.
+
+steps:
+1. Verify if the provided key exists in the data structure.
+2. If it exists, store the associated value, remove the key, and return the stored value.
+3. If it does not exist, determine if a default value was provided.
+4. If a default value is provided, return it.
+5. Otherwise, raise a KeyError for the missing key.
+
+generate_code:
+
+def pop(self, key, default=__marker):
+    if key in self._data:
+        value = self._data[key]
+        del self._data[key]
+        return value
+    elif default is not __marker:
+        return default
+    else:
+        raise KeyError(key)
+
+gold_code:
+
+analyze:
+Similar to the second one of deepseek, the generated code is roughly the same. Because of the lack of repo_level information, the model regards marker as/understands it as a global variable, and believes that the data to be popped is in self._data.
+
+--------------------------------------------------
+
+==================== 62b8d23748ba5a41d1c3f497 ====================
+file_path: cachetools/lfu.py
+project: pexip/os-python-cachetools
+name: popitem
+
+prompt:
+Remove and return the `(key, value)` pair least frequently used.
+
+steps:
+1. Identify the current minimum frequency among stored items.
+2. Select the item associated with this minimum frequency (if there are multiple, choose the oldest).
+3. Remove the selected item from both the frequency tracking structure and the main data dictionary.
+4. Update any necessary metadata (e.g., if no items remain with the old minimum frequency, adjust pointers or frequency counters as needed).
+5. Return the (key, value) pair of the removed item.
+
+generate_code:
+
+def popitem(self):
+    # Find the smallest frequency
+    min_freq = min(self.freq_map.keys())
+    
+    # Get the items that have this min_freq
+    keys_with_min_freq = self.freq_map[min_freq]
+    
+    # Determine which key to pop (e.g., first inserted)
+    # Assuming keys_with_min_freq is an OrderedDict
+    key_to_remove, _ = keys_with_min_freq.popitem(last=False)
+    
+    # Retrieve value, remove key from the main data dictionary
+    value, _ = self.data.pop(key_to_remove)
+    
+    # If no keys remain at this frequency, remove the freq entry
+    if not keys_with_min_freq:
+        del self.freq_map[min_freq]
+    
+    # Return the key and value
+    return key_to_remove, value
+
+gold_code:
+
+analyze:
+There are too few contexts, and the model can only make up attributes and methods by itself.
+
+--------------------------------------------------
+
+==================== 62b8d23c48ba5a41d1c3f49b ====================
+file_path: cachetools/mru.py
+project: pexip/os-python-cachetools
+name: popitem
+
+prompt:
+Remove and return the `(key, value)` pair most recently used.
+
+steps:
+1. Check if the data structure (e.g., OrderedDict) is empty to handle edge cases.
+2. Retrieve the most recently used (key, value) pair by referring to the last element in the order.
+3. Remove that pair from the data structure.
+4. Return the removed (key, value) pair.
+
+generate_code:
+
+def popitem(self):
+    if not self.cache:
+        raise KeyError("popitem(): no items to pop")
+    return self.cache.popitem(last=True)
+
+gold_code:
+
+analyze:
+Too few Prompts.
+
+
+--------------------------------------------------
+
+==================== 62b43425903eeb48555d3ea1 ====================
+file_path: sqlparams/__init__.py
+project: cpburnz/python-sql-parameters
+name: _create_in_regex
+
+prompt:
+Create the in-style parameter regular expression.
+
+Returns the in-style parameter regular expression (:class:`re.Pattern`).
+
+steps:
+1. 1) Import the “re” library to work with regular expressions.
+2. 2) Define the method “_create_in_regex” which takes “self” as a parameter.
+3. 3) Decide on the pattern that matches the in-style parameter format.
+4. 4) Use the “re.compile()” function to compile the pattern into a regular expression object.
+5. 5) Return the compiled regular expression.
+
+generate_code:
+
+import re
+from typing import Pattern
+
+def _create_in_regex(self) -> Pattern:
+    pattern = re.compile(r"\bin\s*\(([^)]*)\)")
+    return pattern
+
+gold_code:
+
+analyze:
+The 7th one with deepseek, there are too few propts.
+
+--------------------------------------------------
+
+==================== 62b43426903eeb48555d3ea2 ====================
+file_path: sqlparams/__init__.py
+project: cpburnz/python-sql-parameters
+name: _create_converter
+
+prompt:
+Create the parameter style converter.
+
+Returns the parameter style converter (:class:`._converting._Converter`).
+
+steps:
+1. Import or reference the _Converter class from the _converting module.
+2. Instantiate the _Converter class within _create_converter.
+3. Return the instantiated converter.
+
+generate_code:
+
+def _create_converter(self) -> _converting._Converter:
+    """
+    Create the parameter style converter.
+
+    Returns the parameter style converter (:class:`._converting._Converter`).
+    """
+    return _converting._Converter()
+
+gold_code:
+
+analyze:
+The 8th one with deepseek, there are too few propts.
+
+--------------------------------------------------
+
+==================== 62b8966c755ee91dce50a154 ====================
+file_path: dateutil/parser/isoparser.py
+project: pexip/os-python-dateutil
+name: isoparse
+
+prompt:
+Parse an ISO-8601 datetime string into a :class:`datetime.datetime`.
+
+An ISO-8601 datetime string consists of a date portion, followed
+optionally by a time portion - the date and time portions are separated
+by a single character separator, which is ``T`` in the official
+standard. Incomplete date formats (such as ``YYYY-MM``) may *not* be
+combined with a time portion.
+
+Supported date formats are:
+
+Common:
+
+- ``YYYY``
+- ``YYYY-MM`` or ``YYYYMM``
+- ``YYYY-MM-DD`` or ``YYYYMMDD``
+
+Uncommon:
+
+- ``YYYY-Www`` or ``YYYYWww`` - ISO week (day defaults to 0)
+- ``YYYY-Www-D`` or ``YYYYWwwD`` - ISO week and day
+
+The ISO week and day numbering follows the same logic as
+:func:`datetime.date.isocalendar`.
+
+Supported time formats are:
+
+- ``hh``
+- ``hh:mm`` or ``hhmm``
+- ``hh:mm:ss`` or ``hhmmss``
+- ``hh:mm:ss.ssssss`` (Up to 6 sub-second digits)
+
+Midnight is a special case for `hh`, as the standard supports both
+00:00 and 24:00 as a representation. The decimal separator can be
+either a dot or a comma.
+
+
+.. caution::
+
+    Support for fractional components other than seconds is part of the
+    ISO-8601 standard, but is not currently implemented in this parser.
+
+Supported time zone offset formats are:
+
+- `Z` (UTC)
+- `±HH:MM`
+- `±HHMM`
+- `±HH`
+
+Offsets will be represented as :class:`dateutil.tz.tzoffset` objects,
+with the exception of UTC, which will be represented as
+:class:`dateutil.tz.tzutc`. Time zone offsets equivalent to UTC (such
+as `+00:00`) will also be represented as :class:`dateutil.tz.tzutc`.
+
+:param dt_str:
+    A string or stream containing only an ISO-8601 datetime string
+
+:return:
+    Returns a :class:`datetime.datetime` representing the string.
+    Unspecified components default to their lowest value.
+
+.. warning::
+
+    As of version 2.7.0, the strictness of the parser should not be
+    considered a stable part of the contract. Any valid ISO-8601 string
+    that parses correctly with the default settings will continue to
+    parse correctly in future versions, but invalid strings that
+    currently fail (e.g. ``2017-01-01T00:00+00:00:00``) are not
+    guaranteed to continue failing in future versions if they encode
+    a valid date.
+
+.. versionadded:: 2.7.0
+
+steps:
+1. Identify and separate the date component from the time component (if present) by looking for the 'T' (or equivalent) separator.
+2. Parse the date portion: detect formats (YYYY, YYYY-MM, YYYYMM, YYYY-MM-DD, YYYYMMDD, week-based formats) and extract the correct year, month/day or year, week/day according to ISO-8601 rules. Unspecified components default to the lowest valid value.
+3. Check if a time portion exists. If it does, parse hours, minutes, seconds, and any possible fractional seconds (up to 6 digits), normalizing “24:00” to “00:00” if needed.
+4. Check for a time zone offset (Z for UTC or ±HH[:MM] / ±HHMM / ±HH). Convert this to a proper tzinfo (tzutc if UTC or tzoffset with the appropriate offset in minutes).
+5. Construct a datetime object using the parsed date, time, and time zone information.
+6. Return the resulting datetime object.
+
+generate_code:
+
+import re
+from datetime import datetime, timedelta
+from dateutil.tz import tzoffset, tzutc
+
+class ISO8601Parser:
+    def isoparse(self, dt_str):
+        # Step 1: Separate date and time components
+        # Look for 'T' or similar separator
+        # In strict ISO-8601 we expect 'T', but let's handle the possibility of space or no separator
+        date_str = dt_str
+        time_str = ''
+        if 'T' in dt_str:
+            date_str, time_str = dt_str.split('T', 1)
+        elif ' ' in dt_str:
+            date_str, time_str = dt_str.split(' ', 1)
+
+        # Step 2: Parse the date portion
+        # Detect if format is YYYY, YYYY-MM, YYYYMM, YYYY-MM-DD, YYYYMMDD,
+        # or the ISO week-based (YYYY-Www, YYYY-Www-D, YYYYWww, YYYYWwwD).
+        # We'll do it by checking for 'W' or splitting on '-'.
+        # Unspecified components default to 1 (January or 1st day).
+        year = 1
+        month = 1
+        day = 1
+
+        # Helper to convert ISO week-based year-week-day to a date
+        def iso_to_gregorian(iso_year, iso_week, iso_day=1):
+            # Per ISO 8601, week 1 is the week with the year's first Thursday in it
+            # We'll create a 4th of January date so we can find the first week
+            fourth_jan = datetime(iso_year, 1, 4)
+            # isoweekday: Monday=1, Sunday=7
+            # iso_day: Monday=1, Sunday=7
+            shift = fourth_jan.isoweekday() - 1
+            # The start (Monday) of the first ISO week
+            iso_week_start = fourth_jan - timedelta(days=shift)
+            # Add (week-1)*7 days + (day-1) days
+            return (iso_week_start + timedelta(weeks=iso_week-1, days=iso_day-1)).date()
+
+        if 'W' in date_str:
+            # It's a week-based date
+            # Could be YYYY-Www or YYYY-Www-D or without the dash
+            # Remove any possible dash before W
+            if '-' in date_str:
+                # e.g. "YYYY-Www" or "YYYY-Www-D"
+                parts = date_str.split('-')
+                # parts might be ["YYYY", "Www"] or ["YYYY", "Www", "D"]
+                if len(parts) == 2:
+                    # e.g. YYYY-Www
+                    y_part = parts[0]
+                    w_part = parts[1].replace('W', '')
+                    iso_year = int(y_part)
+                    iso_week = int(w_part)
+                    iso_day = 1
+                else:
+                    # e.g. YYYY-Www-D
+                    y_part = parts[0]
+                    w_part = parts[1].replace('W', '')
+                    d_part = parts[2]
+                    iso_year = int(y_part)
+                    iso_week = int(w_part)
+                    iso_day = int(d_part)
+            else:
+                # e.g. "YYYYWww" or "YYYYWwwD"
+                match = re.match(r'^(\d{4})W(\d{2})(\d?)$', date_str)
+                if match:
+                    iso_year = int(match.group(1))
+                    iso_week = int(match.group(2))
+                    iso_day = int(match.group(3)) if match.group(3) else 1
+                else:
+                    raise ValueError("Invalid ISO week date format")
+            gd = iso_to_gregorian(iso_year, iso_week, iso_day)
+            year, month, day = gd.year, gd.month, gd.day
+        else:
+            # Normal date formats
+            # Remove any dashes
+            d_str = date_str.replace('-', '')
+            # Possible lengths: 4 (YYYY), 6 (YYYYMM), 8 (YYYYMMDD)
+            if len(d_str) == 4:
+                # YYYY
+                year = int(d_str)
+            elif len(d_str) == 6:
+                # YYYYMM
+                year = int(d_str[:4])
+                month = int(d_str[4:])
+            elif len(d_str) == 8:
+                # YYYYMMDD
+                year = int(d_str[:4])
+                month = int(d_str[4:6])
+                day = int(d_str[6:8])
+            else:
+                raise ValueError("Invalid or unsupported date format")
+
+        # Step 3: Default time components
+        hour = 0
+        minute = 0
+        second = 0
+        microsecond = 0
+        tz_info = None
+
+        # Step 4: Parse the time portion (including offset if present)
+        if time_str:
+            # We might have something like "hh:mm:ss.sss...±HH:MM" or "hhmmss,sssZ", etc.
+            # Let's separate out the offset if present, capturing any trailing +... / -... / Z
+            # We'll use a regex with named groups
+            time_regex = re.compile(
+                r'^(?P<hms>[\d.,:]+)'           # hours/minutes/seconds portion
+                r'(?P<offset>Z|[+\-]\d{1,2}(?::?\d{2})?)?$'  # offset portion
+            )
+            m = time_regex.match(time_str)
+            if not m:
+                raise ValueError("Invalid time format")
+            hms_part = m.group('hms')
+            offset_part = m.group('offset')
+
+            # Now parse hms_part. Possible forms:
+            # hh, hh:mm, hhmm, hh:mm:ss, hhmmss, hh:mm:ss.ssssss
+            # Replace ',' with '.' for fractional second consistency
+            hms_part = hms_part.replace(',', '.')
+            # Remove all colons to unify approach, we'll parse length
+            just_digits = hms_part.replace(':', '')
+            frac = 0.0
+            if '.' in just_digits:
+                # separate fractional part
+                main_part, frac_part = just_digits.split('.', 1)
+                frac_part = frac_part[:6]  # up to 6 digits
+                frac = float("0." + frac_part)
+            else:
+                main_part = just_digits
+
+            if len(main_part) == 2:
+                hour = int(main_part)
+            elif len(main_part) == 4:
+                hour = int(main_part[:2])
+                minute = int(main_part[2:])
+            elif len(main_part) == 6:
+                hour = int(main_part[:2])
+                minute = int(main_part[2:4])
+                second = int(main_part[4:])
+            else:
+                raise ValueError("Invalid time component length")
+
+            # Handle fractional seconds
+            if frac:
+                microsecond = int(round(frac * 1_000_000))
+
+            # Special case: if hour = 24, convert to 0 and potentially bump day
+            if hour == 24 and minute == 0 and second == 0 and microsecond == 0:
+                hour = 0
+                # Move to next day
+                # We'll handle that after building the datetime, simpler to adjust
+                # but let's do it here for clarity.
+                base_dt = datetime(year, month, day) + timedelta(days=1)
+                year, month, day = base_dt.year, base_dt.month, base_dt.day
+
+            # Now parse the offset
+            if offset_part:
+                if offset_part == 'Z':
+                    tz_info = tzutc()
+                else:
+                    # offset_part looks like +HH or +HH:MM or -HHMM
+                    # remove the sign first, parse hour/minute
+                    sign = 1
+                    if offset_part[0] == '-':
+                        sign = -1
+                    numeric_part = offset_part[1:]
+                    numeric_part = numeric_part.replace(':', '')
+                    # numeric_part can be 2 or 4 digits
+                    if len(numeric_part) == 2:
+                        offset_h = int(numeric_part)
+                        offset_m = 0
+                    elif len(numeric_part) == 4:
+                        offset_h = int(numeric_part[:2])
+                        offset_m = int(numeric_part[2:])
+                    else:
+                        raise ValueError("Invalid offset format")
+                    total_offset_minutes = sign * (offset_h * 60 + offset_m)
+                    tz_info = tzoffset(None, total_offset_minutes * 60)
+
+        # Step 5: Construct datetime object
+        result = datetime(year, month, day, hour, minute, second, microsecond, tz_info)
+
+        # If we did the “24:00” trick, we've already adjusted the date. The datetime is ready.
+        # Step 6: Return the resulting datetime
+        return result
+
+gold_code:
+@_takes_ascii
+    def isoparse(self, dt_str):
+        components, pos = self._parse_isodate(dt_str)
+
+        if len(dt_str) > pos:
+            if self._sep is None or dt_str[pos:pos + 1] == self._sep:
+                components += self._parse_isotime(dt_str[pos + 1:])
+            else:
+                raise ValueError('String contains unknown ISO components')
+
+        if len(components) > 3 and components[3] == 24:
+            components[3] = 0
+            return datetime(*components) + timedelta(days=1)
+
+        return datetime(*components)
+	
+analyze:
+Similar to deepseek's 9th, the method provided by repo_level is lacking, and the model can only write methods on its own to achieve the requirements.
+Regarding the processing of "YYYY-WWW" (ISO week), CoT says "The parsing date part: detect the format (YYYY, YYYYY-MM, YYYYMM, YYYY-MM-DD, YYYYMMDD, week-based format), and extract the correct year, month/day or year, week-based format according to ISO-8601 rules." However, the code is processed by if 'W' in date_str (whether there is 'W' in the string), which obviously cannot correctly parse week-based formats such as "YYYY-WWW".
+
+
+--------------------------------------------------
+
+==================== 62b896de755ee91dce50a183 ====================
+file_path: dateutil/parser/_parser.py
+project: pexip/os-python-dateutil
+name: parse
+
+prompt:
+Parse the date/time string into a :class:`datetime.datetime` object.
+
+:param timestr:
+    Any date/time string using the supported formats.
+
+:param default:
+    The default datetime object, if this is a datetime object and not
+    ``None``, elements specified in ``timestr`` replace elements in the
+    default object.
+
+:param ignoretz:
+    If set ``True``, time zones in parsed strings are ignored and a
+    naive :class:`datetime.datetime` object is returned.
+
+:param tzinfos:
+    Additional time zone names / aliases which may be present in the
+    string. This argument maps time zone names (and optionally offsets
+    from those time zones) to time zones. This parameter can be a
+    dictionary with timezone aliases mapping time zone names to time
+    zones or a function taking two parameters (``tzname`` and
+    ``tzoffset``) and returning a time zone.
+
+    The timezones to which the names are mapped can be an integer
+    offset from UTC in seconds or a :class:`tzinfo` object.
+
+    .. doctest::
+       :options: +NORMALIZE_WHITESPACE
+
+        >>> from dateutil.parser import parse
+        >>> from dateutil.tz import gettz
+        >>> tzinfos = {"BRST": -7200, "CST": gettz("America/Chicago")}
+        >>> parse("2012-01-19 17:21:00 BRST", tzinfos=tzinfos)
+        datetime.datetime(2012, 1, 19, 17, 21, tzinfo=tzoffset(u'BRST', -7200))
+        >>> parse("2012-01-19 17:21:00 CST", tzinfos=tzinfos)
+        datetime.datetime(2012, 1, 19, 17, 21,
+                          tzinfo=tzfile('/usr/share/zoneinfo/America/Chicago'))
+
+    This parameter is ignored if ``ignoretz`` is set.
+
+:param \*\*kwargs:
+    Keyword arguments as passed to ``_parse()``.
+
+:return:
+    Returns a :class:`datetime.datetime` object or, if the
+    ``fuzzy_with_tokens`` option is ``True``, returns a tuple, the
+    first element being a :class:`datetime.datetime` object, the second
+    a tuple containing the fuzzy tokens.
+
+:raises ParserError:
+    Raised for invalid or unknown string format, if the provided
+    :class:`tzinfo` is not in a valid format, or if an invalid date
+    would be created.
+
+:raises TypeError:
+    Raised for non-string or character stream input.
+
+:raises OverflowError:
+    Raised if the parsed date exceeds the largest valid C integer on
+    your system.
+
+steps:
+1. 1) Check and validate the input types (e.g., ensure “timestr” is a string). If not, raise an appropriate error.
+2. 2) Ensure that if a default datetime object is provided, it is correctly used. Parse the provided string to identify any date/time components that will replace or supplement the default datetime object.
+3. 3) Parse the string for date/time components using the internal parsing logic (e.g., a custom parsing method or a helper function). Extract year, month, day, hour, minute, second, microsecond, and any potential fuzzy tokens.
+4. 4) If a time zone is found and “ignoretz” is False, apply the appropriate tzinfo. Convert or map the time zone using “tzinfos” if provided. If “ignoretz” is True, ignore any time zone data.
+5. 5) Assemble the parsed components into a datetime object. If a default is provided, replace only those components indicated in the parsed string while preserving the rest from the default.
+6. 6) If “fuzzy_with_tokens” is specified, return both the datetime object and any remaining tokens. Otherwise, return just the datetime object.
+7. 7) Handle any potential edge cases such as invalid dates, unknown time zones, or numeric overflow issues. Raise the appropriate errors (ParserError, TypeError, OverflowError) when encountered.
+
+generate_code:
+
+import datetime
+
+class MyDateParser:
+    def parse(self, timestr, default=None, ignoretz=False, tzinfos=None, **kwargs):
+        # Step 1: Validate input
+        if not isinstance(timestr, str):
+            raise TypeError("Input timestr must be a string.")
+        
+        # Optional arg from kwargs
+        fuzzy_with_tokens = kwargs.get("fuzzy_with_tokens", False)
+        
+        # Step 2: Check default datetime
+        if default is not None and not isinstance(default, datetime.datetime):
+            raise TypeError("Default value must be a datetime object or None.")
+        
+        # Step 3: Parse string to extract date/time parts (placeholder logic)
+        # For demonstration, let's assume a simple YYYY-MM-DD format
+        parts = timestr.strip().split()
+        # We'll fake token extraction logic just for demonstration
+        parsed_date_str = parts[0]
+        fuzzy_tokens = tuple(parts[1:]) if len(parts) > 1 else tuple()
+        
+        year, month, day = 1970, 1, 1  # default fallback
+        try:
+            y, m, d = parsed_date_str.split('-')
+            year, month, day = int(y), int(m), int(d)
+        except Exception:
+            raise ValueError("Unable to parse date string (expected 'YYYY-MM-DD').")
+        
+        # Step 4: Time zone handling (placeholder, ignoring for demonstration)
+        # If ignoretz is False and tzinfos is provided, apply correct tzinfo
+        # ...
+        
+        # Step 5: Build final datetime
+        if default:
+            # Replace only date parts from parsed
+            final_dt = default.replace(year=year, month=month, day=day)
+        else:
+            final_dt = datetime.datetime(year, month, day)
+        
+        # Step 6: Return result
+        if fuzzy_with_tokens:
+            return final_dt, fuzzy_tokens
+        else:
+            return final_dt
+
+gold_code:
+    def parse(self, timestr, default=None,
+              ignoretz=False, tzinfos=None, **kwargs):
+        if default is None:
+            default = datetime.datetime.now().replace(hour=0, minute=0,
+                                                      second=0, microsecond=0)
+
+        res, skipped_tokens = self._parse(timestr, **kwargs)
+
+        if res is None:
+            raise ParserError("Unknown string format: %s", timestr)
+
+        if len(res) == 0:
+            raise ParserError("String does not contain a date: %s", timestr)
+
+        try:
+            ret = self._build_naive(res, default)
+        except ValueError as e:
+            six.raise_from(ParserError(e.args[0] + ": %s", timestr), e)
+
+        if not ignoretz:
+            ret = self._build_tzaware(ret, res, tzinfos)
+
+        if kwargs.get('fuzzy_with_tokens', False):
+            return ret, skipped_tokens
+        else:
+            return ret
+
+analyze:
+gold_code uses a method other than the context _parse, which is not provided.
+CoT according to the method of throwing exception handling (throwing ParserError, TypeError, OverflowError), the throwing in the code is indeed TypeError, ValueError.
+
+--------------------------------------------------

@@ -1,0 +1,377 @@
+
+==================== 630629e252e177c0ba46a0d6 ====================
+_id: 630629e252e177c0ba46a0d6
+file_path: federation/utils/diaspora.py
+project: jaywink/federation
+name: retrieve_diaspora_host_meta
+
+prompt:
+Retrieve a remote Diaspora host-meta document.
+
+:arg host: Host to retrieve from
+:returns: ``XRD`` instance
+
+steps:
+1. Construct the Diaspora host-meta URL by combining the given host with the path "/.well-known/host-meta".
+2. Use an HTTP library (e.g., "requests") to send a GET request to the constructed URL.
+3. Raise an error if the request is not successful (e.g., using "response.raise_for_status()").
+4. Parse the received data as an XRD document. This can be done using appropriate XML parsing libraries.
+5. Return the parsed XRD data or raise an exception if parsing fails.
+
+generate_code:
+
+import requests
+import xml.etree.ElementTree as ET
+
+def retrieve_diaspora_host_meta(host):
+    url = f"https://{host}/.well-known/host-meta"
+    response = requests.get(url)
+    response.raise_for_status()
+    xml_data = response.text
+    xrd = ET.fromstring(xml_data)
+    return xrd
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information - lack of repo-level information
+Missing `fetch_document` function information
+==================== 630629e752e177c0ba46a0fb ====================
+_id: 630629e752e177c0ba46a0fb
+file_path: federation/utils/network.py
+project: jaywink/federation
+name: send_document
+
+prompt:
+Helper method to send a document via POST.
+
+Additional ``*args`` and ``**kwargs`` will be passed on to ``requests.post``.
+
+:arg url: Full url to send to, including protocol
+:arg data: Dictionary (will be form-encoded), bytes, or file-like object to send in the body
+:arg timeout: Seconds to wait for response (defaults to 10)
+:arg method: Method to use, defaults to post
+:returns: Tuple of status code (int or None) and error (exception class instance or None)
+
+steps:
+1. Import the necessary library for sending HTTP requests.
+2. Define the send_document function that accepts url, data, timeout, method, and additional arguments.
+3. Convert the method parameter to lowercase to handle different method inputs consistently.
+4. If the method is “post,” use the requests.post function and pass the appropriate parameters.
+5. If the method is not “post,” default to sending a GET request with parameters.
+6. Return the response for further handling or processing.
+
+generate_code:
+
+import requests
+
+def send_document(url, data, timeout=10, method="post", *args, **kwargs):
+    if method.lower() == "post":
+        response = requests.post(url, data=data, timeout=timeout, *args, **kwargs)
+    else:
+        response = requests.get(url, params=data, timeout=timeout, *args, **kwargs)
+    return response
+
+
+--------------------------------------------------
+analyze
+External factors - missing context information - missing input parameters
+Missing method value
+==================== 6306091073426c38ae68acac ====================
+_id: 6306091073426c38ae68acac
+file_path: infrared/core/utils/dict_utils.py
+project: redhat-openstack/infrared
+name: dict_insert
+
+prompt:
+insert a value of a nested key into a dictionary
+
+to insert value for a nested key, all ancestor keys should be given as
+method's arguments
+
+example:
+  dict_insert({}, 'val', 'key1.key2'.split('.'))
+
+:param dic: a dictionary object to insert the nested key value into
+:param val: a value to insert to the given dictionary
+:param key: first key in a chain of key that will store the value
+:param keys: sub keys in the keys chain
+
+steps:
+1. Initialize a reference (e.g., current_dict) to point to the given dictionary 'dic'.
+2. Store the first key in a list or sequence with any additional keys to handle them together.
+3. Iterate over all but the last key in this sequence.
+4. Check if the current key does not exist in the current dictionary or is not a dictionary; if so, initialize it as an empty dictionary.
+5. Advance the reference to the nested dictionary using the current key.
+6. After processing all intermediate keys, set the value in the dictionary at the final key.
+7. Return the updated dictionary to retain the changes.
+
+generate_code:
+def dict_insert(dic, val, key, *keys):
+    current_dict = dic
+    all_keys = (key,) + keys
+    for k in all_keys[:-1]:
+        if k not in current_dict or not isinstance(current_dict[k], dict):
+            current_dict[k] = {}
+        current_dict = current_dict[k]
+    current_dict[all_keys[-1]] = val
+    return dic
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information - lack of repo-level information
+Missing `dict_merge` function information
+==================== 6306091a73426c38ae68acc8 ====================
+_id: 6306091a73426c38ae68acc8
+file_path: tests/test_complex_types.py
+project: redhat-openstack/infrared
+name: list_of_file_names
+
+prompt:
+Create a new IniType complex type
+
+steps:
+1. Import or define the required ListOfFileNames class or function from the cli module.
+2. Define the function list_of_file_names with parameters settings_dirs and spec_option.
+3. Create and return a new IniType complex type via cli.ListOfFileNames with the provided arguments.
+4. Ensure the function returns the created object.
+
+generate_code:
+
+from cli import ListOfFileNames
+
+def list_of_file_names(settings_dirs, spec_option):
+    """
+    Create and return a new IniType complex type via cli.ListOfFileNames()
+    """
+    return ListOfFileNames(settings_dirs, spec_option)
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information - lack of repo-level information
+Missing `ListOfFileNames` class information
+==================== 6306091b73426c38ae68acd9 ====================
+_id: 6306091b73426c38ae68acd9
+file_path: infrared/core/services/__init__.py
+project: redhat-openstack/infrared
+name: workspace_manager
+
+prompt:
+Gets the workspace manager.
+
+steps:
+1. Obtain the correct service name from ServiceName.WORKSPACE_MANAGER
+2. Use cls._get_service(ServiceName.WORKSPACE_MANAGER) to retrieve the workspace manager
+3. Return the retrieved workspace manager
+
+generate_code:
+
+from your_service_module import ServiceName
+
+def workspace_manager(cls):
+    """
+    Gets the workspace manager via ServiceName.WORKSPACE_MANAGER in cls._get_service()
+    """
+    return cls._get_service(ServiceName.WORKSPACE_MANAGER)
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information
+Missing `CoreSettings` class information
+==================== 6306091b73426c38ae68acda ====================
+_id: 6306091b73426c38ae68acda
+file_path: infrared/core/services/__init__.py
+project: redhat-openstack/infrared
+name: plugins_manager
+
+prompt:
+Gets the plugin manager.
+
+steps:
+1. Import or define the ServiceName enumeration or constant.
+2. Implement or ensure cls has the method _get_service() to retrieve services by name.
+3. In the plugins_manager function, call cls._get_service with ServiceName.PLUGINS_MANAGER.
+4. Return the retrieved plugin manager object.
+
+generate_code:
+
+from enum import Enum
+
+class ServiceName(Enum):
+    PLUGINS_MANAGER = "plugins_manager_service"
+
+class MyClass:
+    @classmethod
+    def _get_service(cls, service_name):
+        # Placeholder implementation - this should retrieve and return the actual service instance
+        if service_name == ServiceName.PLUGINS_MANAGER:
+            return "PluginManagerInstance"
+        return None
+
+    @classmethod
+    def plugins_manager(cls):
+        """
+        Gets the plugin manager via ServiceName.PLUGINS_MANAGER in cls._get_service()
+        """
+        return cls._get_service(ServiceName.PLUGINS_MANAGER)
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information
+Missing `ServiceName` and `CoreSettings` class information
+==================== 6306091c73426c38ae68acdc ====================
+_id: 6306091c73426c38ae68acdc
+file_path: infrared/core/utils/validators.py
+project: redhat-openstack/infrared
+name: validate_from_content
+
+prompt:
+validates that spec (YAML) content has all required fields
+
+:param spec_content: content of spec file
+:raise IRValidatorException: when mandatory data
+is missing in spec file
+:return: Dictionary with data loaded from a spec (YAML) file
+
+steps:
+1. Load the YAML content using a YAML parser and convert it into a Python dictionary.
+2. Define a list of required fields that must be present in the dictionary.
+3. Check if each required field exists in the dictionary. If any is missing, raise an exception.
+4. If all required fields are present, return the dictionary.
+
+generate_code:
+
+import yaml
+
+class IRValidatorException(Exception):
+    pass
+
+class SpecValidator:
+    REQUIRED_FIELDS = ["metadata", "spec"]  # example of required fields
+
+    @classmethod
+    def validate_from_content(cls, spec_content=None):
+        """
+        validates that spec (YAML) content has all required fields
+
+        :param spec_content: content of spec file
+        :raise IRValidatorException: when mandatory data
+        is missing in spec file
+        :return: Dictionary with data loaded from a spec (YAML) file
+        """
+        if not spec_content:
+            raise IRValidatorException("Spec content is empty")
+
+        try:
+            data = yaml.safe_load(spec_content)
+        except yaml.YAMLError as e:
+            raise IRValidatorException(f"Invalid YAML content: {e}")
+
+        if not isinstance(data, dict):
+            raise IRValidatorException("YAML content must be a dictionary")
+
+        for field in cls.REQUIRED_FIELDS:
+            if field not in data:
+                raise IRValidatorException(f"Missing required field: {field}")
+
+        return data
+
+
+--------------------------------------------------
+analyze
+External factors - Implementation details are unclear
+Specific description of IRValidatorException not thrown
+==================== 6306091c73426c38ae68acdd ====================
+_id: 6306091c73426c38ae68acdd
+file_path: infrared/core/utils/validators.py
+project: redhat-openstack/infrared
+name: validate_from_file
+
+prompt:
+Loads & validates that a YAML file has all required fields
+
+:param yaml_file: Path to YAML file
+:raise IRValidatorException: when mandatory data is missing in file
+:return: Dictionary with data loaded from a YAML file
+
+steps:
+1. Check if the yaml_file path is provided. Raise an exception if it is missing.
+2. Open the file and load its contents via YAML. Handle file or parsing errors if they occur.
+3. Check that the loaded YAML data contains all mandatory fields. Raise an exception if any are missing.
+4. Return the validated data dictionary.
+
+generate_code:
+
+import yaml
+
+class IRValidatorException(Exception):
+    pass
+
+class Validator:
+    @classmethod
+    def validate_from_file(cls, yaml_file=None):
+        if not yaml_file:
+            raise IRValidatorException("YAML file path is not provided.")
+
+        try:
+            with open(yaml_file, 'r') as file:
+                data = yaml.safe_load(file)
+        except Exception as e:
+            raise IRValidatorException(f"Error loading YAML file: {e}")
+
+        # Define mandatory fields
+        mandatory_fields = ["field1", "field2"]
+
+        # Check all mandatory fields
+        for field in mandatory_fields:
+            if field not in data:
+                raise IRValidatorException(f"Mandatory field '{field}' is missing in the YAML file.")
+
+        return data
+
+
+--------------------------------------------------
+analyze
+External factors - Implementation details are unclear
+Specific description of IRValidatorException not thrown
+==================== 6306091d73426c38ae68ace5 ====================
+_id: 6306091d73426c38ae68ace5
+file_path: infrared/core/inspector/helper.py
+project: redhat-openstack/infrared
+name: _include_groups
+
+prompt:
+Resolves the include dict directive in the spec files.
+
+steps:
+1. Identify if the dictionary contains the 'include' directive.
+2. Retrieve all specified groups from the include directive.
+3. Merge these groups into the main parser_dict structure.
+4. Remove the 'include' directive to avoid redundant processing.
+5. Return the updated parser_dict.
+
+generate_code:
+
+def _include_groups(self, parser_dict):
+    """
+    Resolves the include dict directive in the spec files.
+    """
+    includes = parser_dict.get("include", {})
+    
+    for group_name, group_values in includes.items():
+        parser_dict[group_name] = group_values
+
+    if "include" in parser_dict:
+        del parser_dict["include"]
+
+    return parser_dict
+
+
+--------------------------------------------------
+analyze
+External factors - lack of context information
+Missing `SpecDictHelper` class information

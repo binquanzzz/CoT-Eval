@@ -1,0 +1,576 @@
+text:
+<issue>
+Allow migrations directories without __init__.py files
+Description
+
+		(last modified by Tim Graham)
+
+Background: In python 3 a package with no __init__.py is implicitly a namespace package, so it has no __file__ attribute.
+The migrate command currently checks for existence of a __file__ attribute on the migrations package. This check was introduced in #21015, because the __file__ attribute was used in migration file discovery.
+However, in #23406 migration file discovery was changed to use pkgutil.iter_modules (), instead of direct filesystem access. pkgutil. iter_modules() uses the package's __path__ list, which exists on implicit namespace packages.
+As a result, the __file__ check is no longer needed, and in fact prevents migrate from working on namespace packages (implicit or otherwise).
+Related work: #29091
+
+</issue>
+
+steps:
+
+1. Locate the code in the `load_disk` method of `django/db/migrations/loader.py` where the check for the `__file__` attribute occurs.
+2. Remove the check that adds the app to `unmigrated_apps` if the module's `__file__` attribute is `None`, as this check is no longer necessary after migration discovery was updated to use `pkgutil.iter_modules()`.
+3. Ensure that the subsequent check for the `__path__` attribute remains intact to verify that the module is a valid package.
+4. Test the modification to confirm that Django can now handle migration directories without `__init__.py` files by treating them as namespace packages.
+
+model_patch:
+
+--- a/django/db/migrations/loader.py
++++ b/django/db/migrations/loader.py
+@@ -88,10 +88,6 @@
+                 raise
+             else:
+                 # Empty directories are namespaces.
+-                # getattr() needed on PY36 and older (replace w/attribute access).
+-                if getattr(module, '__file__', None) is None:
+-                    self.unmigrated_apps.add(app_config.label)
+-                    continue
+                 # Module is not a package (e.g. migrations.py).
+                 if not hasattr(module, '__path__'):
+                     self.unmigrated_apps.add(app_config.label)
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/migrations/loader.py b/django/db/migrations/loader.py
+--- a/django/db/migrations/loader.py
++++ b/django/db/migrations/loader.py
+@@ -84,11 +84,6 @@ def load_disk(self):
+                     continue
+                 raise
+             else:
+-                # Empty directories are namespaces.
+-                # getattr() needed on PY36 and older (replace w/attribute access).
+-                if getattr(module, '__file__', None) is None:
+-                    self.unmigrated_apps.add(app_config.label)
+-                    continue
+                 # Module is not a package (e.g. migrations.py).
+                 if not hasattr(module, '__path__'):
+                     self.unmigrated_apps.add(app_config.label)
+@@ -96,11 +91,14 @@ def load_disk(self):
+                 # Force a reload if it's already loaded (tests need this)
+                 if was_loaded:
+                     reload(module)
+-            self.migrated_apps.add(app_config.label)
+             migration_names = {
+                 name for _, name, is_pkg in pkgutil.iter_modules(module.__path__)
+                 if not is_pkg and name[0] not in '_~'
+             }
++            if migration_names or self.ignore_no_migrations:
++                self.migrated_apps.add(app_config.label)
++            else:
++                self.unmigrated_apps.add(app_config.label)
+             # Load migrations
+             for migration_name in migration_names:
+                 migration_path = '%s.%s' % (module_name, migration_name)
+
+</patch>
+
+--------------------------------------------------
+analyze
+Prompt fuzzy - the implementation process is unclear - the classification process is unclear
+Prompt only explains the check of deletion for __file__, but does not further explain the need to reclassify migrated_apps and unmigrated_apps, which leads to an error.
+text:
+<issue>
+Support setting Secure, HttpOnly, SameSite on the language cookie
+Description
+
+I propose to add the following settings, with the following default values:
+LANGUAGE_COOKIE_SECURE = False
+LANGUAGE_COOKIE_HTTPONLY = False
+LANGUAGE_COOKIE_SAMESITE = None
+The default values maintain the current behavior.
+These settings do not provide much security value, since the language is not secret or sensitive. This was also discussed briefly here: ​https://github.com/django/django/pull/8380#discussion_r112448195. The reasons I'd like to add them are:
+Sometimes auditors require them.
+I personally prefer to set them unless I have a reason *not* to.
+Browsers are starting to strongly nudge toward HttpOnly and Secure when possible, e.g. ​https://webkit.org/blog/8613/intelligent-tracking-prevention-2-1/.
+
+</issue>
+
+steps:
+
+1. Locate the section in the Django global settings file where language cookie configurations are defined. This is in `django/conf/global_settings.py`.
+
+2. Add the new settings `LANGUAGE_COOKIE_SECURE`, `LANGUAGE_COOKIE_HTTPONLY`, and `LANGUAGE_COOKIE_SAMESITE` to the existing language cookie settings block. Set their default values to `False`, `False`, and `None` respectively to maintain current behavior.
+
+3. Ensure the new settings are placed after existing language cookie parameters (`LANGUAGE_COOKIE_PATH`) and properly formatted with appropriate comments if necessary.
+
+4. Verify that the settings are correctly defined without syntax errors, allowing Django to use these configurations when setting the language cookie in relevant middleware or views.
+model_patch:
+
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -158,6 +158,9 @@
+ LANGUAGE_COOKIE_AGE = None
+ LANGUAGE_COOKIE_DOMAIN = None
+ LANGUAGE_COOKIE_PATH = '/'
++LANGUAGE_COOKIE_SECURE = False
++LANGUAGE_COOKIE_HTTPONLY = False
++LANGUAGE_COOKIE_SAMESITE = None
+
+
+ # If you set this to True, Django will format dates, numbers and calendars
+
+
+gold_patch:
+<patch>
+diff --git a/django/conf/global_settings.py b/django/conf/global_settings.py
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -154,6 +154,9 @@ def gettext_noop(s):
+ LANGUAGE_COOKIE_AGE = None
+ LANGUAGE_COOKIE_DOMAIN = None
+ LANGUAGE_COOKIE_PATH = '/'
++LANGUAGE_COOKIE_SECURE = False
++LANGUAGE_COOKIE_HTTPONLY = False
++LANGUAGE_COOKIE_SAMESITE = None
+
+
+ # If you set this to True, Django will format dates, numbers and calendars
+diff --git a/django/views/i18n.py b/django/views/i18n.py
+--- a/django/views/i18n.py
++++ b/django/views/i18n.py
+@@ -55,6 +55,9 @@ def set_language(request):
+                 max_age=settings.LANGUAGE_COOKIE_AGE,
+                 path=settings.LANGUAGE_COOKIE_PATH,
+                 domain=settings.LANGUAGE_COOKIE_DOMAIN,
++                secure=settings.LANGUAGE_COOKIE_SECURE,
++                httponly=settings.LANGUAGE_COOKIE_HTTPONLY,
++                samesite=settings.LANGUAGE_COOKIE_SAMESITE,
+             )
+     return response
+
+
+</patch>
+
+--------------------------------------------------
+analyze
+prompt only mentioned the addition of three new attributes, but did not mention where these three attributes were applied.
+text:
+<issue>
+Add support for postgresql client certificates and key to dbshell.
+Description
+
+This bug is very similar to the #28322
+A common security procedure for DB access is to require mutual TLS for the DB connection.
+This involves specifying a server certificate, client certificate, and client key when connecting.
+Django already supports this configuration, it looks like this:
+DATABASES = {
+	'default': {
+		'ENGINE': 'django.db.backends.postgresql',
+		'NAME': os.environ.get('POSTGRES_DB_NAME'),
+		'USER': os.environ.get('POSTGRES_DB_USER'),
+		'HOST': 'postgres',
+		'PORT': '5432',
+		'SCHEMA': os.environ.get('POSTGRES_DB_SCHEMA'),
+		'OPTIONS': {
+			 'sslmode': 'verify-ca',
+			 'sslrootcert': os.environ.get('POSTGRES_CLI_SSL_CA', 'ca.crt'),
+			 'sslcert': os.environ.get('POSTGRES_CLI_SSL_CRT', 'client_cert_chain.crt'),
+			 'sslkey': os.environ.get('POSTGRES_CLI_SSL_KEY', 'client_key.key')
+		}
+	}
+}
+However the dbshell command does not support the client cert params.
+Should be a trivial fix to add in support for the other 'ssl' parameters required here.
+
+</issue>
+
+steps:
+
+1. **Locate the PostgreSQL DatabaseClient runshell method**: Identify where the `runshell` method is defined in the PostgreSQL backend's client module. This method is responsible for executing the `psql` command.
+
+2. **Collect SSL parameters from database OPTIONS**: In the `runshell` method, retrieve the `sslmode`, `sslrootcert`, `sslcert`, and `sslkey` values from the database settings' `OPTIONS` dictionary if they exist.
+
+3. **Set environment variables for psql**: Create a copy of the current environment variables and update them with the SSL parameters. Map each SSL parameter to its corresponding environment variable (`PGSSLMODE`, `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`).
+
+4. **Pass the environment to the subprocess call**: Modify the subprocess call that executes `psql` to include the updated environment variables. This ensures `psql` uses the client certificates and keys when connecting to the database.
+
+5. **Handle edge cases**: Ensure that the code checks for the presence of each SSL parameter before adding it to the environment to avoid KeyErrors. Only set the environment variables if the parameters are provided in the database configuration.
+
+model_patch:
+
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -1,5 +1,6 @@
+ import signal
+ import subprocess
++import os
+
+ from django.db.backends.base.client import BaseDatabaseClient
+
+@@ -59,5 +60,16 @@
+             args += ["-p", str(port)]
+         args += [dbname]
+
++        env = os.environ.copy()
++        options = self.connection.settings_dict.get('OPTIONS', {})
++        env_vars = {
++            'PGSSLMODE': options.get('sslmode'),
++            'PGSSLROOTCERT': options.get('sslrootcert'),
++            'PGSSLCERT': options.get('sslcert'),
++            'PGSSLKEY': options.get('sslkey'),
++        }
++        for key, value in env_vars.items():
++            if value is not None:
++                env[key] = value
+         sigint_handler = signal.getsignal(signal.SIGINT)
+         try:
+             signal.signal(signal.SIGINT, signal.SIG_IGN)
+-            subprocess.check_call(args)
++            subprocess.check_call(args, env=env)
+         finally:
+             signal.signal(signal.SIGINT, sigint_handler)
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -17,6 +17,10 @@ def runshell_db(cls, conn_params):
+         dbname = conn_params.get('database', '')
+         user = conn_params.get('user', '')
+         passwd = conn_params.get('password', '')
++        sslmode = conn_params.get('sslmode', '')
++        sslrootcert = conn_params.get('sslrootcert', '')
++        sslcert = conn_params.get('sslcert', '')
++        sslkey = conn_params.get('sslkey', '')
+
+         if user:
+             args += ['-U', user]
+@@ -30,6 +34,14 @@ def runshell_db(cls, conn_params):
+         subprocess_env = os.environ.copy()
+         if passwd:
+             subprocess_env['PGPASSWORD'] = str(passwd)
++        if sslmode:
++            subprocess_env['PGSSLMODE'] = str(sslmode)
++        if sslrootcert:
++            subprocess_env['PGSSLROOTCERT'] = str(sslrootcert)
++        if sslcert:
++            subprocess_env['PGSSLCERT'] = str(sslcert)
++        if sslkey:
++            subprocess_env['PGSSLKEY'] = str(sslkey)
+         try:
+             # Allow SIGINT to pass to psql to abort queries.
+             signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+</patch>
+
+--------------------------------------------------
+analyze
+The second step in steps clearly guides the use of options to get the configuration items of ssl, but in fact, conn_params should be used. Given that other parameters use conn_params, I think the Cot process does not analyze the context information well, which leads to an error.
+text:
+<issue>
+Allow app_label and class to be specified in the name argument for indexes and constraints.
+Description
+
+Allow %(app_label)s and %(class)s to be specified in name argument for BaseConstraint (CheckConstraint, UniqueConstraint) and Index:
+%(class)s should be replaced by the lowercased name of the child class that the field is used in,
+'%(app_label)s should be replaced by the lowercased name of the app the child class is contained within.
+This should allow for specifying check constraints and partial indexes (which name's are mandatory) in abstract models.
+Based on discussion in #30362.
+
+</issue>
+
+steps:
+
+1. **Process Index Names in ModelState.from_model**:
+   - For each index in the model's meta, clone the index.
+   - If the cloned index's name is not set, generate it using the model's details.
+   - If the name contains `%(app_label)s` or `%(class)s`, replace these placeholders with the model's app label and lowercase model name respectively.
+
+2. **Process Constraint Names in ModelState.from_model**:
+   - For each constraint in the model's meta, clone the constraint.
+   - Replace any `%(app_label)s` or `%(class)s` placeholders in the constraint's name with the model's app label and lowercase model name.
+
+3. **Ensure Correct Name Formatting**:
+   - When generating migration states, ensure that indexes and constraints from abstract models have their names dynamically resolved using the concrete model's app label and class name to avoid naming conflicts.
+
+model_patch:
+
+--- a/django/db/migrations/state.py
++++ b/django/db/migrations/state.py
+@@ -443,7 +443,14 @@
+                     options[name] = set(normalize_together(it))
+                 elif name == "indexes":
+                     indexes = [idx.clone() for idx in model._meta.indexes]
+-                    for index in indexes:
++                    for index in indexes:
++                        if index.name:
++                            index.name = index.name % {
++                                'app_label': model._meta.app_label,
++                                'class': model._meta.model_name.lower(),
++                            }
++                    for index in indexes:
++                        # Ensure the index name is set.
+                         if not index.name:
+                             index.set_name_with_model(model)
+                     options['indexes'] = indexes
+@@ -451,7 +458,14 @@
+                     # These are altered when the model is rendered into the
+                     # app's registry, so make deep copies (see #22951).
+                     if name == 'constraints':
+-                        options['constraints'] = [con.clone() for con in model._meta.constraints]
++                        constraints = []
++                        for con in model._meta.constraints:
++                            cloned_con = con.clone()
++                            cloned_con.name = cloned_con.name % {
++                                'app_label': model._meta.app_label,
++                                'class': model._meta.model_name.lower(),
++                            }
++                            constraints.append(cloned_con)
+                     else:
+                         options[name] = model._meta.original_attrs[name]
+         # If we're ignoring relationships, remove all field-listing model
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/options.py b/django/db/models/options.py
+--- a/django/db/models/options.py
++++ b/django/db/models/options.py
+@@ -180,6 +180,12 @@ def contribute_to_class(self, cls, name):
+
+             self.unique_together = normalize_together(self.unique_together)
+             self.index_together = normalize_together(self.index_together)
++            # App label/class name interpolation for names of constraints and
++            # indexes.
++            if not getattr(cls._meta, 'abstract', False):
++                for attr_name in {'constraints', 'indexes'}:
++                    objs = getattr(self, attr_name, [])
++                    setattr(self, attr_name, self._format_names_with_class(cls, objs))
+
+             # verbose_name_plural is a special case because it uses a 's'
+             # by default.
+@@ -201,6 +207,18 @@ def contribute_to_class(self, cls, name):
+             self.db_table = "%s_%s" % (self.app_label, self.model_name)
+             self.db_table = truncate_name(self.db_table, connection.ops.max_name_length())
+
++    def _format_names_with_class(self, cls, objs):
++        """App label/class name interpolation for object names."""
++        new_objs = []
++        for obj in objs:
++            obj = obj.clone()
++            obj.name = obj.name % {
++                'app_label': cls._meta.app_label.lower(),
++                'class': cls.__name__.lower(),
++            }
++            new_objs.append(obj)
++        return new_objs
++
+     def _prepare(self, model):
+         if self.order_with_respect_to:
+             # The app registry will not be ready at this point, so we cannot
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+The correct modification fragment should be replaced in the contribute_to_class method in django/db/models/options.py.
+Instead of ModelState from_model, Cot errored when determining the modification position in the first step.
+text:
+<issue>
+Add --skip-checks option to management commands.
+Description
+
+Management commands already have skip_checks stealth option. I propose exposing this option on the command line. This would allow users to skip checks when running a command from the command line. Sometimes in a development environment, it is nice to move ahead with a task at hand rather than getting side tracked fixing a system check.
+
+</issue>
+
+steps:
+
+1. **Modify `base_stealth_options` in `BaseCommand`:** Remove 'skip_checks' from the list since it's now a command-line option and no longer a stealth option.
+2. **Add `--skip-checks` argument to the parser:** In the `create_parser` method of `BaseCommand`, include a new argument for `--skip-checks` with `action='store_true'` and appropriate help text.
+
+model_patch:
+
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -224,7 +224,7 @@
+     requires_system_checks = True
+     # Arguments, common to all commands, which aren't defined by the argument
+     # parser.
+-    base_stealth_options = ('skip_checks', 'stderr', 'stdout')
++    base_stealth_options = ('stderr', 'stdout')
+     # Command-specific options not defined by the argument parser.
+     stealth_options = ()
+
+@@ -286,6 +286,10 @@
+             '--force-color', action='store_true',
+             help='Force colorization of the command output.',
+         )
++        parser.add_argument(
++            '--skip-checks', action='store_true',
++            help='Skip system checks.',
++        )
+         self.add_arguments(parser)
+         return parser
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -95,7 +95,7 @@ class DjangoHelpFormatter(HelpFormatter):
+     """
+     show_last = {
+         '--version', '--verbosity', '--traceback', '--settings', '--pythonpath',
+-        '--no-color', '--force-color',
++        '--no-color', '--force-color', '--skip-checks',
+     }
+
+     def _reordered_actions(self, actions):
+@@ -223,7 +223,7 @@ class BaseCommand:
+     requires_system_checks = True
+     # Arguments, common to all commands, which aren't defined by the argument
+     # parser.
+-    base_stealth_options = ('skip_checks', 'stderr', 'stdout')
++    base_stealth_options = ('stderr', 'stdout')
+     # Command-specific options not defined by the argument parser.
+     stealth_options = ()
+
+@@ -286,6 +286,11 @@ def create_parser(self, prog_name, subcommand, **kwargs):
+             '--force-color', action='store_true',
+             help='Force colorization of the command output.',
+         )
++        if self.requires_system_checks:
++            parser.add_argument(
++                '--skip-checks', action='store_true',
++                help='Skip system checks.',
++            )
+         self.add_arguments(parser)
+         return parser
+
+@@ -357,7 +362,7 @@ def execute(self, *args, **options):
+         if options.get('stderr'):
+             self.stderr = OutputWrapper(options['stderr'])
+
+-        if self.requires_system_checks and not options.get('skip_checks'):
++        if self.requires_system_checks and not options['skip_checks']:
+             self.check()
+         if self.requires_migrations_checks:
+             self.check_migrations()
+
+</patch>
+
+--------------------------------------------------
+analyze
+Cot error: The cot process does not determine all modified parts, there are omissions. In addition, the judgment of if self.requires_system_checks is missing in the create_parser function.
+text:
+<issue>
+Allow ManyToManyField using a intermediary table to be defined as symmetrical.
+Description
+
+Thanks to the work made by Collin Anderson in #9475 I think we can remove the check
+"fields.E332 Many-to-many fields with intermediate tables must not be symmetrical." with a little adjustment.
+This change was discussed in the django-dev mailing list ​https://groups.google.com/forum/#!topic/django-developers/BuT0-Uq8pyc.
+This would let have
+class Person(models.Model):
+	name = models.CharField(max_length=20)
+	friends = models.ManyToManyField('self', through='Friendship')
+class Friendship(models.Model):
+	first = models.ForeignKey(Person, models.CASCADE, related_name="+")
+	second = models.ForeignKey(Person, models.CASCADE)
+	friendship_date = models.DateTimeField()
+and just do something like
+joe.friends.add(anna, through_defaults={'friendship_date': date.datetime(...)})
+where currently we would have to do
+joe.friends.add(anna, through_defaults={'friendship_date': date.datetime(...)})
+anna.friends.add(joe, through_defaults={'friendship_date': date.datetime(...)})
+
+</issue>
+
+steps:
+
+1. **Identify the validation check**: The error `fields.E332` is raised when a `ManyToManyField` has both a `through` model and `symmetrical=True`.
+2. **Locate the validation code**: In Django's `related.py`, the `_check_through_self_reference` method of `ManyToManyField` checks for this condition and adds the error.
+3. **Modify the validation**: Remove the code block that generates the E332 error, allowing symmetrical ManyToManyFields with intermediary tables.
+
+model_patch:
+
+--- a/django/db/models/fields/related.py
++++ b/django/db/models/fields/related.py
+@@ -1367,12 +1367,7 @@
+
+     def _check_through_self_reference(self, **kwargs):
+         if self.remote_field.symmetrical and self.remote_field.through is not None:
+-            return [
+-                checks.Error(
+-                    "Many-to-many fields with intermediate tables must not be symmetrical.",
+-                    obj=self,
+-                    id='fields.E332',
+-                )
+-            ]
++            return []
+         return []
+
+     def _check_ignored_options(self, **kwargs):
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/fields/related.py b/django/db/models/fields/related.py
+--- a/django/db/models/fields/related.py
++++ b/django/db/models/fields/related.py
+@@ -1234,18 +1234,6 @@ def _check_relationship_model(self, from_model=None, **kwargs):
+                 to_model_name = to_model._meta.object_name
+             relationship_model_name = self.remote_field.through._meta.object_name
+             self_referential = from_model == to_model
+-
+-            # Check symmetrical attribute.
+-            if (self_referential and self.remote_field.symmetrical and
+-                    not self.remote_field.through._meta.auto_created):
+-                errors.append(
+-                    checks.Error(
+-                        'Many-to-many fields with intermediate tables must not be symmetrical.',
+-                        obj=self,
+-                        id='fields.E332',
+-                    )
+-                )
+-
+             # Count foreign keys in intermediate model
+             if self_referential:
+                 seen_self = sum(
+diff --git a/django/db/models/fields/related_descriptors.py b/django/db/models/fields/related_descriptors.py
+--- a/django/db/models/fields/related_descriptors.py
++++ b/django/db/models/fields/related_descriptors.py
+@@ -938,11 +938,14 @@ def add(self, *objs, through_defaults=None):
+                     through_defaults=through_defaults,
+                 )
+                 # If this is a symmetrical m2m relation to self, add the mirror
+-                # entry in the m2m table. `through_defaults` aren't used here
+-                # because of the system check error fields.E332: Many-to-many
+-                # fields with intermediate tables must not be symmetrical.
++                # entry in the m2m table.
+                 if self.symmetrical:
+-                    self._add_items(self.target_field_name, self.source_field_name, *objs)
++                    self._add_items(
++                        self.target_field_name,
++                        self.source_field_name,
++                        *objs,
++                        through_defaults=through_defaults,
++                    )
+         add.alters_data = True
+
+         def remove(self, *objs):
+
+</patch>
+
+--------------------------------------------------
+analyze
+Cot error: Positioning error, and no through_defaults parameter is given
+
+
+
+

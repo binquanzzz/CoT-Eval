@@ -1,0 +1,784 @@
+text:
+<issue>
+Support callable values in through_defaults.
+Description
+
+Ticket #9475 gave us through_defaults but unlike the defaults argument of get_or_create [1] or the default argument of any model field, it doesn't allow callable values.
+Callable values are passed through without being evaluated so the exact behavior depends on the fields. With a CharField for example, the repr() of the function will be saved to the database which is most likely not what the user is expecting.
+I took a look at the original ticket and pull request but couldn't find a mention of this use-case (ctrl+F for the word "callable") so it seems that it was an oversight rather than a deliberate design decision.
+Code-wise, fixing this is actually pretty straightforward and doesn't seem to cause any regression (see attached pull request).
+[1] ​https://docs.djangoproject.com/en/dev/ref/models/querysets/#django.db.models.query.QuerySet.get_or_create
+
+</issue>
+
+steps:
+
+1. Identify the problem: The `through_defaults` argument in Django's ORM does not evaluate callable values, unlike `defaults` in `get_or_create` and field defaults. This can lead to unexpected behavior when using functions as default values in `through_defaults`.
+2. Understand the desired behavior: `through_defaults` should behave similarly to `defaults` in `get_or_create` and field defaults by evaluating callable values before saving them to the database.
+3. Locate the relevant code:  The code responsible for handling `through_defaults` needs to be identified. Based on the issue description and context, this is likely within Django's ORM, specifically in the queryset methods related to object creation or update, probably in `django/db/models/query.py`. (While the actual file might be different, the core logic will be similar).
+4. Determine the fix: The fix is to check if the values provided in `through_defaults` are callable. If a value is callable, it should be evaluated (called) before being used as a default.
+5. Implement the fix (hypothetically):  Modify the code to iterate through the `through_defaults` dictionary, check for callable values, and evaluate them.
+6. Generate the patch: Create a patch file in the `diff -u` format reflecting the hypothetical changes. This patch will illustrate the concept of the fix, even if it's not applied to the exact correct file due to the limited context. The patch should be created against a dummy file named `django/db/models/query.py` to mimic a plausible location for the fix. The patch will show the addition of logic to check for and evaluate callable values in `through_defaults`.
+
+model_patch:
+
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -1059,9 +1059,13 @@
+             if created:
+                 obj_defaults = {}
+                 if defaults is not None:
+-                    obj_defaults.update(defaults)
++                    obj_defaults.update({
++                        k: v() if callable(v) else v
++                        for k, v in defaults.items()
++                    })
+                 if through_defaults is not None:
+-                    obj_defaults.update(through_defaults)
++                    obj_defaults.update({k: v() if callable(v) else v
++                                         for k, v in through_defaults.items()})
+                 obj = self.model(**kwargs, **obj_defaults)
+                 self._for_write = True
+                 obj.save(force_insert=True, using=self.db)
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/fields/related_descriptors.py b/django/db/models/fields/related_descriptors.py
+--- a/django/db/models/fields/related_descriptors.py
++++ b/django/db/models/fields/related_descriptors.py
+@@ -68,6 +68,7 @@ class Child(Model):
+ from django.db.models import Q, signals
+ from django.db.models.query import QuerySet
+ from django.db.models.query_utils import DeferredAttribute
++from django.db.models.utils import resolve_callables
+ from django.utils.functional import cached_property
+
+
+@@ -1113,49 +1114,48 @@ def _add_items(self, source_field_name, target_field_name, *objs, through_defaul
+             # source_field_name: the PK fieldname in join table for the source object
+             # target_field_name: the PK fieldname in join table for the target object
+             # *objs - objects to add. Either object instances, or primary keys of object instances.
+-            through_defaults = through_defaults or {}
+-
+-            # If there aren't any objects, there is nothing to do.
+-            if objs:
+-                target_ids = self._get_target_ids(target_field_name, objs)
+-                db = router.db_for_write(self.through, instance=self.instance)
+-                can_ignore_conflicts, must_send_signals, can_fast_add = self._get_add_plan(db, source_field_name)
+-                if can_fast_add:
+-                    self.through._default_manager.using(db).bulk_create([
+-                        self.through(**{
+-                            '%s_id' % source_field_name: self.related_val[0],
+-                            '%s_id' % target_field_name: target_id,
+-                        })
+-                        for target_id in target_ids
+-                    ], ignore_conflicts=True)
+-                    return
++            if not objs:
++                return
+
+-                missing_target_ids = self._get_missing_target_ids(
+-                    source_field_name, target_field_name, db, target_ids
+-                )
+-                with transaction.atomic(using=db, savepoint=False):
+-                    if must_send_signals:
+-                        signals.m2m_changed.send(
+-                            sender=self.through, action='pre_add',
+-                            instance=self.instance, reverse=self.reverse,
+-                            model=self.model, pk_set=missing_target_ids, using=db,
+-                        )
++            through_defaults = dict(resolve_callables(through_defaults or {}))
++            target_ids = self._get_target_ids(target_field_name, objs)
++            db = router.db_for_write(self.through, instance=self.instance)
++            can_ignore_conflicts, must_send_signals, can_fast_add = self._get_add_plan(db, source_field_name)
++            if can_fast_add:
++                self.through._default_manager.using(db).bulk_create([
++                    self.through(**{
++                        '%s_id' % source_field_name: self.related_val[0],
++                        '%s_id' % target_field_name: target_id,
++                    })
++                    for target_id in target_ids
++                ], ignore_conflicts=True)
++                return
+
+-                    # Add the ones that aren't there already.
+-                    self.through._default_manager.using(db).bulk_create([
+-                        self.through(**through_defaults, **{
+-                            '%s_id' % source_field_name: self.related_val[0],
+-                            '%s_id' % target_field_name: target_id,
+-                        })
+-                        for target_id in missing_target_ids
+-                    ], ignore_conflicts=can_ignore_conflicts)
+-
+-                    if must_send_signals:
+-                        signals.m2m_changed.send(
+-                            sender=self.through, action='post_add',
+-                            instance=self.instance, reverse=self.reverse,
+-                            model=self.model, pk_set=missing_target_ids, using=db,
+-                        )
++            missing_target_ids = self._get_missing_target_ids(
++                source_field_name, target_field_name, db, target_ids
++            )
++            with transaction.atomic(using=db, savepoint=False):
++                if must_send_signals:
++                    signals.m2m_changed.send(
++                        sender=self.through, action='pre_add',
++                        instance=self.instance, reverse=self.reverse,
++                        model=self.model, pk_set=missing_target_ids, using=db,
++                    )
++                # Add the ones that aren't there already.
++                self.through._default_manager.using(db).bulk_create([
++                    self.through(**through_defaults, **{
++                        '%s_id' % source_field_name: self.related_val[0],
++                        '%s_id' % target_field_name: target_id,
++                    })
++                    for target_id in missing_target_ids
++                ], ignore_conflicts=can_ignore_conflicts)
++
++                if must_send_signals:
++                    signals.m2m_changed.send(
++                        sender=self.through, action='post_add',
++                        instance=self.instance, reverse=self.reverse,
++                        model=self.model, pk_set=missing_target_ids, using=db,
++                    )
+
+         def _remove_items(self, source_field_name, target_field_name, *objs):
+             # source_field_name: the PK colname in join table for the source object
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -23,6 +23,7 @@
+ from django.db.models.functions import Cast, Trunc
+ from django.db.models.query_utils import FilteredRelation, Q
+ from django.db.models.sql.constants import CURSOR, GET_ITERATOR_CHUNK_SIZE
++from django.db.models.utils import resolve_callables
+ from django.db.utils import NotSupportedError
+ from django.utils import timezone
+ from django.utils.functional import cached_property, partition
+@@ -591,8 +592,8 @@ def update_or_create(self, defaults=None, **kwargs):
+                 obj, created = self._create_object_from_params(kwargs, params, lock=True)
+                 if created:
+                     return obj, created
+-            for k, v in defaults.items():
+-                setattr(obj, k, v() if callable(v) else v)
++            for k, v in resolve_callables(defaults):
++                setattr(obj, k, v)
+             obj.save(using=self.db)
+         return obj, False
+
+@@ -603,7 +604,7 @@ def _create_object_from_params(self, lookup, params, lock=False):
+         """
+         try:
+             with transaction.atomic(using=self.db):
+-                params = {k: v() if callable(v) else v for k, v in params.items()}
++                params = dict(resolve_callables(params))
+                 obj = self.create(**params)
+             return obj, True
+         except IntegrityError as e:
+diff --git a/django/db/models/utils.py b/django/db/models/utils.py
+--- a/django/db/models/utils.py
++++ b/django/db/models/utils.py
+@@ -19,3 +19,12 @@ def make_model_tuple(model):
+             "Invalid model reference '%s'. String model references "
+             "must be of the form 'app_label.ModelName'." % model
+         )
++
++
++def resolve_callables(mapping):
++    """
++    Generate key/value pairs for the given mapping where the values are
++    evaluated if they're callable.
++    """
++    for k, v in mapping.items():
++        yield k, v() if callable(v) else v
+
+</patch>
+
+--------------------------------------------------
+analyze
+According to the reference code, there are multiple functions that need to call callable. Prompt description is fuzzy and the context information is missing, resulting in the generated code only converting the value in through_defaults into a callable object, without considering the impact on other parts
+text:
+<issue>
+Add ability to override "async unsafe" checks.
+Description
+
+It's been reported that Jupyter, at least, executes apparently-synchronous code in an async environment (​https://forum.djangoproject.com/t/is-there-a-way-to-disable-the-synchronousonlyoperation-check-when-using-the-orm-in-a-jupyter-notebook/548/3) and we're going to have people running headlong into this soon.
+The "right" way of wrapping code in sync_to_async works, but is an undue burden on notebook authors as it would have to be in every cell, so it's suggested that we add a flag that disables the async-unsafe check. Either a setting or an environment variable could work; I slightly prefer an environment variable (as it's hard to forget about) provided this works well with Jupyter.
+
+</issue>
+
+steps:
+1. Open the file `django/core/management/__init__.py`.
+
+2. Locate the `ManagementUtility.execute` method.
+
+3. Inside the `execute` method, before `django.setup()` is called, add a check for the environment variable `DJANGO_ALLOW_ASYNC_UNSAFE`.
+
+4. If the environment variable `DJANGO_ALLOW_ASYNC_UNSAFE` is set (truthy value), set a setting `DJANGO_ALLOW_ASYNC_UNSAFE` to `True` in `django.conf.settings`.
+
+5. Save the changes to `django/core/management/__init__.py`.
+
+6. Create a patch file containing these changes.
+model_patch:
+
+--- a/django/core/management/__init__.py
++++ b/django/core/management/__init__.py
+@@ -375,6 +375,9 @@
+             else:
+                 django.setup()
+
++        if os.environ.get('DJANGO_ALLOW_ASYNC_UNSAFE'):
++            settings.DJANGO_ALLOW_ASYNC_UNSAFE = True
++
+         self.autocomplete()
+
+         if subcommand == 'help':
+
+
+gold_patch:
+<patch>
+diff --git a/django/utils/asyncio.py b/django/utils/asyncio.py
+--- a/django/utils/asyncio.py
++++ b/django/utils/asyncio.py
+@@ -1,5 +1,6 @@
+ import asyncio
+ import functools
++import os
+
+ from django.core.exceptions import SynchronousOnlyOperation
+
+@@ -12,14 +13,15 @@ def async_unsafe(message):
+     def decorator(func):
+         @functools.wraps(func)
+         def inner(*args, **kwargs):
+-            # Detect a running event loop in this thread.
+-            try:
+-                event_loop = asyncio.get_event_loop()
+-            except RuntimeError:
+-                pass
+-            else:
+-                if event_loop.is_running():
+-                    raise SynchronousOnlyOperation(message)
++            if not os.environ.get('DJANGO_ALLOW_ASYNC_UNSAFE'):
++                # Detect a running event loop in this thread.
++                try:
++                    event_loop = asyncio.get_event_loop()
++                except RuntimeError:
++                    pass
++                else:
++                    if event_loop.is_running():
++                        raise SynchronousOnlyOperation(message)
+             # Pass onwards.
+             return func(*args, **kwargs)
+         return inner
+
+</patch>
+
+--------------------------------------------------
+analyze
+Cot is inconsistent with propt, which points out that in certain cases, use environment variables to disable asynchronous insecure checks, but cot and generated code just set the corresponding environment variable directly to a specific value.
+text:
+<issue>
+Allow configuration of where to save staticfiles manifest.
+Description
+
+A standard Django deploy has all staticfiles accessible to all users. This is understandable, if undesirable. By itself this is not a huge problem since those on the public Internet don't know the filenames of all of the files a deployment has, and fuskering the entire possible namespace isn't feasible and is also detectable.
+However, deployments that make use of ManifestStaticFilesStorage will most likely expose a master list of all static files to anyone who wants to look. It's not a huge security risk because you shouldn't be depending on security through obscurity, but there's certainly a leg up given when there's a master list of all files. Due to the way ManifestStaticFilesStorage is setup, the manifest ends up in the directory of publicly served files. If the files are stored locally this can be fixed by blacklisting the file from webserver access and only letting Django itself read the file off the local filesystem. This is the approach I've taken once I discovered the issue - I have a server deployment running Apache serving files on the local filesystem, but have CloudFront in front of that which fetches from Apache if the cache misses. I've since blacklisted the staticfiles manifest and invalidated any cached copies in CloudFront.
+Here's what I consider the risks of having a publicly exposed staticfiles manifest:
+Easily find trade secrets in JavaScript files meant to be used only internally by staff users
+Find hardcoded secrets in internal files - anything in the static tree gets listed here, even pre-processed files like coffee or less if the developers use django-compressor
+Find potential attack vectors by finding normally unlisted files that are exploitable which could be used to form URLs in phishing emails
+Possible novel way to fingerprint Django versions using the easy master list of files, could be used to quickly identify potentially vulnerable Django servers
+All that said, I don't have a great solution to the problem that Django itself could implement. Currently Django writes the manifest to the staticfiles root so it's always going to be readable unless you take extra steps. The real stickler is deployments that use something like ​S3BotoStorage which in effect needs Django to be able to access the manifest remotely. My understanding of that setup (I don't use it) would be that on load Django is going to read the manifest from S3, so it needs to be accessible over the web by default. Further steps could be taken to make it only accessible to Django itself, but that requires user action.
+Potential solutions:
+Encrypt the manifest on disk, decrypt on load into memory - loses human readability for debugging purposes but hides it from prying eyes by default
+Fast-track ticket #26029 to make staticfiles storage configuration allow passing options to storage - use options to change manifest path somewhere non-public or configure a secret header to use with S3 to only give Django access to the file.
+On a related note, this discovery has made me extra paranoid about the exposure of internal files meant for staff only and now I'm looking at a way to formalize restricted access to the files. With the exposure of the staticfiles manifest it's clear much of the business logic we use (in JavaScript under admin) is by default visible to the Web if you know the URL.
+
+</issue>
+
+steps:
+1. Introduce a new setting `STATICFILES_MANIFEST_ROOT` in `django/conf/global_settings.py` with a default value of `None`. This setting will allow users to specify a custom directory for storing the staticfiles manifest.
+2. Modify the `ManifestFilesMixin` class in `django/contrib/staticfiles/storage.py` to utilize the `STATICFILES_MANIFEST_ROOT` setting.
+3. In `ManifestFilesMixin.__init__`, determine the manifest file's location. If `STATICFILES_MANIFEST_ROOT` is set, use that as the base location. Otherwise, fallback to `settings.STATIC_ROOT`. Store this location in `self.manifest_location`.
+4. Update `ManifestFilesMixin.read_manifest` and `ManifestFilesMixin.save_manifest` to use `os.path.join(self.manifest_location, self.manifest_name)` to construct the full path to the manifest file.
+model_patch:
+
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -600,6 +600,9 @@
+  # Example: "/var/www/example.com/static/"
+  STATIC_ROOT = None
+
++ # Absolute path to the directory staticfiles manifest should be saved to.
++ STATICFILES_MANIFEST_ROOT = None
++
+  # URL that handles the static files served from STATIC_ROOT.
+  # Example: "http://example.com/static/", "http://static.example.com/"
+  STATIC_URL = None
+--- a/django/contrib/staticfiles/storage.py
++++ b/django/contrib/staticfiles/storage.py
+@@ -404,8 +404,11 @@
+     keep_intermediate_files = False
+
+     def __init__(self, *args, **kwargs):
++        location = kwargs.pop('location', None)
++        if location is None:
++            location = settings.STATICFILES_MANIFEST_ROOT or settings.STATIC_ROOT
++        self.manifest_location = location
+         super().__init__(*args, **kwargs)
+-        self.hashed_files = self.load_manifest()
+
+         def read_manifest(self):
+         try:
+@@ -415,6 +418,7 @@
+             return None
+
+     def load_manifest(self):
++        self.hashed_files = {}
+         content = self.read_manifest()
+         if content is None:
+             return {}
+@@ -430,6 +434,7 @@
+                           (self.manifest_name, self.manifest_version))
+
+     def post_process(self, *args, **kwargs):
++        self.load_manifest()
+         self.hashed_files = {}
+         yield from super().post_process(*args, **kwargs)
+         if not kwargs.get('dry_run'):
+@@ -437,11 +442,12 @@
+
+     def save_manifest(self):
+         payload = {'paths': self.hashed_files, 'version': self.manifest_version}
+-        if self.exists(self.manifest_name):
+-            self.delete(self.manifest_name)
++        manifest_path = os.path.join(self.manifest_location, self.manifest_name)
++        if os.path.exists(manifest_path):
++            os.remove(manifest_path)
+         contents = json.dumps(payload).encode()
+-        self._save(self.manifest_name, ContentFile(contents))
+-
++        directory = os.path.dirname(manifest_path)
++        os.makedirs(directory, exist_ok=True) # Ensure directory exists.
++        with open(manifest_path, 'wb') as manifest_file: # Use regular file I/O
++            manifest_file.write(contents)
+     def stored_name(self, name):
+         parsed_name = urlsplit(unquote(name))
+         clean_name = parsed_name.path.strip()
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/staticfiles/storage.py b/django/contrib/staticfiles/storage.py
+--- a/django/contrib/staticfiles/storage.py
++++ b/django/contrib/staticfiles/storage.py
+@@ -401,13 +401,16 @@ class ManifestFilesMixin(HashedFilesMixin):
+     manifest_strict = True
+     keep_intermediate_files = False
+
+-    def __init__(self, *args, **kwargs):
++    def __init__(self, *args, manifest_storage=None, **kwargs):
+         super().__init__(*args, **kwargs)
++        if manifest_storage is None:
++            manifest_storage = self
++        self.manifest_storage = manifest_storage
+         self.hashed_files = self.load_manifest()
+
+     def read_manifest(self):
+         try:
+-            with self.open(self.manifest_name) as manifest:
++            with self.manifest_storage.open(self.manifest_name) as manifest:
+                 return manifest.read().decode()
+         except FileNotFoundError:
+             return None
+@@ -435,10 +438,10 @@ def post_process(self, *args, **kwargs):
+
+     def save_manifest(self):
+         payload = {'paths': self.hashed_files, 'version': self.manifest_version}
+-        if self.exists(self.manifest_name):
+-            self.delete(self.manifest_name)
++        if self.manifest_storage.exists(self.manifest_name):
++            self.manifest_storage.delete(self.manifest_name)
+         contents = json.dumps(payload).encode()
+-        self._save(self.manifest_name, ContentFile(contents))
++        self.manifest_storage._save(self.manifest_name, ContentFile(contents))
+
+     def stored_name(self, name):
+         parsed_name = urlsplit(unquote(name))
+
+</patch>
+
+--------------------------------------------------
+analyze
+Prompt implementation details are unclear, only pointed out the errors but did not point out the specific situation.
+text:
+<issue>
+Allow sensitive_variables() to preserve the signature of its decorated function
+Description
+
+When the method authenticate of a custom AuthenticationBackend is decorated with sensitive_variables, inspect.getcallargs will always match.
+Calling the authenticate function will attempt to call this backend with any set of credentials and will raise an uncaught TypeError for an unmatching backend.
+Authentication with such decorated backends used to work in version 1.6.
+
+</issue>
+
+steps:
+1. Open the file `django/views/decorators/debug.py`.
+
+2. Locate the `sensitive_variables` decorator function.
+
+3. After the `@functools.wraps(func)` decorator and before returning `sensitive_variables_wrapper`, add the line `update_wrapper(sensitive_variables_wrapper, func)` to explicitly update the wrapper function with attributes from the wrapped function, ensuring signature preservation.
+
+4. Save the changes to `django/views/decorators/debug.py`.
+
+5. Create a patch file containing these changes.
+
+model_patch:
+
+--- a/django/views/decorators/debug.py
++++ b/django/views/decorators/debug.py
+@@ -1,5 +1,6 @@
+ import functools
+
++from django.utils.decorators import update_wrapper
+ from django.http import HttpRequest
+
+
+@@ -37,6 +38,7 @@
+                 sensitive_variables_wrapper.sensitive_variables = '__ALL__'
+             return func(*func_args, **func_kwargs)
+         return sensitive_variables_wrapper
++    update_wrapper(decorator, func)
+     return decorator
+
+
+@@ -77,5 +79,6 @@
+                  request.sensitive_post_parameters = '__ALL__'
+              return view(request, *args, **kwargs)
+          return sensitive_post_parameters_wrapper
++     update_wrapper(decorator, view)
+      return decorator
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/auth/__init__.py b/django/contrib/auth/__init__.py
+--- a/django/contrib/auth/__init__.py
++++ b/django/contrib/auth/__init__.py
+@@ -63,8 +63,9 @@ def authenticate(request=None, **credentials):
+     If the given credentials are valid, return a User object.
+     """
+     for backend, backend_path in _get_backends(return_tuples=True):
++        backend_signature = inspect.signature(backend.authenticate)
+         try:
+-            inspect.getcallargs(backend.authenticate, request, **credentials)
++            backend_signature.bind(request, **credentials)
+         except TypeError:
+             # This backend doesn't accept these credentials as arguments. Try the next one.
+             continue
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1916,9 +1916,8 @@ def set_group_by(self):
+         group_by = list(self.select)
+         if self.annotation_select:
+             for alias, annotation in self.annotation_select.items():
+-                try:
+-                    inspect.getcallargs(annotation.get_group_by_cols, alias=alias)
+-                except TypeError:
++                signature = inspect.signature(annotation.get_group_by_cols)
++                if 'alias' not in signature.parameters:
+                     annotation_class = annotation.__class__
+                     msg = (
+                         '`alias=None` must be added to the signature of '
+diff --git a/django/template/base.py b/django/template/base.py
+--- a/django/template/base.py
++++ b/django/template/base.py
+@@ -50,10 +50,10 @@
+ '<html></html>'
+ """
+
++import inspect
+ import logging
+ import re
+ from enum import Enum
+-from inspect import getcallargs, getfullargspec, unwrap
+
+ from django.template.context import BaseContext
+ from django.utils.formats import localize
+@@ -707,9 +707,9 @@ def args_check(name, func, provided):
+         # First argument, filter input, is implied.
+         plen = len(provided) + 1
+         # Check to see if a decorator is providing the real function.
+-        func = unwrap(func)
++        func = inspect.unwrap(func)
+
+-        args, _, _, defaults, _, _, _ = getfullargspec(func)
++        args, _, _, defaults, _, _, _ = inspect.getfullargspec(func)
+         alen = len(args)
+         dlen = len(defaults or [])
+         # Not enough OR Too many
+@@ -857,8 +857,9 @@ def _resolve_lookup(self, context):
+                         try:  # method call (assuming no args required)
+                             current = current()
+                         except TypeError:
++                            signature = inspect.signature(current)
+                             try:
+-                                getcallargs(current)
++                                signature.bind()
+                             except TypeError:  # arguments *were* required
+                                 current = context.template.engine.string_if_invalid  # invalid method call
+                             else:
+
+</patch>
+
+--------------------------------------------------
+analyze
+The details of the Prompt implementation are unclear. It only pointed out the errors and did not point out the specific situation, resulting in the big model judgment being only modified in the init function, without considering the association issue, that is, its connection with other parts.
+
+text:
+<issue>
+Detection of existing total ordering in admin changelist should take into account UniqueConstraints without conditions.
+Description
+
+I've been fiddling with db indexes lately to improve the performance of an admin view.
+Eventually I found this PR ​https://github.com/django/django/pull/10692 which ensures the records displayed by ChangeList are deterministically ordered.
+Among other things, the code looks for the presence of a unique_together attribute on the Meta class of the model to determine if the model is already totally ordered.
+I think that _get_deterministic_ordering() should check for the presence of UniqueConstraints as well, which currently aren’t considered by the discovery algorithm.
+I noticed the docs currently advise against using unique_together in favor of UniqueConstraint, suggesting the former may be deprecated in the future, so this fix would change that part of the code accordingly.
+I'm willing to submit a PR for this.
+Cheers,
+Fabio
+
+</issue>
+
+steps:
+1. Locate the `_get_deterministic_ordering` method within the `ChangeList` class in the file `django/contrib/admin/views/main.py`.
+2. Modify the `_get_deterministic_ordering` method to include a check for `UniqueConstraint` within the model's `_meta.constraints`.
+3. Iterate through each constraint in `self.lookup_opts.constraints`.
+4. For each constraint, verify if it is an instance of `django.db.models.UniqueConstraint`.
+5. Check if the `UniqueConstraint` has no condition by examining `constraint.condition`. If `constraint.condition` is `None`, it means there's no condition.
+6. If a `UniqueConstraint` without a condition is found, extract the fields involved in the constraint.
+7. Check if the set of fields from this `UniqueConstraint` is a subset of the current ordering fields (`ordering_fields.issuperset(...)`).
+8. If the fields from a `UniqueConstraint` without condition are a subset of the ordering fields, it signifies that a total ordering is already enforced by the database constraint. In this case, break out of the loop.
+9. Generate a patch file containing the changes made to `django/contrib/admin/views/main.py`. The patch should be in the unified diff format, omitting line numbers but preserving the `+` and `-` signs for added and removed lines respectively.
+model_patch:
+
+--- a/django/contrib/admin/views/main.py
++++ b/django/contrib/admin/views/main.py
+@@ -370,17 +370,28 @@
+ 					continue
+ 				if field.attname in total_ordering_fields:
+ 					break
+-				ordering_fields.add(field.attname)
++				if field.concrete:
++					ordering_fields.add(field.attname)
+ 		else:
+-			# No single total ordering field, try unique_together.
+-			for field_names in self.lookup_opts.unique_together:
+-				# Normalize attname references by using get_field().
+-				fields = [self.lookup_opts.get_field(field_name) for field_name in field_names]
+-				# Composite unique constraints containing a nullable column
+-				# cannot ensure total ordering.
+-				if any(field.null for field in fields):
+-					continue
+-				if ordering_fields.issuperset(field.attname for field in fields):
++			constraints = list(self.lookup_opts.unique_together)
++			constraints.extend(
++				constraint.fields
++				for constraint in self.lookup_opts.constraints
++				if isinstance(constraint, UniqueConstraint) and constraint.condition is None
++			)
++			# No single total ordering field, try unique_together/UniqueConstraint.
++			for field_names in constraints:
++				if isinstance(field_names, tuple):
++					# unique_together case
++					fields = [self.lookup_opts.get_field(field_name) for field_name in field_names]
++				else:
++					# UniqueConstraint case
++					fields = [self.lookup_opts.get_field(field_name) for field_name in [field_names]]
++				if not any(f.concrete for f in fields):
++					continue
++				if not any(field.null for field in fields):
++					if ordering_fields.issuperset({f.attname for f in fields if f.concrete}):
++
+ 					break
+ 				ordering_fields.issuperset(field.attname for field in fields):
+ 					break
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/admin/views/main.py b/django/contrib/admin/views/main.py
+--- a/django/contrib/admin/views/main.py
++++ b/django/contrib/admin/views/main.py
+@@ -367,8 +367,16 @@ def _get_deterministic_ordering(self, ordering):
+                     break
+                 ordering_fields.add(field.attname)
+         else:
+-            # No single total ordering field, try unique_together.
+-            for field_names in self.lookup_opts.unique_together:
++            # No single total ordering field, try unique_together and total
++            # unique constraints.
++            constraint_field_names = (
++                *self.lookup_opts.unique_together,
++                *(
++                    constraint.fields
++                    for constraint in self.lookup_opts.total_unique_constraints
++                ),
++            )
++            for field_names in constraint_field_names:
+                 # Normalize attname references by using get_field().
+                 fields = [self.lookup_opts.get_field(field_name) for field_name in field_names]
+                 # Composite unique constraints containing a nullable column
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -19,7 +19,7 @@
+     NOT_PROVIDED, ExpressionWrapper, IntegerField, Max, Value,
+ )
+ from django.db.models.constants import LOOKUP_SEP
+-from django.db.models.constraints import CheckConstraint, UniqueConstraint
++from django.db.models.constraints import CheckConstraint
+ from django.db.models.deletion import CASCADE, Collector
+ from django.db.models.fields.related import (
+     ForeignObjectRel, OneToOneField, lazy_related_operation, resolve_relation,
+@@ -1023,12 +1023,14 @@ def _get_unique_checks(self, exclude=None):
+         unique_checks = []
+
+         unique_togethers = [(self.__class__, self._meta.unique_together)]
+-        constraints = [(self.__class__, self._meta.constraints)]
++        constraints = [(self.__class__, self._meta.total_unique_constraints)]
+         for parent_class in self._meta.get_parent_list():
+             if parent_class._meta.unique_together:
+                 unique_togethers.append((parent_class, parent_class._meta.unique_together))
+-            if parent_class._meta.constraints:
+-                constraints.append((parent_class, parent_class._meta.constraints))
++            if parent_class._meta.total_unique_constraints:
++                constraints.append(
++                    (parent_class, parent_class._meta.total_unique_constraints)
++                )
+
+         for model_class, unique_together in unique_togethers:
+             for check in unique_together:
+@@ -1038,10 +1040,7 @@ def _get_unique_checks(self, exclude=None):
+
+         for model_class, model_constraints in constraints:
+             for constraint in model_constraints:
+-                if (isinstance(constraint, UniqueConstraint) and
+-                        # Partial unique constraints can't be validated.
+-                        constraint.condition is None and
+-                        not any(name in exclude for name in constraint.fields)):
++                if not any(name in exclude for name in constraint.fields):
+                     unique_checks.append((model_class, constraint.fields))
+
+         # These are checks for the unique_for_<date/year/month>.
+diff --git a/django/db/models/options.py b/django/db/models/options.py
+--- a/django/db/models/options.py
++++ b/django/db/models/options.py
+@@ -7,7 +7,7 @@
+ from django.conf import settings
+ from django.core.exceptions import FieldDoesNotExist
+ from django.db import connections
+-from django.db.models import AutoField, Manager, OrderWrt
++from django.db.models import AutoField, Manager, OrderWrt, UniqueConstraint
+ from django.db.models.query_utils import PathInfo
+ from django.utils.datastructures import ImmutableList, OrderedSet
+ from django.utils.functional import cached_property
+@@ -827,6 +827,18 @@ def _get_fields(self, forward=True, reverse=True, include_parents=True, include_
+         self._get_fields_cache[cache_key] = fields
+         return fields
+
++    @cached_property
++    def total_unique_constraints(self):
++        """
++        Return a list of total unique constraints. Useful for determining set
++        of fields guaranteed to be unique for all rows.
++        """
++        return [
++            constraint
++            for constraint in self.constraints
++            if isinstance(constraint, UniqueConstraint) and constraint.condition is None
++        ]
++
+     @cached_property
+     def _property_names(self):
+         """Return a set of the names of the properties defined on the model."""
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+Prompt's description is fuzzy and does not specifically describe the details of the problem. In the generated code, there are multiple redundant and wrong issuperset calls. The correct logic in the reference code is to check whether the conditioned UniqueConstraint meets certain requirements, and only breaks out of the loop when the condition is met, rather than directly judges all fields. At the same time, cot does not sufficiently handle exceptions.
+text:
+<issue>
+system checks: admin.E002 could provide a hint but doesn't
+Description
+
+Currently the output is:
+myapp.MyCustomUserModel: (auth.E002) The field named as the 'USERNAME_FIELD' for a custom user model must not be included in 'REQUIRED_FIELDS'.
+because I accidentally had:
+USERNAME_FIELD = "email"
+EMAIL_FIELD = "email"
+REQUIRED_FIELDS = (USERNAME_FIELD, "full_name",)
+Ignoring the fact that Django knows it's wrong to have it in there, and could easily just skip it or warn if it's not set, it doesn't make use of the hints available in system checks.
+I'd like to suggest that a hint could be provided which says which field it's moaning about, something like (open to better wording):
+HINT: Your username field is currently set to "email", you should remove "email" from your required fields definition.
+It's a stupidly little thing, but having not had to make a custom user from scratch for a while, my eyes glazed over the not in must not be and I was confused for all of 2 minutes before actually reading it properly.
+
+</issue>
+
+steps:
+
+1. Open the file `django/contrib/auth/checks.py`.
+2. Locate the function `check_user_model`.
+3. Inside `check_user_model`, find the `checks.Error` object with `id='auth.E002'`. This is the error raised when `USERNAME_FIELD` is in `REQUIRED_FIELDS`.
+4. Add a `hint` argument to this `checks.Error` call.
+5. Construct the hint message. The hint should inform the user about the current `USERNAME_FIELD` and suggest removing it from `REQUIRED_FIELDS`. Use an f-string to include the `cls.USERNAME_FIELD` value in the hint message.
+6. The hint message should be similar to: `f'Your username field is currently set to "{cls.USERNAME_FIELD}", you should remove "{cls.USERNAME_FIELD}" from your REQUIRED_FIELDS definition.'`
+7. Save the changes to `django/contrib/auth/checks.py`.
+8. Create a patch file using `git diff` or a similar tool, comparing the modified file with the original version.
+
+model_patch:
+
+--- a/django/contrib/auth/checks.py
++++ b/django/contrib/auth/checks.py
+@@ -43,6 +43,7 @@
+             checks.Error(
+                 "The field named as the 'USERNAME_FIELD' "
+                 "for a custom user model must not be included in 'REQUIRED_FIELDS'.",
++                hint=f'Your username field is currently set to "{cls.USERNAME_FIELD}", you should remove "{cls.USERNAME_FIELD}" from your REQUIRED_FIELDS definition.',
+                 obj=cls,
+                 id='auth.E002',
+             )
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/auth/checks.py b/django/contrib/auth/checks.py
+--- a/django/contrib/auth/checks.py
++++ b/django/contrib/auth/checks.py
+@@ -41,6 +41,11 @@ def check_user_model(app_configs=None, **kwargs):
+             checks.Error(
+                 "The field named as the 'USERNAME_FIELD' "
+                 "for a custom user model must not be included in 'REQUIRED_FIELDS'.",
++                hint=(
++                    "The 'USERNAME_FIELD' is currently set to '%s', you "
++                    "should remove '%s' from the 'REQUIRED_FIELDS'."
++                    % (cls.USERNAME_FIELD, cls.USERNAME_FIELD)
++                ),
+                 obj=cls,
+                 id='auth.E002',
+             )
+
+</patch>
+
+--------------------------------------------------
+analyze
+Internal factors ----Cot is inconsistent with propt ----Cot fails to capture propt key information
+The issue is relatively simple to solve, just add a prompt string for printing. The problem with cot is that the logical flow is relatively cumbersome, which may lead to the performance loss of the model.
+
+

@@ -1,0 +1,416 @@
+Statistical results
+
+The entire document can be said to be prompt clear – functional level
+
+
+
+==================== 6306091c73426c38ae68acdd ====================
+file_path: infrared/core/utils/validators.py
+project: redhat-openstack/infrared
+name: validate_from_file
+
+prompt:
+Loads & validates that a YAML file has all required fields
+
+:param yaml_file: Path to YAML file
+:raise IRValidatorException: when mandatory data is missing in file
+:return: Dictionary with data loaded from a YAML file
+
+steps:
+1.  **Check if `yaml_file` is provided**: Verify if the `yaml_file` argument is passed to the function. If it's `None`, raise an `IRValidatorException` as a YAML file path is expected for validation.
+2.  **Check if the YAML file exists**:  Use `os.path.exists()` to confirm that the file specified by `yaml_file` exists. If the file does not exist, raise an `IRValidatorException` indicating that the file was not found.
+3.  **Load YAML data from file**: Open the `yaml_file` in read mode (`'r'`) and use a YAML library (like `yaml` from PyYAML) to load the YAML content into a Python dictionary. Handle potential `yaml.YAMLError` exceptions during loading, and if an error occurs, raise an `IRValidatorException` with a message about YAML parsing failure.
+4.  **Define required fields**: Assume that the class `cls` has a class attribute named `REQUIRED_FIELDS` which is a list or set of strings representing the mandatory fields in the YAML data. Access this attribute using `cls.REQUIRED_FIELDS`.
+5.  **Validate required fields**: Iterate through each field in `cls.REQUIRED_FIELDS`. For each required field, check if it exists as a key in the loaded YAML data dictionary.
+6.  **Raise exception for missing fields**: If any required field is not found as a key in the loaded YAML data, create a list of missing fields. If there are missing fields, raise an `IRValidatorException`. The exception message should clearly indicate which required fields are missing from the YAML file.
+7.  **Return loaded data**: If all required fields are present in the loaded YAML data, return the dictionary containing the data loaded from the YAML file.
+
+generate_code:
+import os
+import yaml
+
+class IRValidatorException(Exception):
+    """Custom exception for validation errors."""
+    pass
+
+def validate_from_file(cls, yaml_file=None):
+	"""
+	Loads & validates that a YAML file has all required fields
+
+	:param yaml_file: Path to YAML file
+	:raise IRValidatorException: when mandatory data is missing in file
+	:return: Dictionary with data loaded from a YAML file
+	"""
+	if yaml_file is None:
+		raise IRValidatorException("YAML file path must be provided.")
+
+	if not os.path.exists(yaml_file):
+		raise IRValidatorException(f"YAML file not found: {yaml_file}")
+
+	try:
+		with open(yaml_file, 'r') as f:
+			yaml_data = yaml.safe_load(f)
+	except yaml.YAMLError as e:
+		raise IRValidatorException(f"Error parsing YAML file: {e}")
+
+	if not isinstance(yaml_data, dict):
+		raise IRValidatorException("YAML file must contain a dictionary at the root level.")
+
+	required_fields = getattr(cls, 'REQUIRED_FIELDS', []) # default to empty list if not defined
+	missing_fields = []
+	for field in required_fields:
+		if field not in yaml_data:
+			missing_fields.append(field)
+
+	if missing_fields:
+		raise IRValidatorException(f"Missing required fields in YAML file: {', '.join(missing_fields)}")
+
+	return yaml_data
+analyze:
+prompt is blurred ----the implementation details are unclear ----the parameter type is unclear:
+Neither the expected types and structures of cls and yaml_data are cleared.
+prompt fuzzy---missing context information--missing exception handling information:
+prompt does not specify how to deal with the following exceptions:
+The YAML file exists but is empty;
+YAML file is formatted correctly but lacks any meaningful data;
+The root structure of a YAML file is neither a dictionary nor other processable format.
+
+--------------------------------------------------
+
+==================== 6306091d73426c38ae68ace5 ====================
+file_path: infrared/core/inspector/helper.py
+project: redhat-openstack/infrared
+name: _include_groups
+
+prompt:
+Resolves the include dict directive in the spec files.
+
+steps:
+1.  Iterate through the `parser_dict` to find keys that start with "include " (note the space).
+2.  For each key found in the previous step, extract the filename to be included by stripping "include " from the key.
+3.  Check if the extracted filename exists. If not, raise a `FileNotFoundError`.
+4.  If the file exists, parse its content (assuming it's a YAML or JSON file). Handle potential `YAMLError` or `JSONDecodeError` during parsing.  Assume the file is YAML for simplicity.
+5.  Update the `parser_dict` by merging the content of the included file.  Keys in the included file should override existing keys in `parser_dict`.
+6.  Remove the "include " key from `parser_dict` after the inclusion.
+7.  Return the modified `parser_dict`.
+
+generate_code:
+import yaml
+import os
+
+def _include_groups(self, parser_dict):
+	"""
+	Resolves the include dict directive in the spec files.
+	"""
+	include_keys = [key for key in parser_dict if key.startswith("include ")]
+
+	for include_key in include_keys:
+		filename = include_key[len("include "):]
+
+		if not os.path.exists(filename):
+			raise FileNotFoundError(f"Included file not found: {filename}")
+
+		try:
+			with open(filename, 'r') as f:
+				included_data = yaml.safe_load(f)
+		except yaml.YAMLError as e:
+			raise yaml.YAMLError(f"Error parsing included file {filename}: {e}")
+		except Exception as e:
+			raise Exception(f"Error reading included file {filename}: {e}")
+
+		parser_dict.update(included_data)
+		del parser_dict[include_key]
+
+	return parser_dict
+analyze:
+prompt fuzzy ----the implementation details are unclear ----the data structure is unclear:
+prompt assumes parser_dict is a dictionary, but does not specify the expected structure of the dictionary.
+prompt fuzzy---missing context information---missing processing method:
+prompt points out "Keys in the included file should override existing keys in parser_dict", but it is not clear:
+If included_data is also a nested structure, should it be merged recursively?
+If the value in included_data is None, empty string, or boolean, is overwriting allowed?
+
+--------------------------------------------------
+
+==================== 6306092373426c38ae68acfa ===================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: get_spec_defaults
+
+prompt:
+Resolve arguments' values from spec and other sources.
+
+steps:
+1. Step 1: Access the argument specification. Assume the specification is accessible via `self.spec` and it contains information about arguments and their default values defined within the spec.
+2. Step 2: Initialize an empty dictionary called `resolved_defaults` to store the resolved default values for each argument.
+3. Step 3: Iterate through each argument name in the argument specification (`self.spec`).
+4. Step 4: For each argument, check if a default value is explicitly defined within the `self.spec`. This might be under a specific key like 'default' within the argument's specification.
+5. Step 5: If a default value is found in the spec for the current argument, use this value as the resolved default.
+6. Step 6: If no default value is found in the spec for the current argument, call the method `self._get_defaults()` to resolve the default value from other sources. Assume `self._get_defaults()` takes the argument name as input and returns the resolved default value from other sources.
+7. Step 7: Store the resolved default value (either from the spec or from `self._get_defaults()`) in the `resolved_defaults` dictionary, with the argument name as the key.
+8. Step 8: After iterating through all arguments in the specification, return the `resolved_defaults` dictionary containing the resolved default values for all arguments.
+
+generate_code:
+def get_spec_defaults(self):
+	"""
+	Resolve arguments' values from spec and other sources with self._get_defaults()
+	"""
+	resolved_defaults = {}
+	if hasattr(self, 'spec') and self.spec:
+		for arg_name in self.spec:
+			spec_arg = self.spec[arg_name]
+			if isinstance(spec_arg, dict) and 'default' in spec_arg:
+				resolved_defaults[arg_name] = spec_arg['default']
+			else:
+				resolved_defaults[arg_name] = self._get_defaults(arg_name)
+	return resolved_defaults
+
+--------------------------------------------------
+
+==================== 6306092973426c38ae68ad01 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: get_deprecated_args
+
+prompt:
+Returning dict with options which deprecate others.
+
+steps:
+1. *   **Step 1:** Initialize an empty dictionary to store the deprecated arguments and their corresponding deprecating arguments.
+*   **Step 2:** Iterate through the option specifications using `self.spec_helper.iterate_option_specs()`.
+*   **Step 3:** For each option specification, check if it has a 'deprecated_by' key.
+*   **Step 4:** If the 'deprecated_by' key exists, add an entry to the dictionary where the key is the option name (from the option specification) and the value is the 'deprecated_by' value.
+*   **Step 5:** Return the dictionary.
+
+generate_code:
+def get_deprecated_args(self):
+	"""
+	Returning dict with options which deprecate others. options from self.spec_helper.iterate_option_specs()
+	"""
+	deprecated_args = {}
+	for option_name, option_spec in self.spec_helper.iterate_option_specs():
+		if 'deprecated_by' in option_spec:
+			deprecated_args[option_name] = option_spec['deprecated_by']
+	return deprecated_args
+
+--------------------------------------------------
+
+==================== 6306092c73426c38ae68ad02 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: validate_arg_deprecation
+
+prompt:
+Validates and prints the deprecated arguments.
+
+:param cli_args: the dict of arguments from cli
+:param answer_file_args:  the dict of arguments from files
+
+steps:
+1. Define a set called `deprecated_args` containing the names of the arguments that are considered deprecated.
+2. Iterate through each key-value pair in the `cli_args` dictionary.
+3. For each key in `cli_args`, check if the key is present in the `deprecated_args` set.
+4. If a key from `cli_args` is found in the `deprecated_args` set, print a warning message to the console indicating that the argument is deprecated and mention the argument name.
+5. Iterate through each key-value pair in the `answer_file_args` dictionary.
+6. For each key in `answer_file_args`, check if the key is present in the `deprecated_args` set.
+7. If a key from `answer_file_args` is found in the `deprecated_args` set, print a warning message to the console indicating that the argument is deprecated and mention the argument name.
+
+generate_code:
+def validate_arg_deprecation(self, cli_args, answer_file_args):
+	"""
+	Validates and prints the deprecated arguments.
+
+:param cli_args: the dict of arguments from cli
+:param answer_file_args:  the dict of arguments from files
+	"""
+	deprecated_args = {"deprecated_arg1", "deprecated_arg2", "old_parameter"}  # Define deprecated arguments here
+
+	for arg_name in cli_args:
+		if arg_name in deprecated_args:
+			print(f"Warning: Command-line argument '{arg_name}' is deprecated and may be removed in future versions.")
+
+	for arg_name in answer_file_args:
+		if arg_name in deprecated_args:
+			print(f"Warning: Argument '{arg_name}' from answer file is deprecated and may be removed in future versions.")
+
+--------------------------------------------------
+
+==================== 6306092d73426c38ae68ad04 ====================
+file_path: infrared/core/inspector/helper.py
+project: redhat-openstack/infrared
+name: get_parser_option_specs
+
+prompt:
+Gets all the options for the specified command
+
+:param command_name: the command name (main, virsh, ospd, etc...)
+:return: the list of all command options
+
+steps:
+1. Access the options storage within the `self` object. Assume that the options are stored in an attribute of `self`, such as a dictionary or a list of dictionaries, where each entry corresponds to a command and its options.
+2. Use the input `command_name` to retrieve the option specifications from the storage accessed in the previous step. If the storage is a dictionary, use `command_name` as the key to access the corresponding options. If it's a list, iterate through the list to find the entry associated with the `command_name`.
+3. Handle the case where the `command_name` is not found in the options storage. In this situation, return an empty list, indicating that no options are defined for the given command name.
+4. Return the retrieved list of options for the specified `command_name`. If the command name was found and options are available, return the list of option specifications. If not found, return the empty list as determined in the previous step.
+
+generate_code:
+def get_parser_option_specs(self, command_name):
+	"""
+	Gets all the options for the specified command
+
+:param command_name: the command name (main, virsh, ospd, etc...)
+:return: the list of all command options
+	"""
+	if hasattr(self, '_option_specs') and isinstance(self._option_specs, dict):
+		if command_name in self._option_specs:
+			return self._option_specs[command_name]
+	return []
+
+--------------------------------------------------
+
+==================== 6306092d73426c38ae68ad05 ====================
+file_path: infrared/core/inspector/helper.py
+project: redhat-openstack/infrared
+name: get_option_spec
+
+prompt:
+Gets the specification for the specified option name.
+
+steps:
+1. Call the method `self.get_parser_option_specs(command_name)` to get a list of option specifications for the given `command_name`.
+2. Iterate through each option specification in the list returned by `self.get_parser_option_specs(command_name)`.
+3. For each option specification, check if it contains a key or attribute that represents the option's name. Assume this key is named 'name'.
+4. Compare the value of the 'name' key in the current option specification with the input `argument_name`.
+5. If the option name matches the `argument_name`, return the current option specification.
+6. If the loop finishes without finding a matching option specification, return `None` to indicate that the option was not found.
+
+generate_code:
+def get_option_spec(self, command_name, argument_name):
+        """
+        Gets the specification for the specified option name. Get options of the given command_name with self.get_parser_option_specs()
+        """
+        option_specs = self.get_parser_option_specs(command_name)
+        if option_specs:
+            for option_spec in option_specs:
+                if 'name' in option_spec and option_spec['name'] == argument_name:
+                    return option_spec
+        return None
+
+--------------------------------------------------
+
+==================== 6306092d73426c38ae68ad06 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: get_silent_args
+
+prompt:
+list of silenced argument
+
+:param args: The received arguments.
+:return: list, slienced argument names
+
+steps:
+1. Iterate through the input arguments `args`.
+2. Check if each argument name starts with a specific prefix (e.g., '_') to identify silenced arguments.
+3. If an argument name starts with the prefix, add it to a list.
+4. Return the list of silenced argument names.
+
+generate_code:
+def get_silent_args(self, args):
+        """
+        list of silenced argument
+
+    :param args: The received arguments.
+    :return: list, slienced argument names
+        """
+        silenced_args = []
+        if isinstance(args, dict):
+            for arg_name in args:
+                if arg_name.startswith('_'):
+                    silenced_args.append(arg_name)
+        elif isinstance(args, list):
+            for arg_name in args:
+                if isinstance(arg_name, str) and arg_name.startswith('_'):
+                    silenced_args.append(arg_name)
+                # if args is a list of tuples, and we want to check the first element of tuple
+                #elif isinstance(arg_name, tuple) and isinstance(arg_name[0], str) and arg_name[0].startswith('_'):
+                #    silenced_args.append(arg_name[0])
+        # you can extend for other types of args if needed.
+        return silenced_args
+
+--------------------------------------------------
+
+==================== 6306092d73426c38ae68ad07 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: validate_requires_args
+
+prompt:
+Check if all the required arguments have been provided.
+
+steps:
+1. Access the list of required argument names from `self.requires_args`. Assume `self.requires_args` is a list of strings, where each string represents a required argument name.
+2. Check if `self.requires_args` exists and is iterable. If it doesn't exist or is not iterable, assume there are no required arguments, and the validation should pass, returning `True`.
+3. Iterate through each `required_arg_name` in the `self.requires_args` list.
+4. For each `required_arg_name`, check if it exists as a key in the input `args` dictionary. Use the `in` operator to check for key existence.
+5. If a `required_arg_name` is NOT found in `args`, it means a required argument is missing. In this case, immediately return `False` to indicate validation failure.
+6. If the loop completes without returning `False`, it means all required arguments were found in `args`. Return `True` to indicate successful validation.
+
+generate_code:
+def validate_requires_args(self, args):
+	"""
+	Check if all the required arguments have been provided.
+	"""
+	if not hasattr(self, 'requires_args') or not isinstance(self.requires_args, list):
+		return True  # No required args defined, validation passes
+
+	for required_arg in self.requires_args:
+		if required_arg not in args:
+			return False  # Required argument is missing
+
+	return True  # All required arguments are present
+
+--------------------------------------------------
+
+==================== 6306092d73426c38ae68ad08 ====================
+file_path: infrared/core/inspector/inspector.py
+project: redhat-openstack/infrared
+name: _get_conditionally_required_args
+
+prompt:
+List arguments with ``required_when`` condition matched.
+
+:param command_name: the command name.
+:param options_spec:  the list of command spec options.
+:param args: the received input arguments
+:return: list, list of argument names with matched ``required_when``
+    condition
+
+steps:
+1. Iterate through each option in the `options_spec` list.
+2. For each option, check if it has a `required_when` key.
+3. If the `required_when` key exists, retrieve its value, which should be a dictionary representing the conditional requirements.
+4. Iterate through each key-value pair in the `required_when` dictionary. The key represents the argument name to check in `args`, and the value is the required value for that argument.
+5. For each key-value pair in `required_when`, check if the key (argument name) exists in the input `args` dictionary.
+6. If the argument name exists in `args`, check if the value of that argument in `args` matches the value specified in the `required_when` condition.
+7. If all conditions in the `required_when` dictionary are met (i.e., all key-value pairs match the corresponding arguments in `args`), then the current option is conditionally required.
+8. If the option is conditionally required, add the 'name' of this option (which should be available in the option definition itself) to a list of conditionally required arguments.
+9. After iterating through all options in `options_spec`, return the list of conditionally required argument names.
+
+generate_code:
+conditionally_required_args = []
+	for option_spec in options_spec:
+		required_when = option_spec.get('required_when')
+		if required_when:
+			condition_met = True
+			for arg_name, required_value in required_when.items():
+				if arg_name not in args or args[arg_name] != required_value:
+					condition_met = False
+					break
+			if condition_met:
+				conditionally_required_args.append(option_spec['name'])
+	return conditionally_required_args
+analyze:
+prompt fuzzy ----the implementation details are unclear ----the data structure is unclear:
+The data structure of options_spec is unclear,
+The data structure of args is unclear.
+--------------------------------------------------

@@ -1,0 +1,743 @@
+text:
+<issue>
+Add an option to django-admin to always colorize output
+Description
+
+With Django management commands, it is currently possible disable colors with the --no-colors flag.
+What I'd like to have is basically the other side of the coin: a --force-colors flag that instructs Django to output ANSI color sequences in cases it would disable colors by default (typically, when the output is piped to another command, as documented).
+My real world use-case is the following one: I have a custom Django command to import data. I run this command myself, and I'd like to send a colored log (HTML seems perfect for this) to the data curators. I can use the ​https://github.com/theZiz/aha utility for this, but that doesn't work since Django disable colors when the output is piped.
+Other *nix commands have a special flag for this exact use-case, for example $ ls --color=always
+
+</issue>
+
+steps:
+
+1. Open the file `django/core/management/base.py`.
+2. Locate the `create_parser` method in the `BaseCommand` class.
+3. In the `create_parser` method, add a new `add_argument` call for `--force-colors` similar to `--no-color`. This argument should be a boolean action that stores `True` when provided. Add help text to describe its functionality.
+4. Locate the `__init__` method of the `BaseCommand` class.
+5. In the `__init__` method, after the `no_color` check, retrieve the value of the `force_color` option from the command options.
+6. Modify the `OutputWrapper` instantiation for `stdout` and `stderr` in `BaseCommand.__init__`. Pass the `force_color` option as a keyword argument to `OutputWrapper`.
+7. Open the file `django/core/management/base.py` again.
+8. Locate the `OutputWrapper` class.
+9. In the `OutputWrapper.__init__` method, add a parameter `force_color` with a default value of `False` and store it as an instance attribute `self.force_color`.
+10. In the `OutputWrapper.style_func.setter` method, modify the condition for applying style. If `self.force_color` is `True`, always apply the style function, regardless of `self.isatty()`. Otherwise, apply style only if `self.isatty()` is true.
+11. In `BaseCommand.create_parser`, update the help text for the `--no-color` argument to mention the new `--force-colors` argument and clearly explain the behavior of both flags, including the piping use case.
+12. Save all modified files.
+13. Generate a patch file containing the changes.
+
+model_patch:
+
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -129,8 +129,9 @@
+         return self._out, name)
+
+     def isatty(self):
+-        return hasattr(self._out, 'isatty') and self._out.isatty()
+-
++        return self.force_color or (hasattr(self._out, 'isatty') and self._out.isatty())
++
+     def __init__(self, out, style_func=None, ending='\n', force_color=False):
+         self._out = out
+         self.style_func = None
+@@ -230,10 +231,10 @@
+     # Command-specific options not defined by the argument parser.
+     stealth_options = ()
+
+-    def __init__(self, stdout=None, stderr=None, no_color=False):
+-        self.stdout = OutputWrapper(stdout or sys.stdout)
+-        self.stderr = OutputWrapper(stderr or sys.stderr)
+-        if no_color:
++    def __init__(self, stdout=None, stderr=None, no_color=False, force_color=False):
++        self.stdout = OutputWrapper(stdout or sys.stdout, force_color=force_color)
++        self.stderr = OutputWrapper(stderr or sys.stderr, force_color=force_color)
++        if no_color and not force_color:
+             self.style = no_style()
+         else:
+             self.style = color_style()
+@@ -281,8 +282,12 @@
+             help='A directory to add to the Python path, e.g. "/home/djangoprojects/myproject".',
+         )
+         parser.add_argument('--traceback', action='store_true', help='Raise on CommandError exceptions')
++        color_group = parser.add_mutually_exclusive_group()
++        color_group.add_argument(
++            '--no-color', action='store_true', help="Don't colorize the command output.")
++        color_group.add_argument(
++            '--force-color', action='store_true', help="Force colorization of the command output.")
+         parser.add_argument(
+-            '--no-color', action='store_true',
+-            help="Don't colorize the command output.",
+         )
+         self.add_arguments(parser)
+         return parser
+@@ -341,7 +346,7 @@
+         Try to execute this command, performing system checks if needed (as
+         controlled by the ``requires_system_checks`` attribute, except if
+         force-skipped).
+-        """
++       """
+         if options['no_color']:
+             self.style = no_style()
+             self.stderr.style_func = None
+@@ -349,6 +354,9 @@
+             self.stdout = OutputWrapper(options['stdout'])
+         if options.get('stderr'):
+             self.stderr = OutputWrapper(options['stderr'], self.stderr.style_func)
++        if options['force_color']:
++            self.stdout.force_color = True
++            self.stderr.force_color = True
+
+         if self.requires_system_checks and not options.get('skip_checks'):
+             self.check()
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -95,7 +95,7 @@ class DjangoHelpFormatter(HelpFormatter):
+     """
+     show_last = {
+         '--version', '--verbosity', '--traceback', '--settings', '--pythonpath',
+-        '--no-color',
++        '--no-color', '--force_color',
+     }
+
+     def _reordered_actions(self, actions):
+@@ -227,13 +227,15 @@ class BaseCommand:
+     # Command-specific options not defined by the argument parser.
+     stealth_options = ()
+
+-    def __init__(self, stdout=None, stderr=None, no_color=False):
++    def __init__(self, stdout=None, stderr=None, no_color=False, force_color=False):
+         self.stdout = OutputWrapper(stdout or sys.stdout)
+         self.stderr = OutputWrapper(stderr or sys.stderr)
++        if no_color and force_color:
++            raise CommandError("'no_color' and 'force_color' can't be used together.")
+         if no_color:
+             self.style = no_style()
+         else:
+-            self.style = color_style()
++            self.style = color_style(force_color)
+             self.stderr.style_func = self.style.ERROR
+
+     def get_version(self):
+@@ -280,6 +282,10 @@ def create_parser(self, prog_name, subcommand, **kwargs):
+             '--no-color', action='store_true',
+             help="Don't colorize the command output.",
+         )
++        parser.add_argument(
++            '--force-color', action='store_true',
++            help='Force colorization of the command output.',
++        )
+         self.add_arguments(parser)
+         return parser
+
+@@ -339,7 +345,11 @@ def execute(self, *args, **options):
+         controlled by the ``requires_system_checks`` attribute, except if
+         force-skipped).
+         """
+-        if options['no_color']:
++        if options['force_color'] and options['no_color']:
++            raise CommandError("The --no-color and --force-color options can't be used together.")
++        if options['force_color']:
++            self.style = color_style(force_color=True)
++        elif options['no_color']:
+             self.style = no_style()
+             self.stderr.style_func = None
+         if options.get('stdout'):
+diff --git a/django/core/management/color.py b/django/core/management/color.py
+--- a/django/core/management/color.py
++++ b/django/core/management/color.py
+@@ -64,10 +64,10 @@ def no_style():
+     return make_style('nocolor')
+
+
+-def color_style():
++def color_style(force_color=False):
+     """
+     Return a Style object from the Django color scheme.
+     """
+-    if not supports_color():
++    if not force_color and not supports_color():
+         return no_style()
+     return make_style(os.environ.get('DJANGO_COLORS', ''))
+
+</patch>
+
+--------------------------------------------------
+analyze
+The CoT steps basically meet the requirements of the propt and provide detailed steps to implement the --force-colors flag.
+However, there is a lack of clear declaration of the mutually exclusive relationship between --no-color and --force-color, and the lack of exception handling, which leads to logical errors in subsequent implementations.
+
+text:
+<issue>
+Trunc() should allow passing is_dst resolution to avoid NonExistentTimeError/AmbiguousTimeError
+Description
+
+		(last modified by Alexander Holmbäck)
+
+When Trunc() truncates to a nonexisting or ambiguous datetime, the exception raised by pytz remains unhandled. The expected behavior would, IMO, be to not check the validity of truncated dates.
+This test for example:
+import datetime
+import pytz
+from django.db.models.functions import Trunc
+from django.test import TestCase
+from django.utils import timezone
+from .models import Log
+class TestTruncateToInvalidTime(TestCase):
+	def test_truncate_to_dst_ends_stockholm(self):
+		tzinfo = pytz.timezone('Europe/Stockholm')
+		timestamp = datetime.datetime(2018, 10, 28, 2, tzinfo=tzinfo)
+		Log.objects.create(timestamp=timestamp)
+		logs = Log.objects.annotate(day=Trunc('timestamp', 'hour')).all()
+		timezone.activate(tzinfo)
+		self.assertEqual(logs[0].day.day, 28)
+Results in the following error:
+ERROR: test_truncate_to_dst_ends_stockholm (trunc.tests.TestTruncateInvalidTime)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+File "/home/alex/tickets/trunc/tests.py", line 47, in test_truncate_to_dst_ends_stockholm
+self.assertEqual(logs[0].day.day, 28)
+File "/home/alex/django/django/db/models/query.py", line 303, in __getitem__
+qs._fetch_all()
+File "/home/alex/django/django/db/models/query.py", line 1190, in _fetch_all
+self._result_cache = list(self._iterable_class(self))
+File "/home/alex/django/django/db/models/query.py", line 64, in __iter__
+for row in compiler.results_iter(results):
+File "/home/alex/django/django/db/models/sql/compiler.py", line 1013, in apply_converters
+value = converter(value, expression, connection)
+File "/home/alex/django/django/db/models/functions/datetime.py", line 225, in convert_value
+value = timezone.make_aware(value, self.tzinfo)
+File "/home/alex/django/django/utils/timezone.py", line 270, in make_aware
+return timezone.localize(value, is_dst=is_dst)
+File "/home/alex/.virtualenvs/djangodev/lib/python3.6/site-packages/pytz/tzinfo.py", line 363, in localize
+raise AmbiguousTimeError(dt)
+pytz.exceptions.AmbiguousTimeError: 2018-10-28 02:00:00
+
+</issue>
+
+steps:
+
+1. Modify the `convert_value` method in the `TruncBase` class located in `django/db/models/functions/datetime.py`.
+2. Locate the line `value = timezone.make_aware(value, self.tzinfo)` within the `convert_value` method.
+3. Change this line to `value = timezone.make_aware(value, self.tzinfo, is_dst=None)` to pass the `is_dst=None` argument to the `make_aware` function. This will instruct `pytz` to not validate the DST flag and avoid raising `AmbiguousTimeError` or `NonExistentTimeError`.
+4. Generate a patch file that includes this change.
+
+model_patch:
+
+--- a/django/db/models/functions/datetime.py
++++ b/django/db/models/functions/datetime.py
+@@ -223,7 +223,7 @@
+                 pass
+             elif value is not None:
+                 value = value.replace(tzinfo=None)
+-                value = timezone.make_aware(value, self.tzinfo)
++                value = timezone.make_aware(value, self.tzinfo, is_dst=None)
+             elif not connection.features.has_zoneinfo_database:
+                 raise ValueError(
+                     'Database returned an invalid datetime value. Are time '
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/functions/datetime.py b/django/db/models/functions/datetime.py
+--- a/django/db/models/functions/datetime.py
++++ b/django/db/models/functions/datetime.py
+@@ -170,8 +170,9 @@ class TruncBase(TimezoneMixin, Transform):
+     kind = None
+     tzinfo = None
+
+-    def __init__(self, expression, output_field=None, tzinfo=None, **extra):
++    def __init__(self, expression, output_field=None, tzinfo=None, is_dst=None, **extra):
+         self.tzinfo = tzinfo
++        self.is_dst = is_dst
+         super().__init__(expression, output_field=output_field, **extra)
+
+     def as_sql(self, compiler, connection):
+@@ -222,7 +223,7 @@ def convert_value(self, value, expression, connection):
+                 pass
+             elif value is not None:
+                 value = value.replace(tzinfo=None)
+-                value = timezone.make_aware(value, self.tzinfo)
++                value = timezone.make_aware(value, self.tzinfo, is_dst=self.is_dst)
+             elif not connection.features.has_zoneinfo_database:
+                 raise ValueError(
+                     'Database returned an invalid datetime value. Are time '
+@@ -240,9 +241,12 @@ def convert_value(self, value, expression, connection):
+
+ class Trunc(TruncBase):
+
+-    def __init__(self, expression, kind, output_field=None, tzinfo=None, **extra):
++    def __init__(self, expression, kind, output_field=None, tzinfo=None, is_dst=None, **extra):
+         self.kind = kind
+-        super().__init__(expression, output_field=output_field, tzinfo=tzinfo, **extra)
++        super().__init__(
++            expression, output_field=output_field, tzinfo=tzinfo,
++            is_dst=is_dst, **extra
++        )
+
+
+ class TruncYear(TruncBase):
+
+</patch>
+
+--------------------------------------------------
+analyze
+The CoT steps basically meet the requirements of propt and provide detailed steps to modify the convert_value method.
+However, it is not mentioned that the is_dst parameter needs to be added to the TruncBase constructor, which may cause the parameter to be unable to be passed when using the Trunc class, thus affecting the integrity of the function. Although it is mentioned that the is_dst parameter is to be passed to the make_aware function, the is_dst parameter is not handled in the TruncBase constructor. Therefore, when the convert_value method is actually called, the value of is_dst will always be None, rather than obtained from the initialization of the Trunc class.
+text:
+<issue>
+Allow FilePathField path to accept a callable.
+Description
+
+I have a special case where I want to create a model containing the path to some local files on the server/dev machine. Seeing as the place where these files are stored is different on different machines I have the following:
+import os
+from django.conf import settings
+from django.db import models
+class LocalFiles(models.Model):
+	name = models.CharField(max_length=255)
+	file = models.FilePathField(path=os.path.join(settings.LOCAL_FILE_DIR, 'example_dir'))
+Now when running manage.py makemigrations it will resolve the path based on the machine it is being run on. Eg: /home/<username>/server_files/example_dir
+I had to manually change the migration to include the os.path.join() part to not break this when running the migration on production/other machine.
+
+</issue>
+
+steps:
+1. Modify `FilePathField.deconstruct` method in `django/db/models/fields/files.py` to handle callable `path` arguments. The goal is to ensure that when `path` is a callable, the `deconstruct` method returns it as is, allowing the serializer to handle it.
+
+2. Create a test case in `tests/migrations/test_writer.py` to define a model with `FilePathField` where `path` is set to `os.path.join`.
+
+3. Run `makemigrations` for the test app and examine the generated migration file to verify that the `path` argument in `FilePathField` is correctly serialized as `os.path.join`.
+
+4. If the serialization is correct, generate a patch file containing the changes to `django/db/models/fields/files.py`.
+
+model_patch:
+
+--- a/django/db/models/fields/files.py
++++ b/django/db/models/fields/files.py
+@@ -248,6 +248,8 @@
+             "match": self.match,
+             "recursive": self.recursive,
+             "allow_files": self.allow_files,
++            "allow_folders": self.allow_folders,
+         }
+         if self.path != getattr(self.__class__, 'path').default:
+             kwargs['path'] = self.path
+         return name, args, kwargs
++        return name, args, kwargs
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -1709,7 +1709,7 @@ def get_prep_value(self, value):
+
+     def formfield(self, **kwargs):
+         return super().formfield(**{
+-            'path': self.path,
++            'path': self.path() if callable(self.path) else self.path,
+             'match': self.match,
+             'recursive': self.recursive,
+             'form_class': forms.FilePathField,
+
+</patch>
+
+--------------------------------------------------
+analyze
+CoT and propt requirements are basically the same, but it does not explicitly mention how to handle callable path parameters in the constructor of FilePathField, and key details may be missed during actual operation. Specifically:
+In steps, although it is mentioned that the deconstruct method is to be modified to handle callable path parameters, it is not mentioned how to handle this callable object in other parts of FilePathField (such as the formfield method). The modification in gold_patch shows the logic of handling path in the formfield method, and there is no corresponding processing in model_patch, which may cause an error during serialization.
+text:
+<issue>
+Add autocomplete attribute to contrib.auth fields
+Description
+
+		(last modified by CHI Cheng)
+
+Add autocomplete=username/email/current-password/new-password to contrib.auth builtin forms.
+Pull request: ​https://github.com/django/django/pull/9921
+The most useful one is autocomplete=new-password, which prevents browsers prefill with current password, Chrome will also suggest a random strong password for users who turned on account sync.
+Related docs:
+​https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill
+​https://www.chromium.org/developers/design-documents/form-styles-that-chromium-understands
+​https://developer.mozilla.org/en-US/docs/Web/Security/Securing_your_site/Turning_off_form_autocompletion#The_autocomplete_attribute_and_login_fields
+
+</issue>
+
+steps:
+1. Open the file `django/contrib/auth/forms.py`.
+
+2. Locate the `AuthenticationForm` class.
+
+3. Modify the `username` field's widget definition to include `attrs={'autofocus': True, 'autocomplete': 'username'}`.
+
+4. Modify the `password` field's widget definition to include `attrs={'autocomplete': 'current-password'}`.
+
+5. Locate the `PasswordChangeForm` class.
+
+6. Modify the `old_password` field's widget definition to include `attrs={'autofocus': True, 'autocomplete': 'current-password'}`.
+
+7. Modify the `new_password1` field's widget definition in `PasswordChangeForm` and `SetPasswordForm` to include `widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'})`.
+
+8. Modify the `new_password2` field's widget definition in `PasswordChangeForm` and `SetPasswordForm` to include `widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'})`.
+
+9. Locate the `PasswordResetForm` class.
+
+10. Modify the `email` field's widget definition (implicitly `forms.EmailField` uses `forms.TextInput` as widget) to include `widget=forms.EmailField(label=_("Email"), max_length=254, widget=forms.TextInput(attrs={'autocomplete': 'email'}))` or more simply update `widget=forms.TextInput(attrs={'autocomplete': 'email'})` in the field definition.
+
+11. Locate the `UserCreationForm` class.
+
+12. Modify the `password1` field's widget definition to include `widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'})`.
+
+13. Modify the `password2` field's widget definition to include `widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'})`.
+
+14. Locate the `AdminPasswordChangeForm` class.
+
+15. Modify the `password1` field's widget definition to include `widget=forms.PasswordInput(attrs={'autofocus': True, 'autocomplete': 'new-password'})`.
+
+16. Modify the `password2` field's widget definition to include `widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'})`.
+
+17. Generate the patch file using `diff -u` command or similar tool.
+
+model_patch:
+
+--- a/django/contrib/auth/forms.py
++++ b/django/contrib/auth/forms.py
+@@ -81,7 +81,7 @@
+     }
+     password1 = forms.CharField(
+         label=_("Password"),
+-        strip=False,
++        strip=False,
+         widget=forms.PasswordInput,
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+@@ -170,7 +170,9 @@
+     """
+     Base class for authenticating users. Extend this to get a form that accepts
+     username/password logins.
++
+     """
+-    username = UsernameField(widget=forms.TextInput(attrs={'autofocus': True}))
++    username = UsernameField(widget=forms.TextInput(attrs={'autofocus': True, 'autocomplete': 'username'}))
+     password = forms.CharField(
+         label=_("Password"),
+         strip=False,
+@@ -239,7 +241,7 @@
+
+
+  class PasswordResetForm(forms.Form):
+-    email = forms.EmailField(label=_("Email"), max_length=254)
++    email = forms.EmailField(label=_("Email"), max_length=254, widget=forms.TextInput(attrs={'autocomplete': 'email'}))
+
+     def send_mail(self, subject_template_name, email_template_name,
+                    context, from_email, to_email, html_email_template_name=None):
+@@ -315,7 +317,7 @@
+     }
+     new_password1 = forms.CharField(
+         label=_("New password"),
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+@@ -323,7 +325,7 @@
+     new_password2 = forms.CharField(
+         label=_("New password confirmation"),
+         strip=False,
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+     )
+
+     def __init__(self, user, *args, **kwargs):
+@@ -361,7 +363,7 @@
+     old_password = forms.CharField(
+         label=_("Old password"),
+         strip=False,
+-        widget=forms.PasswordInput(attrs={'autofocus': True}),
++        widget=forms.PasswordInput(attrs={'autofocus': True, 'autocomplete': 'current-password'}),
+     )
+
+     field_order = ['old_password', 'new_password1', 'new_password2']
+@@ -389,13 +391,13 @@
+     required_css_class = 'required'
+     password1 = forms.CharField(
+         label=_("Password"),
+-        widget=forms.PasswordInput(attrs={'autofocus': True}),
++        widget=forms.PasswordInput(attrs={'autofocus': True, 'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+     password2 = forms.CharField(
+         label=_("Password (again)"),
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=_("Enter the same password as before, for verification."),
+     )
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/auth/forms.py b/django/contrib/auth/forms.py
+--- a/django/contrib/auth/forms.py
++++ b/django/contrib/auth/forms.py
+@@ -78,12 +78,12 @@ class UserCreationForm(forms.ModelForm):
+     password1 = forms.CharField(
+         label=_("Password"),
+         strip=False,
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+     password2 = forms.CharField(
+         label=_("Password confirmation"),
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=_("Enter the same password as before, for verification."),
+     )
+@@ -96,7 +96,10 @@ class Meta:
+     def __init__(self, *args, **kwargs):
+         super().__init__(*args, **kwargs)
+         if self._meta.model.USERNAME_FIELD in self.fields:
+-            self.fields[self._meta.model.USERNAME_FIELD].widget.attrs.update({'autofocus': True})
++            self.fields[self._meta.model.USERNAME_FIELD].widget.attrs.update({
++                'autocomplete': 'username',
++                'autofocus': True,
++            })
+
+     def clean_password2(self):
+         password1 = self.cleaned_data.get("password1")
+@@ -163,11 +166,11 @@ class AuthenticationForm(forms.Form):
+     Base class for authenticating users. Extend this to get a form that accepts
+     username/password logins.
+     """
+-    username = UsernameField(widget=forms.TextInput(attrs={'autofocus': True}))
++    username = UsernameField(widget=forms.TextInput(attrs={'autocomplete': 'username', 'autofocus': True}))
+     password = forms.CharField(
+         label=_("Password"),
+         strip=False,
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'current-password'}),
+     )
+
+     error_messages = {
+@@ -235,7 +238,11 @@ def get_invalid_login_error(self):
+
+
+ class PasswordResetForm(forms.Form):
+-    email = forms.EmailField(label=_("Email"), max_length=254)
++    email = forms.EmailField(
++        label=_("Email"),
++        max_length=254,
++        widget=forms.EmailInput(attrs={'autocomplete': 'email'})
++    )
+
+     def send_mail(self, subject_template_name, email_template_name,
+                   context, from_email, to_email, html_email_template_name=None):
+@@ -311,14 +318,14 @@ class SetPasswordForm(forms.Form):
+     }
+     new_password1 = forms.CharField(
+         label=_("New password"),
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+     new_password2 = forms.CharField(
+         label=_("New password confirmation"),
+         strip=False,
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+     )
+
+     def __init__(self, user, *args, **kwargs):
+@@ -357,7 +364,7 @@ class PasswordChangeForm(SetPasswordForm):
+     old_password = forms.CharField(
+         label=_("Old password"),
+         strip=False,
+-        widget=forms.PasswordInput(attrs={'autofocus': True}),
++        widget=forms.PasswordInput(attrs={'autocomplete': 'current-password', 'autofocus': True}),
+     )
+
+     field_order = ['old_password', 'new_password1', 'new_password2']
+@@ -385,13 +392,13 @@ class AdminPasswordChangeForm(forms.Form):
+     required_css_class = 'required'
+     password1 = forms.CharField(
+         label=_("Password"),
+-        widget=forms.PasswordInput(attrs={'autofocus': True}),
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password', 'autofocus': True}),
+         strip=False,
+         help_text=password_validation.password_validators_help_text_html(),
+     )
+     password2 = forms.CharField(
+         label=_("Password (again)"),
+-        widget=forms.PasswordInput,
++        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+         strip=False,
+         help_text=_("Enter the same password as before, for verification."),
+     )
+
+</patch>
+
+--------------------------------------------------
+analyze
+Only the fields to modify multiple forms are mentioned in steps that add the autocomplete attribute, but there is no mention of how to deal with some possible boundary situations, such as compatibility between the initial definition of the field and the modified definition.
+The modification in gold_patch shows the logic of processing autocomplete in UserCreationForm, and the missing field processing in model_patch.
+text:
+<issue>
+add ModelAdmin.get_inlines() hook to allow set inlines based on the request or model instance.
+Description
+
+add ModelAdmin.get_inlines() hook to allow set inlines based on the request or model instance.
+Currently, We can override the method get_inline_instances to do such a thing, but a for loop should be copied to my code. So I wished add a hook get_inlines(request, obj=None)
+
+</issue>
+
+steps:
+
+1. Locate the `ModelAdmin` class definition. Although the provided files do not include the `ModelAdmin` class, it is typically located in `django/contrib/admin/options.py`. We will proceed assuming this location.
+2. Identify the `get_inline_instances` method within the `ModelAdmin` class. This method is responsible for generating inline form instances for the admin change form.
+3. Create a new method `get_inlines(self, request, obj=None)` within the `ModelAdmin` class. This method will act as the new hook for customizing inlines. The default implementation of this method should return the `inlines` attribute of the `ModelAdmin` class.
+4. Modify the `get_inline_instances(self, request, obj=None)` method to utilize the new `get_inlines` hook. Instead of directly iterating through `self.inlines`, `get_inline_instances` should now call `self.get_inlines(request, obj)` to get the list of inline classes and then proceed with instantiation and permission checks as before.
+5. Ensure that the new `get_inlines` method accepts `request` and `obj` as arguments, allowing for context-dependent inline customization.
+6. Generate a patch file that includes the addition of the `get_inlines` method and the modification of the `get_inline_instances` method in `django/contrib/admin/options.py`. This patch should be in a format compatible with `git apply`.
+
+model_patch:
+
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -1559,6 +1559,18 @@
+         return [inline(self.model, self.admin_site) for inline in self.inlines]
+
+     def get_inline_instances(self, request, obj=None):
++        """
++        Return instances of all inlines to be displayed on the edit form.
++        """
++        inline_instances = []
++        inlines = self.get_inlines(request, obj)
++        for inline_class in inlines:
++            inline = inline_class(self.model, self.admin_site)
++            if not inline.has_add_permission(request, obj):
++                continue
++            if not inline.has_change_permission(request, obj):
++                continue
++            if not inline.has_delete_permission(request, obj):
++                continue
++            inline_instances.append(inline)
++        return inline_instances
++
++    def get_inlines(self, request, obj=None):
+         """
+         Return instances of all inlines to be displayed on the edit form.
+         """
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -327,6 +327,10 @@ def get_fieldsets(self, request, obj=None):
+             return self.fieldsets
+         return [(None, {'fields': self.get_fields(request, obj)})]
+
++    def get_inlines(self, request, obj):
++        """Hook for specifying custom inlines."""
++        return self.inlines
++
+     def get_ordering(self, request):
+         """
+         Hook for specifying field ordering.
+@@ -582,7 +586,7 @@ def __str__(self):
+
+     def get_inline_instances(self, request, obj=None):
+         inline_instances = []
+-        for inline_class in self.inlines:
++        for inline_class in self.get_inlines(request, obj):
+             inline = inline_class(self.model, self.admin_site)
+             if request:
+                 if not (inline.has_view_or_change_permission(request, obj) or
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+Prompt clearly expresses the functional requirements: by adding get_inlines to set up inlines based on requests or model instances. However, the specific details about the implementation are not clear enough, including how to use them in ModelAdmin and its relationship with existing methods, resulting in some uncertainty in CoT and encoding.
+text:
+<issue>
+HttpResponse doesn't handle memoryview objects
+Description
+
+I am trying to write a BinaryField retrieved from the database into a HttpResponse. When the database is Sqlite this works correctly, but Postgresql returns the contents of the field as a memoryview object and it seems like current Django doesn't like this combination:
+from django.http import HttpResponse
+# String content
+response = HttpResponse("My Content")
+response.content
+# Out: b'My Content'
+# This is correct
+# Bytes content
+response = HttpResponse(b"My Content")
+response.content
+# Out: b'My Content'
+# This is also correct
+# memoryview content
+response = HttpResponse(memoryview(b"My Content"))
+response.content
+# Out: b'<memory at 0x7fcc47ab2648>'
+# This is not correct, I am expecting b'My Content'
+
+</issue>
+
+steps:
+
+1. Open the file `django/http/response.py`.
+2. Locate the `make_bytes` method within the `HttpResponseBase` class.
+3. Add a condition to check if the input `value` is an instance of `memoryview`.
+4. If `value` is a `memoryview` instance, convert it to bytes using `bytes(value)` and return it. Insert this condition before the existing "Handle non-string types" comment and the line `return str(value).encode(self.charset)`.
+5. Save the changes to `django/http/response.py`.
+6. Generate a patch file in git format containing the changes made to `django/http/response.py`.
+
+model_patch:
+
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -232,6 +232,8 @@
+             return bytes(value)
+         if isinstance(value, str):
+             return bytes(value.encode(self.charset))
++        if isinstance(value, memoryview):
++            return bytes(value)
+         # Handle non-string types.
+         return str(value).encode(self.charset)
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/http/response.py b/django/http/response.py
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -229,7 +229,7 @@ def make_bytes(self, value):
+         # Handle string types -- we can't rely on force_bytes here because:
+         # - Python attempts str conversion first
+         # - when self._charset != 'utf-8' it re-encodes the content
+-        if isinstance(value, bytes):
++        if isinstance(value, (bytes, memoryview)):
+             return bytes(value)
+         if isinstance(value, str):
+             return bytes(value.encode(self.charset))
+
+</patch>
+
+--------------------------------------------------
+analyze
+
+In the CoT step, only the processing of memoryview is mentioned, but the specific implementation logic when processing memoryview is not clearly stated, such as how to ensure that bytes and strings can still be processed normally in other situations.
+

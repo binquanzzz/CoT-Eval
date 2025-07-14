@@ -1,0 +1,1759 @@
+text:
+<issue>
+Create --update flag for makemigrations management command, mimicking South's one.
+Description
+
+When I was developing with South I was able to use the --update flag for the schemamigration management command (​http://south.readthedocs.org/en/latest/commands.html#schemamigration) to refine the latest migration.
+This was very convenient for iterative development. Could we have an equivalent of the --update flag for Django>=1.7 makemigrations?
+(I've taken it from ​http://stackoverflow.com/questions/30487909/what-is-the-equivalent-of-souths-schemamigration-update-for-django-1-7)
+
+</issue>
+
+steps:
+1. Add the `--update` argument to the `add_arguments` method of the `makemigrations` command in `django/core/management/commands/makemigrations.py`. This will enable users to use the `--update` flag when running `makemigrations`.
+2. Modify the `handle` method in `django/core/management/commands/makemigrations.py` to incorporate the logic for the `--update` flag.
+    - Check if the `--update` option is present in the `options` dictionary.
+    - If `--update` is True, implement the logic to refine the latest migration. This involves:
+        - Ensuring app labels are provided when `--update` is used. If not, raise a `CommandError`.
+        - Loading the migration loader.
+        - For each specified app label:
+            - Get the applied migrations for the app.
+            - If there are applied migrations, get the latest one.
+            - If there is a latest migration, use the project state at that migration as the `old_state` for the `MigrationAutodetector`.
+            - If there are no migrations for the app and `--update` is used, it should behave like a regular `makemigrations` command creating an initial migration.
+        - Initialize `MigrationAutodetector` with the `old_state` (from the latest migration or an empty state if no migrations exist) and the current `ProjectState`.
+        - Proceed with the migration detection process as usual, but now comparing against the state of the latest migration instead of the database state.
+3. No changes are needed in `django/core/management/commands/migrate.py` and `django/db/migrations/questioner.py` for this specific feature request.
+model_patch:
+
+--- a/django/core/management/commands/makemigrations.py
++++ b/django/core/management/commands/makemigrations.py
+@@ -67,6 +67,12 @@
+ 			help="Do not add header comments to new migration file(s).",
+ 		)
+ 		parser.add_argument(
++			"--update",
++			action="store_true",
++			help="Refine the latest migration by re-running it against the current models.",
++		)
++
++		parser.add_argument(
+ 			"--check",
+ 			action="store_true",
+ 			dest="check_changes",
+@@ -98,6 +104,7 @@
+ 		self.dry_run = options["dry_run"]
+ 		self.merge = options["merge"]
+ 		self.empty = options["empty"]
++		self.update = options["update"]
+ 		self.migration_name = options["name"]
+ 		if self.migration_name and not self.migration_name.isidentifier():
+ 			raise CommandError("The migration name must be a valid Python identifier.")
+@@ -118,6 +125,9 @@
+          # Make sure the app they asked for exists
+          app_labels = set(app_labels)
+          has_bad_labels = False
++        if self.update and not app_labels:
++            raise CommandError("You must specify at least one app label when using --update.")
++
+          for app_label in app_labels:
+              try:
+                  apps.get_app_config(app_label)
+@@ -194,8 +204,27 @@
+                  verbosity=self.verbosity,
+                  log=self.log,
+              )
++
++        if self.update:
++            old_state = None
++            if app_labels:
++                # Load the current graph state, but just for the given apps
++                old_state = loader.project_state(
++                    nodes={
++                        (app_label, leaf_name)
++                        for app_label in app_labels
++                        for leaf_name in loader.graph.leaf_nodes_for_app(app_label)
++                    }
++                )
++            if old_state is None:
++                old_state = ProjectState()
++        else:
++            old_state = loader.project_state()
++
++
++
+          # Set up autodetector
+-         autodetector = MigrationAutodetector(
++         autodetector = MigrationAutodetector(
+              loader.project_state(),
+              ProjectState.from_apps(apps),
+              questioner,
+@@ -231,7 +260,7 @@
+              return
+
+          # Detect changes
+-         changes = autodetector.changes(
++         changes = autodetector.changes(
+              graph=loader.graph,
+              trim_to_apps=app_labels or None,
+              convert_apps=app_labels or None,
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/management/commands/makemigrations.py b/django/core/management/commands/makemigrations.py
+--- a/django/core/management/commands/makemigrations.py
++++ b/django/core/management/commands/makemigrations.py
+@@ -11,6 +11,8 @@
+ from django.db.migrations import Migration
+ from django.db.migrations.autodetector import MigrationAutodetector
+ from django.db.migrations.loader import MigrationLoader
++from django.db.migrations.migration import SwappableTuple
++from django.db.migrations.optimizer import MigrationOptimizer
+ from django.db.migrations.questioner import (
+     InteractiveMigrationQuestioner,
+     MigrationQuestioner,
+@@ -79,6 +81,15 @@ def add_arguments(self, parser):
+                 "paths of generated migration files to stdout."
+             ),
+         )
++        parser.add_argument(
++            "--update",
++            action="store_true",
++            dest="update",
++            help=(
++                "Merge model changes into the latest migration and optimize the "
++                "resulting operations."
++            ),
++        )
+
+     @property
+     def log_output(self):
+@@ -101,6 +112,7 @@ def handle(self, *app_labels, **options):
+         self.include_header = options["include_header"]
+         check_changes = options["check_changes"]
+         self.scriptable = options["scriptable"]
++        self.update = options["update"]
+         # If logs and prompts are diverted to stderr, remove the ERROR style.
+         if self.scriptable:
+             self.stderr.style_func = None
+@@ -236,11 +248,86 @@ def handle(self, *app_labels, **options):
+                 else:
+                     self.log("No changes detected")
+         else:
+-            self.write_migration_files(changes)
++            if self.update:
++                self.write_to_last_migration_files(changes)
++            else:
++                self.write_migration_files(changes)
+             if check_changes:
+                 sys.exit(1)
+
+-    def write_migration_files(self, changes):
++    def write_to_last_migration_files(self, changes):
++        loader = MigrationLoader(connections[DEFAULT_DB_ALIAS])
++        new_changes = {}
++        update_previous_migration_paths = {}
++        for app_label, app_migrations in changes.items():
++            # Find last migration.
++            leaf_migration_nodes = loader.graph.leaf_nodes(app=app_label)
++            if len(leaf_migration_nodes) == 0:
++                raise CommandError(
++                    f"App {app_label} has no migration, cannot update last migration."
++                )
++            leaf_migration_node = leaf_migration_nodes[0]
++            # Multiple leaf nodes have already been checked earlier in command.
++            leaf_migration = loader.graph.nodes[leaf_migration_node]
++            # Updated migration cannot be a squash migration, a dependency of
++            # another migration, and cannot be already applied.
++            if leaf_migration.replaces:
++                raise CommandError(
++                    f"Cannot update squash migration '{leaf_migration}'."
++                )
++            if leaf_migration_node in loader.applied_migrations:
++                raise CommandError(
++                    f"Cannot update applied migration '{leaf_migration}'."
++                )
++            depending_migrations = [
++                migration
++                for migration in loader.disk_migrations.values()
++                if leaf_migration_node in migration.dependencies
++            ]
++            if depending_migrations:
++                formatted_migrations = ", ".join(
++                    [f"'{migration}'" for migration in depending_migrations]
++                )
++                raise CommandError(
++                    f"Cannot update migration '{leaf_migration}' that migrations "
++                    f"{formatted_migrations} depend on."
++                )
++            # Build new migration.
++            for migration in app_migrations:
++                leaf_migration.operations.extend(migration.operations)
++
++                for dependency in migration.dependencies:
++                    if isinstance(dependency, SwappableTuple):
++                        if settings.AUTH_USER_MODEL == dependency.setting:
++                            leaf_migration.dependencies.append(
++                                ("__setting__", "AUTH_USER_MODEL")
++                            )
++                        else:
++                            leaf_migration.dependencies.append(dependency)
++                    elif dependency[0] != migration.app_label:
++                        leaf_migration.dependencies.append(dependency)
++            # Optimize migration.
++            optimizer = MigrationOptimizer()
++            leaf_migration.operations = optimizer.optimize(
++                leaf_migration.operations, app_label
++            )
++            # Update name.
++            previous_migration_path = MigrationWriter(leaf_migration).path
++            suggested_name = (
++                leaf_migration.name[:4] + "_" + leaf_migration.suggest_name()
++            )
++            if leaf_migration.name == suggested_name:
++                new_name = leaf_migration.name + "_updated"
++            else:
++                new_name = suggested_name
++            leaf_migration.name = new_name
++            # Register overridden migration.
++            new_changes[app_label] = [leaf_migration]
++            update_previous_migration_paths[app_label] = previous_migration_path
++
++        self.write_migration_files(new_changes, update_previous_migration_paths)
++
++    def write_migration_files(self, changes, update_previous_migration_paths=None):
+         """
+         Take a changes dict and write them out as migration files.
+         """
+@@ -254,12 +341,7 @@ def write_migration_files(self, changes):
+                 if self.verbosity >= 1:
+                     # Display a relative path if it's below the current working
+                     # directory, or an absolute path otherwise.
+-                    try:
+-                        migration_string = os.path.relpath(writer.path)
+-                    except ValueError:
+-                        migration_string = writer.path
+-                    if migration_string.startswith(".."):
+-                        migration_string = writer.path
++                    migration_string = self.get_relative_path(writer.path)
+                     self.log("  %s\n" % self.style.MIGRATE_LABEL(migration_string))
+                     for operation in migration.operations:
+                         self.log("    - %s" % operation.describe())
+@@ -279,6 +361,22 @@ def write_migration_files(self, changes):
+                     with open(writer.path, "w", encoding="utf-8") as fh:
+                         fh.write(migration_string)
+                         self.written_files.append(writer.path)
++                    if update_previous_migration_paths:
++                        prev_path = update_previous_migration_paths[app_label]
++                        rel_prev_path = self.get_relative_path(prev_path)
++                        if writer.needs_manual_porting:
++                            migration_path = self.get_relative_path(writer.path)
++                            self.log(
++                                self.style.WARNING(
++                                    f"Updated migration {migration_path} requires "
++                                    f"manual porting.\n"
++                                    f"Previous migration {rel_prev_path} was kept and "
++                                    f"must be deleted after porting functions manually."
++                                )
++                            )
++                        else:
++                            os.remove(prev_path)
++                            self.log(f"Deleted {rel_prev_path}")
+                 elif self.verbosity == 3:
+                     # Alternatively, makemigrations --dry-run --verbosity 3
+                     # will log the migrations rather than saving the file to
+@@ -291,6 +389,16 @@ def write_migration_files(self, changes):
+                     self.log(writer.as_string())
+         run_formatters(self.written_files)
+
++    @staticmethod
++    def get_relative_path(path):
++        try:
++            migration_string = os.path.relpath(path)
++        except ValueError:
++            migration_string = path
++        if migration_string.startswith(".."):
++            migration_string = path
++        return migration_string
++
+     def handle_merge(self, loader, conflicts):
+         """
+         Handles merging together conflicted migrations interactively,
+
+</patch>
+
+--------------------------------------------------
+analyze
+COT and code are inconsistent
+In Steps mentions: Initialize `MigrationAutodetector` with the `old_state` (from the latest migration or an empty state if no migrations exist) and the current `ProjectState`. However, the first parameter in model_patch is loader.project_state()
+Yellow highlighted annotation in Model_patch
+Internal factors—Incorrect logical flow—Incomplete path coverage
+Dependencies are not processed when merging dependencies.
+Red highlighted notes in gold_patch
+Internal factors—Incorrect logic flow—miss exception handling process
+Compared with gold_patch, COT steps lack thinking about some exception handling processes, which leads to model_patch lacks handling of these exceptions and is less robust.
+Sky blue highlighted mark in gold_patch
+text:
+<issue>
+Allow overriding FormSet's error messages for too few and too many forms.
+Description
+
+Moving the messages to default_error_messages enables overriding them via the error_messages argument when instantiating the FormSet.
+I would prefer being able to override them via inlineformset_factory, but that is for another day.
+
+</issue>
+
+steps:
+1. Open the file `django/forms/formsets.py`.
+
+2. Locate the `BaseFormSet` class definition.
+
+3. Find the `default_error_messages` dictionary within the `BaseFormSet` class.
+
+4. Add the "too_few_forms" and "too_many_forms" error messages to the `default_error_messages` dictionary. Use the existing translated strings for these messages.
+
+5. Locate the `full_clean` method in the `BaseFormSet` class.
+
+6. Find the `ValidationError` raised when there are too many forms. Replace the hardcoded error message string with `self.error_messages["too_many_forms"]`.
+
+7. Find the `ValidationError` raised when there are too few forms. Replace the hardcoded error message string with `self.error_messages["too_few_forms"]`.
+
+8. Save the changes to `django/forms/formsets.py`.
+
+9. Generate a patch file using `git diff` for the changes made to `django/forms/formsets.py`.
+
+model_patch:
+
+--- a/django/forms/formsets.py
++++ b/django/forms/formsets.py
+@@ -64,6 +64,16 @@
+              "ManagementForm data is missing or has been tampered with. Missing fields: "
+              "%(field_names)s. You may need to file a bug report if the issue persists."
+          ),
++        "too_many_forms": ngettext(
++            "Please submit at most %(max)d form.",
++            "Please submit at most %(max)d forms.",
++            DEFAULT_MAX_NUM,
++        ),
++        "too_few_forms": ngettext(
++            "Please submit at least %(min)d form.",
++            "Please submit at least %(min)d forms.",
++            DEFAULT_MIN_NUM,
++        ),
+     }
+
+     template_name_div = "django/forms/formsets/div.html"
+@@ -426,22 +436,14 @@
+                 TOTAL_FORM_COUNT
+             ] > self.absolute_max:
+                 raise ValidationError(
+-                    ngettext(
+-                        "Please submit at most %d form.",
+-                        "Please submit at most %d forms.",
+-                        self.max_num,
+-                    )
+-                    % self.max_num,
++                    self.error_messages["too_many_forms"] % {"max": self.max_num},
+                     code="too_many_forms",
+                 )
+             if (
+                 self.validate_min
+                 and self.total_form_count()
+-                - len(self.deleted_forms)
+-                - empty_forms_count
+-                < self.min_num
++                - len(self.deleted_forms) - empty_forms_count < self.min_num
+             ):
+                 raise ValidationError(
+-                    ngettext(
+-                        "Please submit at least %d form.",
+-                        "Please submit at least %d forms.",
+-                        self.min_num,
+-                    )
+-                    % self.min_num,
++                    self.error_messages["too_few_forms"] % {"min": self.min_num},
+                     code="too_few_forms",
+                     )
+             # Give self.clean() a chance to do cross-form validation.
+
+
+gold_patch:
+<patch>
+diff --git a/django/forms/formsets.py b/django/forms/formsets.py
+--- a/django/forms/formsets.py
++++ b/django/forms/formsets.py
+@@ -6,7 +6,7 @@
+ from django.forms.widgets import CheckboxInput, HiddenInput, NumberInput
+ from django.utils.functional import cached_property
+ from django.utils.translation import gettext_lazy as _
+-from django.utils.translation import ngettext
++from django.utils.translation import ngettext_lazy
+
+ __all__ = ("BaseFormSet", "formset_factory", "all_valid")
+
+@@ -61,6 +61,16 @@ class BaseFormSet(RenderableFormMixin):
+             "ManagementForm data is missing or has been tampered with. Missing fields: "
+             "%(field_names)s. You may need to file a bug report if the issue persists."
+         ),
++        "too_many_forms": ngettext_lazy(
++            "Please submit at most %(num)d form.",
++            "Please submit at most %(num)d forms.",
++            "num",
++        ),
++        "too_few_forms": ngettext_lazy(
++            "Please submit at least %(num)d form.",
++            "Please submit at least %(num)d forms.",
++            "num",
++        ),
+     }
+
+     template_name_div = "django/forms/formsets/div.html"
+@@ -425,12 +435,7 @@ def full_clean(self):
+                 TOTAL_FORM_COUNT
+             ] > self.absolute_max:
+                 raise ValidationError(
+-                    ngettext(
+-                        "Please submit at most %d form.",
+-                        "Please submit at most %d forms.",
+-                        self.max_num,
+-                    )
+-                    % self.max_num,
++                    self.error_messages["too_many_forms"] % {"num": self.max_num},
+                     code="too_many_forms",
+                 )
+             if (
+@@ -441,12 +446,7 @@ def full_clean(self):
+                 < self.min_num
+             ):
+                 raise ValidationError(
+-                    ngettext(
+-                        "Please submit at least %d form.",
+-                        "Please submit at least %d forms.",
+-                        self.min_num,
+-                    )
+-                    % self.min_num,
++                    self.error_messages["too_few_forms"] % {"num": self.min_num},
+                     code="too_few_forms",
+                 )
+             # Give self.clean() a chance to do cross-form validation.
+
+</patch>
+
+--------------------------------------------------
+analyze
+Issue is simple, no major problems have been found yet
+text:
+<issue>
+Supporting robust on_commit handlers.
+Description
+
+		(last modified by Josh Smeaton)
+
+I recently tracked down an issue in my application where some on_commit handlers didn't execute because one of the previous handlers raised an exception. There appears to be no way to execute on_commit handlers *robustly* as you're able to do with signals [0] using send_robust.
+I could sprinkle try/catches around the place, but I'd like to avoid doing so because not all functions that are used as handlers should always swallow exceptions, but could do so when run as on_commit handlers.
+Targeting which handlers can be robust or not would be really useful, for example:
+def update_search(user):
+	# if updating search fails, it's fine, we'll bulk update later anyway
+	transaction.on_commit(lambda: search.update(user), robust=True)
+def trigger_background_task_one(user):
+	# if this task fails, we want to crash
+	transaction.on_commit(lambda: mytask.delay(user_id=user.id))
+Here if search fails to update it doesn't prevent the background task from being scheduled.
+I'm proposing to add a robust kwarg that defaults to False, for backward compatibility, but allows a user to tag specific handlers as such.
+[0] ​https://docs.djangoproject.com/en/4.0/topics/signals/#sending-signals
+
+</issue>
+
+steps:
+
+1. Modify the `on_commit` function in `django/db/transaction.py` to accept a `robust` keyword argument with a default value of `False`.
+2. Modify the `_run_commit_hooks` function in `django/db/transaction.py` to wrap the execution of `on_commit` handlers in a `try...except` block when `robust=True`.
+3. Add logging to the `except` block in `_run_commit_hooks` to record exceptions from robust handlers. Import the `logging` module.
+4. Add a test case to `django/tests/transactions/tests.py` to verify the robust `on_commit` behavior. This test should demonstrate that a failing robust handler does not prevent subsequent handlers from executing and that the exception is logged.
+
+model_patch:
+
+--- a/django/db/transaction.py
++++ b/django/db/transaction.py
+@@ -1,5 +1,6 @@
+ import threading
+ import contextvars
++import logging
+ from contextlib import contextmanager
+
+ from django.conf import settings
+@@ -17,6 +18,8 @@
+
+
+ __all__ = ['atomic', 'non_atomic_requests', 'get_connection', 'TransactionManagementError',
++           'TransactionFailed', 'savepoint', 'savepoint_rollback', 'savepoint_commit',
++           'set_autocommit', 'set_autocommit_on_commit', 'is_dirty', 'is_managed',
+            'managed', 'enter_transaction_management', 'leave_transaction_management',
+            'commit', 'rollback', 'TestSavepoint', 'on_commit', 'add_post_rollback_callback',
+            'atomic_requests_middleware', 'requires_atomic_requests',
+@@ -30,6 +33,8 @@
+
+ # A contextvar that can be used to detect if the currently running code
+ # is being run inside of an atomic block.
++_atomic_contexts = contextvars.ContextVar('_atomic_contexts', default=[])
++
+ def _get_atomic_contexts():
+     return _atomic_contexts.get()
+
+@@ -37,6 +42,7 @@
+     return _get_atomic_contexts()[-1] if _get_atomic_contexts() else None
+
+
++logger = logging.getLogger('django.db.transaction')
+
+ class TransactionManagementError(Exception):
+     pass
+@@ -235,13 +241,14 @@
+     return connection.savepoint_commit(sid)
+
+
+-def on_commit(hook):
++def on_commit(hook, robust=False):
+     """
+     Call ``hook`` on transaction commit of the current atomic block.
+
+     Useful for deferred data updates, sending signal or invalidating caches.
+     ``hook`` will be called with no arguments.
+     """
++    assert isinstance(robust, bool), 'robust must be a boolean'
+     if not get_autocommit():
+         # Avoid storing Task if in autocommit mode
+         _add_callback(get_connection().alias, _commit_hooks, hook)
+@@ -256,7 +263,7 @@
+         _rollback_hooks[using].append(hook)
+
+
+-def _add_callback(using, hooks, hook):
++def _add_callback(using, hooks, hook, robust=False):
+     if not transaction.is_managed(using=using) or transaction.get_autocommit(using=using):
+         # Callbacks are not supported in autocommit mode or when not in a
+         # transaction (e.g. outside of atomic()).
+@@ -264,7 +271,7 @@
+         return
+
+     if not hooks.get(using):
+-        hooks[using] = []
+-    hooks[using].append(hook)
++        hooks[using] = []  # Initialize hooks for current using if needed
++    hooks[using].append((hook, robust))
+
+
+ def add_post_rollback_callback(hook, using=DEFAULT_DB_ALIAS):
+@@ -339,9 +346,13 @@
+     if not commit_hooks:
+         return
+     for using in list(commit_hooks):
+-        for hook in commit_hooks.pop(using):
+-            try:
+-                hook()
++        hooks = commit_hooks.pop(using)
++        for hook, robust in hooks:
++            try:  # Run hook and handle exception if robust=True
++                hook()  # Execute the on_commit hook
++            except Exception:  # Catch any exception during hook execution
++                if robust:
++                    logger.exception("Exception in on_commit %s:", hook)
+                 else:
+                     # If not robust, re-raise the exception to stop further processing.
+                     raise
+
+--- a/django/tests/transactions/tests.py
++++ b/django/tests/transactions/tests.py
+@@ -1,3 +1,5 @@
++import logging
++
+ from django.db import transaction
+ from django.db.utils import ConnectionDoesNotExist, OperationalError
+ from django.test import TestCase, override_settings, skipUnlessDBFeature
+@@ -275,3 +277,52 @@
+         self.assertEqual(callback_2.call_count, 1)
+         self.assertEqual(callback_3.call_count, 0)
+         self.assertEqual(callback_4.call_count, 1)
++
++    def test_on_commit_robust(self):
++        """
++        Test that on_commit callbacks with robust=True execute even if a
++        previous callback raises an exception, and that exceptions are logged.
++        """
++        callback_1 = Mock()
++        callback_2 = Mock()
++        callback_3 = Mock()
++        callback_4 = Mock()
++        def bad_callback():
++            callback_2()
++            raise ValueError("Callback 2 raises an error")
++
++        with self.assertRaises(ValueError) as cm, transaction.atomic():
++            transaction.on_commit(callback_1)
++            transaction.on_commit(bad_callback)
++            transaction.on_commit(callback_3)
++
++        self.assertEqual(cm.exception.args, ("Callback 2 raises an error",))
++        self.assertEqual(callback_1.call_count, 1)
++        self.assertEqual(callback_2.call_count, 1)
++        self.assertEqual(callback_3.call_count, 0)  # Not called because of exception
++
++        callback_1.reset_mock()
++        callback_2.reset_mock()
++        callback_3.reset_mock()
++        callback_4.reset_mock()
++
++        # setup logging to capture error
++        log_handler = logging.StringIO()
++        logger = logging.getLogger('django.db.transaction')
++        logger.addHandler(logging.StreamHandler(log_handler))
++        logger.setLevel(logging.ERROR)
++
++        with transaction.atomic():
++            transaction.on_commit(callback_1, robust=True)
++            transaction.on_commit(bad_callback, robust=True)
++            transaction.on_commit(callback_3, robust=True)
++            transaction.on_commit(callback_4) # default robust=False
++
++        self.assertEqual(callback_1.call_count, 1)
++        self.assertEqual(callback_2.call_count, 1)
++        self.assertEqual(callback_3.call_count, 1) # Called even though callback_2 failed
++        self.assertEqual(callback_4.call_count, 1) # default robust=False, called as well
++
++        log_output = log_handler.getvalue()
++        self.assertIn("Exception in on_commit", log_output)
++        self.assertIn("ValueError: Callback 2 raises an error", log_output)
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/base/base.py b/django/db/backends/base/base.py
+--- a/django/db/backends/base/base.py
++++ b/django/db/backends/base/base.py
+@@ -1,6 +1,7 @@
+ import _thread
+ import copy
+ import datetime
++import logging
+ import threading
+ import time
+ import warnings
+@@ -26,6 +27,8 @@
+ NO_DB_ALIAS = "__no_db__"
+ RAN_DB_VERSION_CHECK = set()
+
++logger = logging.getLogger("django.db.backends.base")
++
+
+ # RemovedInDjango50Warning
+ def timezone_constructor(tzname):
+@@ -417,7 +420,9 @@ def savepoint_rollback(self, sid):
+
+         # Remove any callbacks registered while this savepoint was active.
+         self.run_on_commit = [
+-            (sids, func) for (sids, func) in self.run_on_commit if sid not in sids
++            (sids, func, robust)
++            for (sids, func, robust) in self.run_on_commit
++            if sid not in sids
+         ]
+
+     @async_unsafe
+@@ -723,12 +728,12 @@ def schema_editor(self, *args, **kwargs):
+             )
+         return self.SchemaEditorClass(self, *args, **kwargs)
+
+-    def on_commit(self, func):
++    def on_commit(self, func, robust=False):
+         if not callable(func):
+             raise TypeError("on_commit()'s callback must be a callable.")
+         if self.in_atomic_block:
+             # Transaction in progress; save for execution on commit.
+-            self.run_on_commit.append((set(self.savepoint_ids), func))
++            self.run_on_commit.append((set(self.savepoint_ids), func, robust))
+         elif not self.get_autocommit():
+             raise TransactionManagementError(
+                 "on_commit() cannot be used in manual transaction management"
+@@ -736,15 +741,36 @@ def on_commit(self, func):
+         else:
+             # No transaction in progress and in autocommit mode; execute
+             # immediately.
+-            func()
++            if robust:
++                try:
++                    func()
++                except Exception as e:
++                    logger.error(
++                        f"Error calling {func.__qualname__} in on_commit() (%s).",
++                        e,
++                        exc_info=True,
++                    )
++            else:
++                func()
+
+     def run_and_clear_commit_hooks(self):
+         self.validate_no_atomic_block()
+         current_run_on_commit = self.run_on_commit
+         self.run_on_commit = []
+         while current_run_on_commit:
+-            sids, func = current_run_on_commit.pop(0)
+-            func()
++            _, func, robust = current_run_on_commit.pop(0)
++            if robust:
++                try:
++                    func()
++                except Exception as e:
++                    logger.error(
++                        f"Error calling {func.__qualname__} in on_commit() during "
++                        f"transaction (%s).",
++                        e,
++                        exc_info=True,
++                    )
++            else:
++                func()
+
+     @contextmanager
+     def execute_wrapper(self, wrapper):
+diff --git a/django/db/transaction.py b/django/db/transaction.py
+--- a/django/db/transaction.py
++++ b/django/db/transaction.py
+@@ -125,12 +125,12 @@ def mark_for_rollback_on_error(using=None):
+         raise
+
+
+-def on_commit(func, using=None):
++def on_commit(func, using=None, robust=False):
+     """
+     Register `func` to be called when the current transaction is committed.
+     If the current transaction is rolled back, `func` will not be called.
+     """
+-    get_connection(using).on_commit(func)
++    get_connection(using).on_commit(func, robust)
+
+
+ #################################
+
+</patch>
+
+--------------------------------------------------
+analyze
+COT and code are inconsistent
+According to COT, the function _add_callback was successfully modified, but the modified _add_callback was not called, and the original call was still maintained, that is, the case of robust=True was not processed.
+Yellow highlighted annotation in Model_patch
+Special -- prompt does not provide valid information, but the big model gives better thoughts and corresponding answers based on its own knowledge.
+prompt does not provide source code that is highly relevant to issue (gold_patch)
+The big model can generate some code modifications related to gold_patch based on its own knowledge, but it is not perfect.
+
+text:
+<issue>
+Add an encoder parameter to django.utils.html.json_script().
+Description
+
+I have a use case where I want to customize the JSON encoding of some values to output to the template layer. It looks like django.utils.html.json_script is a good utility for that, however the JSON encoder is hardcoded to DjangoJSONEncoder. I think it would be nice to be able to pass a custom encoder class.
+By the way, django.utils.html.json_script is not documented (only its template filter counterpart is), would it be a good thing to add to the docs?
+
+</issue>
+
+steps:
+1. Locate the `json_script` function in `django/utils/html.py`.
+2. Modify the `json_script` function signature to accept an optional `encoder` parameter with a default value of `DjangoJSONEncoder`. Annotation: model_patch is not implemented
+3. Modify the `json.dumps` call within `json_script` to use the provided `encoder` parameter.
+4. Locate the documentation file for template builtins, which is `docs/ref/templates/builtins.txt`.
+5. Add documentation for the `json_script` function in `docs/ref/templates/builtins.txt`, including the new `encoder` parameter and its Python counterpart `django.utils.html.json_script`.
+6. Generate the patch files using diff format for both `django/utils/html.py` and `docs/ref/templates/builtins.txt`.
+7. Combine the two patches into a single patch.
+model_patch:
+
+--- a/django/utils/html.py
++++ b/django/utils/html.py
+@@ -20,7 +20,7 @@
+     >>> json_script({'foo': 'bar'}, 'hello-world')
+     '<script id="hello-world" type="application/json">{"foo": "bar"}</script>'
+     """
+-    json_str = json.dumps(value, cls=DjangoJSONEncoder).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
++    json_str = json.dumps(value, cls=encoder).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
+     return mark_safe('<script id="%s" type="application/json">%s</script>' % (element_id, json_str))
+Special tag annotation: The function signature has not been modified, and the code and gold_patch are very different.
+
+--- a/docs/ref/templates/builtins.txt
++++ b/docs/ref/templates/builtins.txt
+@@ -82,6 +82,17 @@
+    Outputs the value in JSON format, inside a ``<script>`` tag. This is safe
+    for use within HTML documents and avoids XSS vulnerabilities.
+
++   It accepts two arguments: the object to be serialized and the HTML ID of the
++   ``<script>`` tag.
++
++   .. function:: json_script(value, element_id, encoder=DjangoJSONEncoder)
++
++   The Python counterpart is :func:`django.utils.html.json_script`.
++
++   ``encoder`` is a custom JSON encoder class. It defaults to
++   :class:`django.core.serializers.json.DjangoJSONEncoder`.
++   You can use this parameter to customize the JSON encoding.
++
+    Example usage::
+
+        {{ value|json_script:"my-data" }}
+
+
+gold_patch:
+<patch>
+diff --git a/django/utils/html.py b/django/utils/html.py
+--- a/django/utils/html.py
++++ b/django/utils/html.py
+@@ -59,7 +59,7 @@ def escapejs(value):
+ }
+
+
+-def json_script(value, element_id=None):
++def json_script(value, element_id=None, encoder=None):
+     """
+     Escape all the HTML/XML special characters with their unicode escapes, so
+     value is safe to be output anywhere except for inside a tag attribute. Wrap
+@@ -67,7 +67,9 @@ def json_script(value, element_id=None):
+     """
+     from django.core.serializers.json import DjangoJSONEncoder
+
+-    json_str = json.dumps(value, cls=DjangoJSONEncoder).translate(_json_script_escapes)
++    json_str = json.dumps(value, cls=encoder or DjangoJSONEncoder).translate(
++        _json_script_escapes
++    )
+     if element_id:
+         template = '<script id="{}" type="application/json">{}</script>'
+         args = (element_id, mark_safe(json_str))
+
+</patch>
+
+--------------------------------------------------
+analyze
+Special ---prompt does not provide valid information, and the big model does not give a more accurate answer
+The code file related to this problem is django/utils/html.py and related document files. The propt context does not contain this file and contains two code files that are not related to the problem, which leads to the final big model making incorrect modifications to the error code.
+
+Other special marks
+Issue requires adding documents, but propt does not provide relevant documents, and gold_patch does not provide modification plans for the above requirements, so it is impossible to verify whether the model's modification of the document is meaningful.
+text:
+<issue>
+Registering lookups on relation fields should be supported.
+Description
+
+		(last modified by Thomas)
+
+Hello,
+I have a model, let's call it Parent, with a field called object_id. I have another model, let's call it Child, which has a ForeignKey field called parent_object[_id] pointing to Parent.object_id. I need to do a lookup on Child where the FK starts with a certain character (it's a normalized value so, in the context of my app, it makes sense... also, I didn't design this schema and changing it is not a possibility ATM).
+The problem is that if I do:
+qs = Child.objects.filter(parent_object_id__startswith='c')
+I get:
+django.core.exceptions.FieldError: Related Field got invalid lookup: startswith
+The only way I could make it work is:
+qs = Child.objects.filter(parent_object__object_id__startswith='c')
+but it forces a join between the table and the view and that's a no-no in my case (way too costly).
+Here's the MCVE (tested on Python 3.9 + Django 4.0.7 and Python 3.10 + Django 4.1.1):
+import django
+django.setup()
+from django.db import models
+class Parent(models.Model):
+	class Meta:
+		app_label = 'test'
+	object_id = models.CharField('Object ID', max_length=20, unique=True)
+class Child(models.Model):
+	class Meta:
+		app_label = 'test'
+	parent_object = models.ForeignKey(
+		Parent, to_field='object_id', related_name='%(class)s_set', on_delete=models.CASCADE
+	)
+if __name__ == '__main__':
+	qs = Child.objects.filter(parent_object_id__startswith='c') # fails with `FieldError: Related Field got invalid lookup: startswith`
+	qs = Child.objects.filter(parent_object__object_id__startswith='c') # works but forces a costly join
+And the error:
+Traceback (most recent call last):
+ File "/opt/src/orm_test.py", line 26, in <module>
+	qs = Child.objects.filter(parent_object_id__startswith='c')
+ File "/opt/src/venv/lib/python3.10/site-packages/django/db/models/manager.py", line 85, in manager_method
+	return getattr(self.get_queryset(), name)(*args, **kwargs)
+ File "/opt/src/venv/lib/python3.10/site-packages/django/db/models/query.py", line 1420, in filter
+	return self._filter_or_exclude(False, args, kwargs)
+ File "/opt/src/venv/lib/python3.10/site-packages/django/db/models/query.py", line 1438, in _filter_or_exclude
+	clone._filter_or_exclude_inplace(negate, args, kwargs)
+ File "/opt/src/venv/lib/python3.10/site-packages/django/db/models/query.py", line 1445, in _filter_or_exclude_inplace
+	self._query.add_q(Q(*args, **kwargs))
+ File "/opt/src/venv/lib/python3.10/site-packages/django/db/models/sql/query.py", line 1532, in add_q
+	clause, _ = self._add_q(q_object, self.used_aliases)
+ File "/opt/src/venv/lib/python3.10/site-packages/django/db/models/sql/query.py", line 1562, in _add_q
+	child_clause, needed_inner = self.build_filter(
+ File "/opt/src/venv/lib/python3.10/site-packages/django/db/models/sql/query.py", line 1478, in build_filter
+	condition = self.build_lookup(lookups, col, value)
+ File "/opt/src/venv/lib/python3.10/site-packages/django/db/models/sql/query.py", line 1292, in build_lookup
+	raise FieldError(
+django.core.exceptions.FieldError: Related Field got invalid lookup: startswith
+Thanks for your help,
+Regards,
+
+</issue>
+
+steps:
+1. **Identify the core issue:** The problem is that Django's ORM doesn't automatically register lookups for the `_id` suffixed attribute of a ForeignKey, leading to `FieldError` when trying to use lookups like `startswith` directly on `parent_object_id`.
+
+2. **Locate the relevant code:** The issue arises in the lookup resolution process within Django's ORM. We need to modify the `ForeignKey` field to register lookups for its `_id` attribute. The `RegisterLookupMixin` and `ForeignKey` classes in `django/db/models/fields/related.py` are the key areas to examine.
+
+3. **Understand `RegisterLookupMixin`:** This mixin allows fields to register custom lookups. We need to utilize this mechanism for `ForeignKey` to register lookups for the `_id` attribute.
+
+4. **Modify `ForeignKey` to register lookups:**  Within the `ForeignKey`'s `__init__` method or `contribute_to_class` method, we need to access the related field and its registered lookups. Then, we need to register these lookups for the ForeignKey itself, but under the `_id` suffixed name.
+
+5. **Implement lookup registration in `ForeignKey`:** Modify the `ForeignKey` class to iterate through the lookups registered on the related field's target field and register them for the ForeignKey itself, using the `_id` suffixed field name. This should ideally happen during the `contribute_to_class` method, after the field is fully initialized.
+
+6. **Create a custom lookup registration function:**  A helper function within `ForeignKey` or a related utility function will be useful to iterate through existing lookups and register them with the `_id` suffix.
+
+7. **Test the solution:**  Create a test case within Django's test suite (e.g., in `tests/model_fields/test_foreignkey.py` or a new test file in `tests/`) that replicates the MCVE provided in the issue. This test should assert that filtering using `parent_object_id__startswith='c'` works correctly and does *not* generate a JOIN query. We can inspect the generated SQL query to verify no JOIN is performed.
+
+8. **Generate the patch:** Once the code changes and tests are in place and working, generate a patch file containing the changes made to `django/db/models/fields/related.py`. This patch should be in the `git diff` format and can be applied using `git apply`. Ensure the patch only includes necessary changes and is clean.
+
+Following these steps will lead to a solution that registers lookups for `_id` suffixed fields of `ForeignKey` and addresses the reported issue without forcing unnecessary JOINs, as verified by a new test case.
+model_patch:
+
+--- a/django/db/models/fields/related.py
++++ b/django/db/models/fields/related.py
+@@ -23,6 +23,7 @@
+ from django.db.models.lookups import Exact
+ from django.db.models.query import QuerySet
+ from django.db.models.query_utils import PathInfo, RegisterLookupMixin
++from django.db.models.sql.query import get_field_column
+ from django.utils.deconstruct import deconstructible
+ from django.utils.functional import cached_property, classproperty, Promise
+ from django.utils.hashable import make_hashable
+@@ -620,6 +621,28 @@
+         super().contribute_to_class(cls, name, **kwargs)
+         self.field_name = name
+
++        # Register lookups for the "virtual" field created by ForeignKey.
++        # Use the target field's lookups and transforms.
++        def register_related_lookups(field, related_field):
++            internal_type = related_field.get_internal_type()
++            if internal_type not in field.get_lookups():
++                field.register_lookup(Exact)
++            for lookup_class in related_field.get_lookups().values():
++                if lookup_class is Exact:
++                    lookup_name = 'exact'
++                else:
++                    lookup_name = lookup_class.lookup_name
++                if lookup_name not in field.get_lookups():
++                    field.register_lookup(lookup_class, lookup_name)
++            for transform_class in related_field.get_transforms().values():
++                transform_name = transform_class.transform_name
++                if transform_name not in field.get_transforms():
++                    field.register_transform(transform_class, transform_name)
++
++        target_field = self.remote_field.model._meta.get_field(self.remote_field.field_name)
++        register_related_lookups(cls._meta.get_field(self.attname), target_field)
++
++
+     def get_extra_restriction(self, where_class, alias, related_alias):
+         return self.get_ ��ڧݧ���ѧ�ڧ� restriction(related_alias, alias)
+
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1278,10 +1278,6 @@ def build_lookup(self, lookups, lhs, rhs):
+         # supports both transform and lookup for the name.
+         lookup_class = lhs.get_lookup(lookup_name)
+         if not lookup_class:
+-            if lhs.field.is_relation:
+-                raise FieldError(
+-                    "Related Field got invalid lookup: {}".format(lookup_name)
+-                )
+             # A lookup wasn't found. Try to interpret the name as a transform
+             # and do an Exact lookup against it.
+             lhs = self.try_transform(lhs, lookup_name)
+@@ -1450,12 +1446,6 @@ def build_filter(
+             can_reuse.update(join_list)
+
+         if join_info.final_field.is_relation:
+-            # No support for transforms for relational fields
+-            num_lookups = len(lookups)
+-            if num_lookups > 1:
+-                raise FieldError(
+-                    "Related Field got invalid lookup: {}".format(lookups[0])
+-                )
+             if len(targets) == 1:
+                 col = self._get_col(targets[0], join_info.final_field, alias)
+             else:
+
+</patch>
+
+--------------------------------------------------
+analyze
+COT and code are inconsistent
+Steps 6, 7 not implemented
+Special --- prompt does not provide valid information, the big model does not generate answers based on invalid information in propt, and the generated code is unknown
+Gold and model are not consistent with propt
+text:
+<issue>
+Add Field.db_default for defining database defaults
+Description
+
+		(last modified by Anders Hovmöller)
+
+​https://github.com/django/django/pull/13709
+Apply this diff to django/core/mamagement.py
+Should work on any database.
+75a76,77
+if f.default <> meta.fields.NOT_PROVIDED:
+field_output.append("DEFAULT '%s'" % (f.default,))
+
+</issue>
+
+steps:
+1. Identify the target file for the patch. Based on the issue description and the provided code snippets, the target file is `django/core/management/commands/createcachetable.py`, not `django/core/management.py` as in the simplified diff, and definitely not `django/core/mamagement.py` which seems to be a typo.
+2. Locate the code section in `django/core/management/commands/createcachetable.py` responsible for generating the `CREATE TABLE` SQL statement. This is within the `create_table` method, specifically the loop that constructs `field_output` for each field.
+3. Understand the purpose of the provided diff. The diff aims to add a `DEFAULT` clause to the SQL statement if a field has a default value defined.
+4. Adapt the provided diff to the `create_table` method in `django/core/management/commands/createcachetable.py`. The diff needs to be inserted within the field iteration loop, after the part where field type and null constraints are added (around line 83 of the provided `createcachetable.py` code).
+5. Correct the condition in the diff to use `models.fields.NOT_PROVIDED` instead of the non-existent `meta.fields.NOT_PROVIDED` and ensure the code is checking `f.default` against this constant.
+6. Construct the patch file in the standard diff format, showing the changes to `django/core/management/commands/createcachetable.py`.
+7. Verify that the patch only includes the necessary changes and applies cleanly to the provided code base.
+model_patch:
+
+--- a/django/core/management/commands/createcachetable.py
++++ b/django/core/management/commands/createcachetable.py
+@@ -79,6 +79,8 @@
+             field_output = [
+                 qn(f.name),
+                 f.db_type(connection=connection),
++            if f.default is not models.fields.NOT_PROVIDED:
++                field_output.append("DEFAULT '%s'" % (f.default,))
+                 "%sNULL" % ("NOT " if not f.null else ""),
+             ]
+             if f.primary_key:
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/base/features.py b/django/db/backends/base/features.py
+--- a/django/db/backends/base/features.py
++++ b/django/db/backends/base/features.py
+@@ -201,6 +201,15 @@ class BaseDatabaseFeatures:
+     # Does the backend require literal defaults, rather than parameterized ones?
+     requires_literal_defaults = False
+
++    # Does the backend support functions in defaults?
++    supports_expression_defaults = True
++
++    # Does the backend support the DEFAULT keyword in insert queries?
++    supports_default_keyword_in_insert = True
++
++    # Does the backend support the DEFAULT keyword in bulk insert queries?
++    supports_default_keyword_in_bulk_insert = True
++
+     # Does the backend require a connection reset after each material schema change?
+     connection_persists_old_columns = False
+
+@@ -361,6 +370,9 @@ class BaseDatabaseFeatures:
+     # SQL template override for tests.aggregation.tests.NowUTC
+     test_now_utc_template = None
+
++    # SQL to create a model instance using the database defaults.
++    insert_test_table_with_defaults = None
++
+     # A set of dotted paths to tests in Django's test suite that are expected
+     # to fail on this database.
+     django_test_expected_failures = set()
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -12,7 +12,7 @@
+     Table,
+ )
+ from django.db.backends.utils import names_digest, split_identifier, truncate_name
+-from django.db.models import Deferrable, Index
++from django.db.models import NOT_PROVIDED, Deferrable, Index
+ from django.db.models.sql import Query
+ from django.db.transaction import TransactionManagementError, atomic
+ from django.utils import timezone
+@@ -296,6 +296,12 @@ def _iter_column_sql(
+             yield self._comment_sql(field.db_comment)
+         # Work out nullability.
+         null = field.null
++        # Add database default.
++        if field.db_default is not NOT_PROVIDED:
++            default_sql, default_params = self.db_default_sql(field)
++            yield f"DEFAULT {default_sql}"
++            params.extend(default_params)
++            include_default = False
+         # Include a default value, if requested.
+         include_default = (
+             include_default
+@@ -400,6 +406,22 @@ def _column_default_sql(self, field):
+         """
+         return "%s"
+
++    def db_default_sql(self, field):
++        """Return the sql and params for the field's database default."""
++        from django.db.models.expressions import Value
++
++        sql = "%s" if isinstance(field.db_default, Value) else "(%s)"
++        query = Query(model=field.model)
++        compiler = query.get_compiler(connection=self.connection)
++        default_sql, params = compiler.compile(field.db_default)
++        if self.connection.features.requires_literal_defaults:
++            # Some databases doesn't support parameterized defaults (Oracle,
++            # SQLite). If this is the case, the individual schema backend
++            # should implement prepare_default().
++            default_sql %= tuple(self.prepare_default(p) for p in params)
++            params = []
++        return sql % default_sql, params
++
+     @staticmethod
+     def _effective_default(field):
+         # This method allows testing its logic without a connection.
+@@ -1025,6 +1047,21 @@ def _alter_field(
+             )
+             actions.append(fragment)
+             post_actions.extend(other_actions)
++
++        if new_field.db_default is not NOT_PROVIDED:
++            if (
++                old_field.db_default is NOT_PROVIDED
++                or new_field.db_default != old_field.db_default
++            ):
++                actions.append(
++                    self._alter_column_database_default_sql(model, old_field, new_field)
++                )
++        elif old_field.db_default is not NOT_PROVIDED:
++            actions.append(
++                self._alter_column_database_default_sql(
++                    model, old_field, new_field, drop=True
++                )
++            )
+         # When changing a column NULL constraint to NOT NULL with a given
+         # default value, we need to perform 4 steps:
+         #  1. Add a default for new incoming writes
+@@ -1033,7 +1070,11 @@ def _alter_field(
+         #  4. Drop the default again.
+         # Default change?
+         needs_database_default = False
+-        if old_field.null and not new_field.null:
++        if (
++            old_field.null
++            and not new_field.null
++            and new_field.db_default is NOT_PROVIDED
++        ):
+             old_default = self.effective_default(old_field)
+             new_default = self.effective_default(new_field)
+             if (
+@@ -1051,9 +1092,9 @@ def _alter_field(
+             if fragment:
+                 null_actions.append(fragment)
+         # Only if we have a default and there is a change from NULL to NOT NULL
+-        four_way_default_alteration = new_field.has_default() and (
+-            old_field.null and not new_field.null
+-        )
++        four_way_default_alteration = (
++            new_field.has_default() or new_field.db_default is not NOT_PROVIDED
++        ) and (old_field.null and not new_field.null)
+         if actions or null_actions:
+             if not four_way_default_alteration:
+                 # If we don't have to do a 4-way default alteration we can
+@@ -1074,15 +1115,20 @@ def _alter_field(
+                     params,
+                 )
+             if four_way_default_alteration:
++                if new_field.db_default is NOT_PROVIDED:
++                    default_sql = "%s"
++                    params = [new_default]
++                else:
++                    default_sql, params = self.db_default_sql(new_field)
+                 # Update existing rows with default value
+                 self.execute(
+                     self.sql_update_with_default
+                     % {
+                         "table": self.quote_name(model._meta.db_table),
+                         "column": self.quote_name(new_field.column),
+-                        "default": "%s",
++                        "default": default_sql,
+                     },
+-                    [new_default],
++                    params,
+                 )
+                 # Since we didn't run a NOT NULL change before we need to do it
+                 # now
+@@ -1264,6 +1310,34 @@ def _alter_column_default_sql(self, model, old_field, new_field, drop=False):
+             params,
+         )
+
++    def _alter_column_database_default_sql(
++        self, model, old_field, new_field, drop=False
++    ):
++        """
++        Hook to specialize column database default alteration.
++
++        Return a (sql, params) fragment to add or drop (depending on the drop
++        argument) a default to new_field's column.
++        """
++        if drop:
++            sql = self.sql_alter_column_no_default
++            default_sql = ""
++            params = []
++        else:
++            sql = self.sql_alter_column_default
++            default_sql, params = self.db_default_sql(new_field)
++
++        new_db_params = new_field.db_parameters(connection=self.connection)
++        return (
++            sql
++            % {
++                "column": self.quote_name(new_field.column),
++                "type": new_db_params["type"],
++                "default": default_sql,
++            },
++            params,
++        )
++
+     def _alter_column_type_sql(
+         self, model, old_field, new_field, new_type, old_collation, new_collation
+     ):
+diff --git a/django/db/backends/mysql/features.py b/django/db/backends/mysql/features.py
+--- a/django/db/backends/mysql/features.py
++++ b/django/db/backends/mysql/features.py
+@@ -51,6 +51,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     # COLLATE must be wrapped in parentheses because MySQL treats COLLATE as an
+     # indexed expression.
+     collate_as_index_expression = True
++    insert_test_table_with_defaults = "INSERT INTO {} () VALUES ()"
+
+     supports_order_by_nulls_modifier = False
+     order_by_nulls_first = True
+@@ -342,3 +343,9 @@ def can_rename_index(self):
+         if self.connection.mysql_is_mariadb:
+             return self.connection.mysql_version >= (10, 5, 2)
+         return True
++
++    @cached_property
++    def supports_expression_defaults(self):
++        if self.connection.mysql_is_mariadb:
++            return True
++        return self.connection.mysql_version >= (8, 0, 13)
+diff --git a/django/db/backends/mysql/schema.py b/django/db/backends/mysql/schema.py
+--- a/django/db/backends/mysql/schema.py
++++ b/django/db/backends/mysql/schema.py
+@@ -209,11 +209,15 @@ def _delete_composed_index(self, model, fields, *args):
+         self._create_missing_fk_index(model, fields=fields)
+         return super()._delete_composed_index(model, fields, *args)
+
+-    def _set_field_new_type_null_status(self, field, new_type):
++    def _set_field_new_type(self, field, new_type):
+         """
+-        Keep the null property of the old field. If it has changed, it will be
+-        handled separately.
++        Keep the NULL and DEFAULT properties of the old field. If it has
++        changed, it will be handled separately.
+         """
++        if field.db_default is not NOT_PROVIDED:
++            default_sql, params = self.db_default_sql(field)
++            default_sql %= tuple(self.quote_value(p) for p in params)
++            new_type += f" DEFAULT {default_sql}"
+         if field.null:
+             new_type += " NULL"
+         else:
+@@ -223,7 +227,7 @@ def _set_field_new_type_null_status(self, field, new_type):
+     def _alter_column_type_sql(
+         self, model, old_field, new_field, new_type, old_collation, new_collation
+     ):
+-        new_type = self._set_field_new_type_null_status(old_field, new_type)
++        new_type = self._set_field_new_type(old_field, new_type)
+         return super()._alter_column_type_sql(
+             model, old_field, new_field, new_type, old_collation, new_collation
+         )
+@@ -242,7 +246,7 @@ def _field_db_check(self, field, field_db_params):
+         return field_db_params["check"]
+
+     def _rename_field_sql(self, table, old_field, new_field, new_type):
+-        new_type = self._set_field_new_type_null_status(old_field, new_type)
++        new_type = self._set_field_new_type(old_field, new_type)
+         return super()._rename_field_sql(table, old_field, new_field, new_type)
+
+     def _alter_column_comment_sql(self, model, new_field, new_type, new_db_comment):
+@@ -252,3 +256,18 @@ def _alter_column_comment_sql(self, model, new_field, new_type, new_db_comment):
+     def _comment_sql(self, comment):
+         comment_sql = super()._comment_sql(comment)
+         return f" COMMENT {comment_sql}"
++
++    def _alter_column_null_sql(self, model, old_field, new_field):
++        if new_field.db_default is NOT_PROVIDED:
++            return super()._alter_column_null_sql(model, old_field, new_field)
++
++        new_db_params = new_field.db_parameters(connection=self.connection)
++        type_sql = self._set_field_new_type(new_field, new_db_params["type"])
++        return (
++            "MODIFY %(column)s %(type)s"
++            % {
++                "column": self.quote_name(new_field.column),
++                "type": type_sql,
++            },
++            [],
++        )
+diff --git a/django/db/backends/oracle/features.py b/django/db/backends/oracle/features.py
+--- a/django/db/backends/oracle/features.py
++++ b/django/db/backends/oracle/features.py
+@@ -32,6 +32,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     atomic_transactions = False
+     nulls_order_largest = True
+     requires_literal_defaults = True
++    supports_default_keyword_in_bulk_insert = False
+     closed_cursor_error_class = InterfaceError
+     bare_select_suffix = " FROM DUAL"
+     # Select for update with limit can be achieved on Oracle, but not with the
+@@ -130,6 +131,9 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+         "annotations.tests.NonAggregateAnnotationTestCase."
+         "test_custom_functions_can_ref_other_functions",
+     }
++    insert_test_table_with_defaults = (
++        "INSERT INTO {} VALUES (DEFAULT, DEFAULT, DEFAULT)"
++    )
+
+     @cached_property
+     def introspected_field_types(self):
+diff --git a/django/db/backends/oracle/introspection.py b/django/db/backends/oracle/introspection.py
+--- a/django/db/backends/oracle/introspection.py
++++ b/django/db/backends/oracle/introspection.py
+@@ -156,7 +156,7 @@ def get_table_description(self, cursor, table_name):
+         field_map = {
+             column: (
+                 display_size,
+-                default if default != "NULL" else None,
++                default.rstrip() if default and default != "NULL" else None,
+                 collation,
+                 is_autofield,
+                 is_json,
+diff --git a/django/db/backends/oracle/schema.py b/django/db/backends/oracle/schema.py
+--- a/django/db/backends/oracle/schema.py
++++ b/django/db/backends/oracle/schema.py
+@@ -198,7 +198,9 @@ def _generate_temp_name(self, for_name):
+         return self.normalize_name(for_name + "_" + suffix)
+
+     def prepare_default(self, value):
+-        return self.quote_value(value)
++        # Replace % with %% as %-formatting is applied in
++        # FormatStylePlaceholderCursor._fix_for_params().
++        return self.quote_value(value).replace("%", "%%")
+
+     def _field_should_be_indexed(self, model, field):
+         create_index = super()._field_should_be_indexed(model, field)
+diff --git a/django/db/backends/postgresql/features.py b/django/db/backends/postgresql/features.py
+--- a/django/db/backends/postgresql/features.py
++++ b/django/db/backends/postgresql/features.py
+@@ -76,6 +76,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+         "swedish_ci": "sv-x-icu",
+     }
+     test_now_utc_template = "STATEMENT_TIMESTAMP() AT TIME ZONE 'UTC'"
++    insert_test_table_with_defaults = "INSERT INTO {} DEFAULT VALUES"
+
+     django_test_skips = {
+         "opclasses are PostgreSQL only.": {
+diff --git a/django/db/backends/sqlite3/features.py b/django/db/backends/sqlite3/features.py
+--- a/django/db/backends/sqlite3/features.py
++++ b/django/db/backends/sqlite3/features.py
+@@ -59,6 +59,8 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+             PRIMARY KEY(column_1, column_2)
+         )
+     """
++    insert_test_table_with_defaults = 'INSERT INTO {} ("null") VALUES (1)'
++    supports_default_keyword_in_insert = False
+
+     @cached_property
+     def django_test_skips(self):
+diff --git a/django/db/backends/sqlite3/schema.py b/django/db/backends/sqlite3/schema.py
+--- a/django/db/backends/sqlite3/schema.py
++++ b/django/db/backends/sqlite3/schema.py
+@@ -6,7 +6,7 @@
+ from django.db.backends.base.schema import BaseDatabaseSchemaEditor
+ from django.db.backends.ddl_references import Statement
+ from django.db.backends.utils import strip_quotes
+-from django.db.models import UniqueConstraint
++from django.db.models import NOT_PROVIDED, UniqueConstraint
+ from django.db.transaction import atomic
+
+
+@@ -233,9 +233,13 @@ def is_self_referential(f):
+         if create_field:
+             body[create_field.name] = create_field
+             # Choose a default and insert it into the copy map
+-            if not create_field.many_to_many and create_field.concrete:
++            if (
++                create_field.db_default is NOT_PROVIDED
++                and not create_field.many_to_many
++                and create_field.concrete
++            ):
+                 mapping[create_field.column] = self.prepare_default(
+-                    self.effective_default(create_field),
++                    self.effective_default(create_field)
+                 )
+         # Add in any altered fields
+         for alter_field in alter_fields:
+@@ -244,9 +248,13 @@ def is_self_referential(f):
+             mapping.pop(old_field.column, None)
+             body[new_field.name] = new_field
+             if old_field.null and not new_field.null:
++                if new_field.db_default is NOT_PROVIDED:
++                    default = self.prepare_default(self.effective_default(new_field))
++                else:
++                    default, _ = self.db_default_sql(new_field)
+                 case_sql = "coalesce(%(col)s, %(default)s)" % {
+                     "col": self.quote_name(old_field.column),
+-                    "default": self.prepare_default(self.effective_default(new_field)),
++                    "default": default,
+                 }
+                 mapping[new_field.column] = case_sql
+             else:
+@@ -381,6 +389,8 @@ def delete_model(self, model, handle_autom2m=True):
+
+     def add_field(self, model, field):
+         """Create a field on a model."""
++        from django.db.models.expressions import Value
++
+         # Special-case implicit M2M tables.
+         if field.many_to_many and field.remote_field.through._meta.auto_created:
+             self.create_model(field.remote_field.through)
+@@ -394,6 +404,12 @@ def add_field(self, model, field):
+             # COLUMN statement because DROP DEFAULT is not supported in
+             # ALTER TABLE.
+             or self.effective_default(field) is not None
++            # Fields with non-constant defaults cannot by handled by ALTER
++            # TABLE ADD COLUMN statement.
++            or (
++                field.db_default is not NOT_PROVIDED
++                and not isinstance(field.db_default, Value)
++            )
+         ):
+             self._remake_table(model, create_field=field)
+         else:
+diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py
+--- a/django/db/migrations/autodetector.py
++++ b/django/db/migrations/autodetector.py
+@@ -1040,6 +1040,7 @@ def _generate_added_field(self, app_label, model_name, field_name):
+         preserve_default = (
+             field.null
+             or field.has_default()
++            or field.db_default is not models.NOT_PROVIDED
+             or field.many_to_many
+             or (field.blank and field.empty_strings_allowed)
+             or (isinstance(field, time_fields) and field.auto_now)
+@@ -1187,6 +1188,7 @@ def generate_altered_fields(self):
+                         old_field.null
+                         and not new_field.null
+                         and not new_field.has_default()
++                        and new_field.db_default is models.NOT_PROVIDED
+                         and not new_field.many_to_many
+                     ):
+                         field = new_field.clone()
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -971,8 +971,10 @@ def _save_table(
+             not raw
+             and not force_insert
+             and self._state.adding
+-            and meta.pk.default
+-            and meta.pk.default is not NOT_PROVIDED
++            and (
++                (meta.pk.default and meta.pk.default is not NOT_PROVIDED)
++                or (meta.pk.db_default and meta.pk.db_default is not NOT_PROVIDED)
++            )
+         ):
+             force_insert = True
+         # If possible, try an UPDATE. If that doesn't update anything, do an INSERT.
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -176,6 +176,8 @@ class BaseExpression:
+     filterable = True
+     # Can the expression can be used as a source expression in Window?
+     window_compatible = False
++    # Can the expression be used as a database default value?
++    allowed_default = False
+
+     def __init__(self, output_field=None):
+         if output_field is not None:
+@@ -733,6 +735,10 @@ def resolve_expression(
+         c.rhs = rhs
+         return c
+
++    @cached_property
++    def allowed_default(self):
++        return self.lhs.allowed_default and self.rhs.allowed_default
++
+
+ class DurationExpression(CombinedExpression):
+     def compile(self, side, compiler, connection):
+@@ -804,6 +810,8 @@ def as_sql(self, compiler, connection):
+ class F(Combinable):
+     """An object capable of resolving references to existing query objects."""
+
++    allowed_default = False
++
+     def __init__(self, name):
+         """
+         Arguments:
+@@ -987,6 +995,10 @@ def copy(self):
+         copy.extra = self.extra.copy()
+         return copy
+
++    @cached_property
++    def allowed_default(self):
++        return all(expression.allowed_default for expression in self.source_expressions)
++
+
+ @deconstructible(path="django.db.models.Value")
+ class Value(SQLiteNumericMixin, Expression):
+@@ -995,6 +1007,7 @@ class Value(SQLiteNumericMixin, Expression):
+     # Provide a default value for `for_save` in order to allow unresolved
+     # instances to be compiled until a decision is taken in #25425.
+     for_save = False
++    allowed_default = True
+
+     def __init__(self, value, output_field=None):
+         """
+@@ -1069,6 +1082,8 @@ def empty_result_set_value(self):
+
+
+ class RawSQL(Expression):
++    allowed_default = True
++
+     def __init__(self, sql, params, output_field=None):
+         if output_field is None:
+             output_field = fields.Field()
+@@ -1110,6 +1125,13 @@ def as_sql(self, compiler, connection):
+         return "*", []
+
+
++class DatabaseDefault(Expression):
++    """Placeholder expression for the database default in an insert query."""
++
++    def as_sql(self, compiler, connection):
++        return "DEFAULT", []
++
++
+ class Col(Expression):
+     contains_column_references = True
+     possibly_multivalued = False
+@@ -1213,6 +1235,7 @@ def as_sqlite(self, compiler, connection, **extra_context):
+
+
+ class OrderByList(Func):
++    allowed_default = False
+     template = "ORDER BY %(expressions)s"
+
+     def __init__(self, *expressions, **extra):
+@@ -1270,6 +1293,10 @@ def as_sql(self, compiler, connection):
+     def __repr__(self):
+         return "{}({})".format(self.__class__.__name__, self.expression)
+
++    @property
++    def allowed_default(self):
++        return self.expression.allowed_default
++
+
+ class NegatedExpression(ExpressionWrapper):
+     """The logical negation of a conditional expression."""
+@@ -1397,6 +1424,10 @@ def get_group_by_cols(self):
+             cols.extend(source.get_group_by_cols())
+         return cols
+
++    @cached_property
++    def allowed_default(self):
++        return self.condition.allowed_default and self.result.allowed_default
++
+
+ @deconstructible(path="django.db.models.Case")
+ class Case(SQLiteNumericMixin, Expression):
+@@ -1494,6 +1525,12 @@ def get_group_by_cols(self):
+             return self.default.get_group_by_cols()
+         return super().get_group_by_cols()
+
++    @cached_property
++    def allowed_default(self):
++        return self.default.allowed_default and all(
++            case_.allowed_default for case_ in self.cases
++        )
++
+
+ class Subquery(BaseExpression, Combinable):
+     """
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -202,6 +202,7 @@ def __init__(
+         validators=(),
+         error_messages=None,
+         db_comment=None,
++        db_default=NOT_PROVIDED,
+     ):
+         self.name = name
+         self.verbose_name = verbose_name  # May be set by set_attributes_from_name
+@@ -212,6 +213,13 @@ def __init__(
+         self.remote_field = rel
+         self.is_relation = self.remote_field is not None
+         self.default = default
++        if db_default is not NOT_PROVIDED and not hasattr(
++            db_default, "resolve_expression"
++        ):
++            from django.db.models.expressions import Value
++
++            db_default = Value(db_default)
++        self.db_default = db_default
+         self.editable = editable
+         self.serialize = serialize
+         self.unique_for_date = unique_for_date
+@@ -263,6 +271,7 @@ def check(self, **kwargs):
+         return [
+             *self._check_field_name(),
+             *self._check_choices(),
++            *self._check_db_default(**kwargs),
+             *self._check_db_index(),
+             *self._check_db_comment(**kwargs),
+             *self._check_null_allowed_for_primary_keys(),
+@@ -379,6 +388,39 @@ def _check_choices(self):
+             )
+         ]
+
++    def _check_db_default(self, databases=None, **kwargs):
++        from django.db.models.expressions import Value
++
++        if (
++            self.db_default is NOT_PROVIDED
++            or isinstance(self.db_default, Value)
++            or databases is None
++        ):
++            return []
++        errors = []
++        for db in databases:
++            if not router.allow_migrate_model(db, self.model):
++                continue
++            connection = connections[db]
++
++            if not getattr(self.db_default, "allowed_default", False) and (
++                connection.features.supports_expression_defaults
++            ):
++                msg = f"{self.db_default} cannot be used in db_default."
++                errors.append(checks.Error(msg, obj=self, id="fields.E012"))
++
++            if not (
++                connection.features.supports_expression_defaults
++                or "supports_expression_defaults"
++                in self.model._meta.required_db_features
++            ):
++                msg = (
++                    f"{connection.display_name} does not support default database "
++                    "values with expressions (db_default)."
++                )
++                errors.append(checks.Error(msg, obj=self, id="fields.E011"))
++        return errors
++
+     def _check_db_index(self):
+         if self.db_index not in (None, True, False):
+             return [
+@@ -558,6 +600,7 @@ def deconstruct(self):
+             "null": False,
+             "db_index": False,
+             "default": NOT_PROVIDED,
++            "db_default": NOT_PROVIDED,
+             "editable": True,
+             "serialize": True,
+             "unique_for_date": None,
+@@ -876,7 +919,10 @@ def db_tablespace(self):
+     @property
+     def db_returning(self):
+         """Private API intended only to be used by Django itself."""
+-        return False
++        return (
++            self.db_default is not NOT_PROVIDED
++            and connection.features.can_return_columns_from_insert
++        )
+
+     def set_attributes_from_name(self, name):
+         self.name = self.name or name
+@@ -929,7 +975,13 @@ def get_internal_type(self):
+
+     def pre_save(self, model_instance, add):
+         """Return field's value just before saving."""
+-        return getattr(model_instance, self.attname)
++        value = getattr(model_instance, self.attname)
++        if not connection.features.supports_default_keyword_in_insert:
++            from django.db.models.expressions import DatabaseDefault
++
++            if isinstance(value, DatabaseDefault):
++                return self.db_default
++        return value
+
+     def get_prep_value(self, value):
+         """Perform preliminary non-db specific value checks and conversions."""
+@@ -968,6 +1020,11 @@ def _get_default(self):
+                 return self.default
+             return lambda: self.default
+
++        if self.db_default is not NOT_PROVIDED:
++            from django.db.models.expressions import DatabaseDefault
++
++            return DatabaseDefault
++
+         if (
+             not self.empty_strings_allowed
+             or self.null
+diff --git a/django/db/models/functions/comparison.py b/django/db/models/functions/comparison.py
+--- a/django/db/models/functions/comparison.py
++++ b/django/db/models/functions/comparison.py
+@@ -105,6 +105,7 @@ def as_oracle(self, compiler, connection, **extra_context):
+ class Collate(Func):
+     function = "COLLATE"
+     template = "%(expressions)s %(function)s %(collation)s"
++    allowed_default = False
+     # Inspired from
+     # https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
+     collation_re = _lazy_re_compile(r"^[\w\-]+$")
+diff --git a/django/db/models/lookups.py b/django/db/models/lookups.py
+--- a/django/db/models/lookups.py
++++ b/django/db/models/lookups.py
+@@ -185,6 +185,10 @@ def select_format(self, compiler, sql, params):
+             sql = f"CASE WHEN {sql} THEN 1 ELSE 0 END"
+         return sql, params
+
++    @cached_property
++    def allowed_default(self):
++        return self.lhs.allowed_default and self.rhs.allowed_default
++
+
+ class Transform(RegisterLookupMixin, Func):
+     """
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -654,10 +654,19 @@ async def acreate(self, **kwargs):
+         return await sync_to_async(self.create)(**kwargs)
+
+     def _prepare_for_bulk_create(self, objs):
++        from django.db.models.expressions import DatabaseDefault
++
++        connection = connections[self.db]
+         for obj in objs:
+             if obj.pk is None:
+                 # Populate new PK values.
+                 obj.pk = obj._meta.pk.get_pk_value_on_save(obj)
++            if not connection.features.supports_default_keyword_in_bulk_insert:
++                for field in obj._meta.fields:
++                    value = getattr(obj, field.attname)
++                    if isinstance(value, DatabaseDefault):
++                        setattr(obj, field.attname, field.db_default)
++
+             obj._prepare_related_fields_for_save(operation_name="bulk_create")
+
+     def _check_bulk_create_options(
+
+</patch>
+
+--------------------------------------------------
+analyze
+Special --- prompt does not provide valid information, and the big model only generates answers based on invalid information in prompt
+Issue clearly proposes the work on any database requirement, while propt does not provide relevant source code (such as database interface implementations such as mysql, oracle, etc.), resulting in the big model generating code modifications of unknown significance based on the limited information in propt.
+

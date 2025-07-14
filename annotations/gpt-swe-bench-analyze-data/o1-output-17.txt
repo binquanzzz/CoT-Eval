@@ -1,0 +1,781 @@
+Statistical results
+text:
+<issue>
+Add transaction handling to Changelist list_editable processing.
+Description
+
+It seems that changelist_view in Django admin is missing a transaction. Since the view may change data in database, it should be wrapped in a transaction to prevent unexpected states in case of errors.
+
+</issue>
+
+steps:
+
+1. Locate where data changes occur in the admin page for editing multiple objects.
+	1.1 Inspect the code path to confirm which part interacts with database updates.
+	1.2 Identify the existing logic that performs database writes for list_editable items.
+2. Wrap that portion of the code inside a transaction manager to avoid partial commits on errors.
+	2.1 Import the appropriate functionality for managing database transactions.
+	2.2 Ensure the data modification logic is enclosed in a transaction context.
+3. Confirm rollback behavior on failure.
+	3.1 Verify that any exceptions will revert modifications to the previous consistent state.
+	3.2 Check that normal operation still commits correctly.
+4. Create the patch containing the required code changes.
+	4.1 Include the new import statement for the transaction manager.
+	4.2 Insert the transaction wrapper around the existing data modification logic.
+5. Apply the patch to the repository and verify that the code works as intended.
+
+model_patch:
+
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@
+-from django.contrib.admin.views.main import ORDER_VAR, ERROR_FLAG
++from django.contrib.admin.views.main import ORDER_VAR, ERROR_FLAG
++from django.db import transaction
+@@
+ def changelist_view(self, request, extra_context=None):
+@@
+     # Handle POST requests for list_editable changes.
+-    if request.method == "POST" and use_list_editable:
+-        # Existing logic for updating objects
++    if request.method == "POST" and use_list_editable:
++        with transaction.atomic():
++            # Existing logic for updating objects
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -2011,15 +2011,17 @@ def changelist_view(self, request, extra_context=None):
+             )
+             if formset.is_valid():
+                 changecount = 0
+-                for form in formset.forms:
+-                    if form.has_changed():
+-                        obj = self.save_form(request, form, change=True)
+-                        self.save_model(request, obj, form, change=True)
+-                        self.save_related(request, form, formsets=[], change=True)
+-                        change_msg = self.construct_change_message(request, form, None)
+-                        self.log_change(request, obj, change_msg)
+-                        changecount += 1
+-
++                with transaction.atomic(using=router.db_for_write(self.model)):
++                    for form in formset.forms:
++                        if form.has_changed():
++                            obj = self.save_form(request, form, change=True)
++                            self.save_model(request, obj, form, change=True)
++                            self.save_related(request, form, formsets=[], change=True)
++                            change_msg = self.construct_change_message(
++                                request, form, None
++                            )
++                            self.log_change(request, obj, change_msg)
++                            changecount += 1
+                 if changecount:
+                     msg = ngettext(
+                         "%(count)s %(name)s was changed successfully.",
+
+</patch>
+
+--------------------------------------------------
+analyze:
+The cot step is inconsistent with the code - the code is incomplete:
+gold_patch uses using=router.db_for_write(self.model) to ensure that the transaction occurs on the correct database, while model_patch omits this part. At the same time, if formset.is_valid() fails, the entire transaction will still be executed, and the correct way should be to only use the transaction when executing database write operations.
+
+text:
+<issue>
+Log when DB transactions are commited and rollbacked.
+Description
+
+Background: I was debugging database calls today with the django.db.backends log.
+Problem: The BEGIN SQL calls show up in the logs, but there is no way to see when the transaction is commited or if it is rolled back.
+As easy solution would be to log commits and rollbacks as well.
+
+</issue>
+
+steps:
+
+1. Identify functions in the database backend where commit and rollback operations occur.
+	1.1 Locate the "commit" and "rollback" methods in the relevant database backend file.
+	1.2 Confirm that these methods are where the actual commit and rollback actions are finalized.
+2. Decide on the appropriate logging mechanism to align with Django’s logging structure.
+	2.1 Use the existing "django.db.backends.base" logger.
+	2.2 Determine log level to ensure debug-level visibility for commit and rollback actions.
+3. Insert log statements before calling the low-level commit and rollback functions.
+	3.1 Place a debug log statement in the "commit" method.
+	3.2 Place a debug log statement in the "rollback" method.
+4. Ensure any changes maintain consistency and format with the rest of the codebase.
+
+model_patch:
+
+--- a/django/db/backends/base/base.py
++++ b/django/db/backends/base/base.py
+@@
+ def commit(self):
+     self.validate_thread_sharing()
+     self.validate_no_atomic_block()
++    logger.debug("Transaction committed on alias '%s'", self.alias)
+     self._commit()
+     # A successful commit means that the database connection works.
+     self.errors_occurred = False
+     self.run_commit_hooks_on_set_autocommit_on = True
+@@
+ def rollback(self):
+     self.validate_thread_sharing()
+     self.validate_no_atomic_block()
++    logger.debug("Transaction rolled back on alias '%s'", self.alias)
+     self._rollback()
+     # A successful rollback means that the database connection works.
+     self.errors_occurred = False
+     self.needs_rollback = False
+     self.run_on_commit = []
+
+
+gold_patch:
+<patch>
+diff --git a/django/db/backends/base/base.py b/django/db/backends/base/base.py
+--- a/django/db/backends/base/base.py
++++ b/django/db/backends/base/base.py
+@@ -8,6 +8,8 @@
+ from collections import deque
+ from contextlib import contextmanager
+
++from django.db.backends.utils import debug_transaction
++
+ try:
+     import zoneinfo
+ except ImportError:
+@@ -307,12 +309,12 @@ def _cursor(self, name=None):
+
+     def _commit(self):
+         if self.connection is not None:
+-            with self.wrap_database_errors:
++            with debug_transaction(self, "COMMIT"), self.wrap_database_errors:
+                 return self.connection.commit()
+
+     def _rollback(self):
+         if self.connection is not None:
+-            with self.wrap_database_errors:
++            with debug_transaction(self, "ROLLBACK"), self.wrap_database_errors:
+                 return self.connection.rollback()
+
+     def _close(self):
+@@ -488,9 +490,11 @@ def set_autocommit(
+
+         if start_transaction_under_autocommit:
+             self._start_transaction_under_autocommit()
+-        else:
++        elif autocommit:
+             self._set_autocommit(autocommit)
+-
++        else:
++            with debug_transaction(self, "BEGIN"):
++                self._set_autocommit(autocommit)
+         self.autocommit = autocommit
+
+         if autocommit and self.run_commit_hooks_on_set_autocommit_on:
+diff --git a/django/db/backends/oracle/base.py b/django/db/backends/oracle/base.py
+--- a/django/db/backends/oracle/base.py
++++ b/django/db/backends/oracle/base.py
+@@ -13,6 +13,7 @@
+ from django.core.exceptions import ImproperlyConfigured
+ from django.db import IntegrityError
+ from django.db.backends.base.base import BaseDatabaseWrapper
++from django.db.backends.utils import debug_transaction
+ from django.utils.asyncio import async_unsafe
+ from django.utils.encoding import force_bytes, force_str
+ from django.utils.functional import cached_property
+@@ -306,7 +307,7 @@ def create_cursor(self, name=None):
+
+     def _commit(self):
+         if self.connection is not None:
+-            with wrap_oracle_errors():
++            with debug_transaction(self, "COMMIT"), wrap_oracle_errors():
+                 return self.connection.commit()
+
+     # Oracle doesn't support releasing savepoints. But we fake them when query
+diff --git a/django/db/backends/utils.py b/django/db/backends/utils.py
+--- a/django/db/backends/utils.py
++++ b/django/db/backends/utils.py
+@@ -144,6 +144,35 @@ def debug_sql(
+             )
+
+
++@contextmanager
++def debug_transaction(connection, sql):
++    start = time.monotonic()
++    try:
++        yield
++    finally:
++        if connection.queries_logged:
++            stop = time.monotonic()
++            duration = stop - start
++            connection.queries_log.append(
++                {
++                    "sql": "%s" % sql,
++                    "time": "%.3f" % duration,
++                }
++            )
++            logger.debug(
++                "(%.3f) %s; args=%s; alias=%s",
++                duration,
++                sql,
++                None,
++                connection.alias,
++                extra={
++                    "duration": duration,
++                    "sql": sql,
++                    "alias": connection.alias,
++                },
++            )
++
++
+ def split_tzname_delta(tzname):
+     """
+     Split a time zone name into a 3-tuple of (name, sign, offset).
+
+</patch>
+
+--------------------------------------------------
+analyze:
+CoT internal conflict:
+This step requires the use of a suitable logger, but this step still uses a simple logger instead of choosing a dedicated context manager (debug_transaction).
+
+text:
+<issue>
+Mitigate the BREACH attack
+Description
+
+		(last modified by Nick Pope)
+
+The BREACH attack (​https://breachattack.com/) was published in 2013. The Django project responded soon after (​https://www.djangoproject.com/weblog/2013/aug/06/breach-and-django/) suggesting users to basically stop using gzip. CSRF masking was implemented in 2016 (#20869).
+In April 2022, a paper called "Heal The Breach" was published, suggesting a mitigation that does not depend on masking specific tokens or injecting data into HTML. It is rather a generic and effective mitigation. It suggests adding randomness to the compressed response by injecting random bytes in the gzip filename field of the gzip stream: ​https://ieeexplore.ieee.org/document/9754554
+Telling users to disable gzip is not great for bandwidth consumption. I propose that Django should implement "Heal The Breach" with sensible default.
+
+</issue>
+
+steps:
+
+1. Analyze how the existing gzip middleware compresses responses.
+  1.1. Note where gzip is applied to the response content.
+    1.1.1. Observe that it invokes "compress_string" or “compress_sequence” from "django.utils.text”.
+    1.1.2. Notice the gzip-related code is all in "django/middleware/gzip.py".
+
+2. Plan the approach to randomize the gzip “filename” field to mitigate BREACH.
+  2.1. Confirm that Python’s "GzipFile" supports adding a "filename" in its constructor.
+  2.2. Decide to replace references to the old compression helpers with new local ones that add randomness.
+
+3. Implement the local compression helpers in "django/middleware/gzip.py".
+  3.1. Import necessary modules for randomness, file operations, and gzip.
+  3.2. Remove the direct import from "django.utils.text".
+  3.3. Insert new helper methods that add random data to the "filename" argument in the gzip header.
+
+4. Adjust the existing GZipMiddleware so it uses the new helpers instead of the old ones.
+  4.1. For unstreamed responses, compress using the new function with random filename.
+  4.2. For streamed responses, similarly apply the new streaming compression function.
+
+5. Verify that the compressed response has random data injected each time.
+  5.1. Ensure "Content-Encoding: gzip" is still set.
+  5.2. Confirm “filename” is randomized so each response differs.
+
+model_patch:
+
+--- a/django/middleware/gzip.py
++++ b/django/middleware/gzip.py
+@@
+ from django.utils.cache import patch_vary_headers
+ from django.utils.deprecation import MiddlewareMixin
+ from django.utils.regex_helper import _lazy_re_compile
+-from django.utils.text import compress_sequence, compress_string
++
++import secrets
++from gzip import GzipFile
++from io import BytesIO
++
+ re_accepts_gzip = _lazy_re_compile(r"\bgzip\b")
+
+ class GZipMiddleware(MiddlewareMixin):
+@@
++def compress_string(content):
++    out = BytesIO()
++    with GzipFile(filename=secrets.token_urlsafe(16), mode='wb', compresslevel=6, fileobj=out) as f:
++        f.write(content)
++    return out.getvalue()
++
++def compress_sequence(sequence):
++    for chunk in sequence:
++        out = BytesIO()
++        with GzipFile(filename=secrets.token_urlsafe(16), mode='wb', compresslevel=6, fileobj=out) as f:
++            f.write(chunk)
++        yield out.getvalue()
+
+
+gold_patch:
+<patch>
+diff --git a/django/middleware/gzip.py b/django/middleware/gzip.py
+--- a/django/middleware/gzip.py
++++ b/django/middleware/gzip.py
+@@ -13,6 +13,8 @@ class GZipMiddleware(MiddlewareMixin):
+     on the Accept-Encoding header.
+     """
+
++    max_random_bytes = 100
++
+     def process_response(self, request, response):
+         # It's not worth attempting to compress really short responses.
+         if not response.streaming and len(response.content) < 200:
+@@ -31,11 +33,17 @@ def process_response(self, request, response):
+         if response.streaming:
+             # Delete the `Content-Length` header for streaming content, because
+             # we won't know the compressed size until we stream it.
+-            response.streaming_content = compress_sequence(response.streaming_content)
++            response.streaming_content = compress_sequence(
++                response.streaming_content,
++                max_random_bytes=self.max_random_bytes,
++            )
+             del response.headers["Content-Length"]
+         else:
+             # Return the compressed content only if it's actually shorter.
+-            compressed_content = compress_string(response.content)
++            compressed_content = compress_string(
++                response.content,
++                max_random_bytes=self.max_random_bytes,
++            )
+             if len(compressed_content) >= len(response.content):
+                 return response
+             response.content = compressed_content
+diff --git a/django/utils/text.py b/django/utils/text.py
+--- a/django/utils/text.py
++++ b/django/utils/text.py
+@@ -1,4 +1,6 @@
++import gzip
+ import re
++import secrets
+ import unicodedata
+ from gzip import GzipFile
+ from gzip import compress as gzip_compress
+@@ -314,8 +316,23 @@ def phone2numeric(phone):
+     return "".join(char2number.get(c, c) for c in phone.lower())
+
+
+-def compress_string(s):
+-    return gzip_compress(s, compresslevel=6, mtime=0)
++def _get_random_filename(max_random_bytes):
++    return b"a" * secrets.randbelow(max_random_bytes)
++
++
++def compress_string(s, *, max_random_bytes=None):
++    compressed_data = gzip_compress(s, compresslevel=6, mtime=0)
++
++    if not max_random_bytes:
++        return compressed_data
++
++    compressed_view = memoryview(compressed_data)
++    header = bytearray(compressed_view[:10])
++    header[3] = gzip.FNAME
++
++    filename = _get_random_filename(max_random_bytes) + b"\x00"
++
++    return bytes(header) + filename + compressed_view[10:]
+
+
+ class StreamingBuffer(BytesIO):
+@@ -327,9 +344,12 @@ def read(self):
+
+
+ # Like compress_string, but for iterators of strings.
+-def compress_sequence(sequence):
++def compress_sequence(sequence, *, max_random_bytes=None):
+     buf = StreamingBuffer()
+-    with GzipFile(mode="wb", compresslevel=6, fileobj=buf, mtime=0) as zfile:
++    filename = _get_random_filename(max_random_bytes) if max_random_bytes else None
++    with GzipFile(
++        filename=filename, mode="wb", compresslevel=6, fileobj=buf, mtime=0
++    ) as zfile:
+         # Output headers...
+         yield buf.read()
+         for item in sequence:
+
+</patch>
+
+--------------------------------------------------
+analyze:
+The CoT steps are inconsistent with code - the code implementation is too simple:
+Random filename generation method
+model_patch directly uses secrets.token_urlsafe(16) to generate filename, which is uncontrollable.
+gold_patch uses _get_random_filename(max_random_bytes), which allows setting the maximum number of random bytes, making it more flexible.
+model_patch directly pass filename to GzipFile. gold_patch manually modify the gzip header to ensure that the FNAME flag is correct and avoid compatibility issues.
+
+text:
+<issue>
+Deprecate passing positional arguments to Signer.
+Description
+
+We discovered a vulnerability in one of our applications recently which was caused by an inaccurate instantiation of django.core.signing.Signer. The developer intended to use the user's email address as the salt for the Signing instance but instead caused it to be used as the key. Here's an example code block that demonstrates the problem:
+signer = Signer(self.context['request'].user.email)
+signed_data = signer.sign_object(dict(
+	license_number='...',
+	product_id='...',
+	device_count='...'
+))
+In our case, this signed data was then being used to verify a later request and generate an active license. This meant that an attacker could feasibly generate their own licenses if they realised that their email address was the key. The fix for this was to add salt= in front of the email variable. It occurred to us that this is a relatively easy mistake to make and could be avoided if the signature of Signer.__init__ was changed thusly:
+- def __init__(self, key=None, sep=':', salt=None, algorithm=None):
++ def __init__(self, *, key=None, sep=':', salt=None, algorithm=None):
+That is, adding a * after self to force the developer to name the parameters.
+
+</issue>
+
+steps:
+
+1. Locate the definition of the Signer class within "django/core/signing.py".
+	1.1 Identify the __init__ method responsible for handling its arguments.
+	1.2 Determine the lines that define the positional arguments.
+2. Replace the existing positional parameters with keyword-only parameters.
+	2.1 Insert an asterisk (*) immediately after self to force naming of each argument.
+	2.2 Ensure that the new definition matches the intended behavior to prevent security issues caused by accidental positional usage.
+3. Validate that no other references in the file (or elsewhere) are negatively affected by the change.
+	3.1 Check that tests, documentation, or code requiring positional arguments are updated as needed (if any).
+4. Generate a unified diff reflecting the changes.
+	4.1 Omit line numbers, while keeping the unchanged lines and the added or removed lines with plus or minus signs, respectively.
+5. Make certain the patch file can be applied with "git apply" to implement the fix seamlessly.
+
+model_patch:
+
+--- a/django/core/signing.py
++++ b/django/core/signing.py
+@@ @@
+- def __init__(
+-     self,
+-     key=None,
+-     sep=":",
+-     salt=None,
+-     algorithm=None,
+-     fallback_keys=None,
++ def __init__(
++     self,
++     *,
++     key=None,
++     sep=":",
++     salt=None,
++     algorithm=None,
++     fallback_keys=None,
+
+
+gold_patch:
+<patch>
+diff --git a/django/core/signing.py b/django/core/signing.py
+--- a/django/core/signing.py
++++ b/django/core/signing.py
+@@ -37,10 +37,12 @@
+ import datetime
+ import json
+ import time
++import warnings
+ import zlib
+
+ from django.conf import settings
+ from django.utils.crypto import constant_time_compare, salted_hmac
++from django.utils.deprecation import RemovedInDjango51Warning
+ from django.utils.encoding import force_bytes
+ from django.utils.module_loading import import_string
+ from django.utils.regex_helper import _lazy_re_compile
+@@ -147,7 +149,7 @@ def dumps(
+
+     The serializer is expected to return a bytestring.
+     """
+-    return TimestampSigner(key, salt=salt).sign_object(
++    return TimestampSigner(key=key, salt=salt).sign_object(
+         obj, serializer=serializer, compress=compress
+     )
+
+@@ -165,7 +167,9 @@ def loads(
+
+     The serializer is expected to accept a bytestring.
+     """
+-    return TimestampSigner(key, salt=salt, fallback_keys=fallback_keys).unsign_object(
++    return TimestampSigner(
++        key=key, salt=salt, fallback_keys=fallback_keys
++    ).unsign_object(
+         s,
+         serializer=serializer,
+         max_age=max_age,
+@@ -173,8 +177,13 @@ def loads(
+
+
+ class Signer:
++    # RemovedInDjango51Warning: When the deprecation ends, replace with:
++    # def __init__(
++    #   self, *, key=None, sep=":", salt=None, algorithm=None, fallback_keys=None
++    # ):
+     def __init__(
+         self,
++        *args,
+         key=None,
+         sep=":",
+         salt=None,
+@@ -188,16 +197,29 @@ def __init__(
+             else settings.SECRET_KEY_FALLBACKS
+         )
+         self.sep = sep
+-        if _SEP_UNSAFE.match(self.sep):
+-            raise ValueError(
+-                "Unsafe Signer separator: %r (cannot be empty or consist of "
+-                "only A-z0-9-_=)" % sep,
+-            )
+         self.salt = salt or "%s.%s" % (
+             self.__class__.__module__,
+             self.__class__.__name__,
+         )
+         self.algorithm = algorithm or "sha256"
++        # RemovedInDjango51Warning.
++        if args:
++            warnings.warn(
++                f"Passing positional arguments to {self.__class__.__name__} is "
++                f"deprecated.",
++                RemovedInDjango51Warning,
++                stacklevel=2,
++            )
++            for arg, attr in zip(
++                args, ["key", "sep", "salt", "algorithm", "fallback_keys"]
++            ):
++                if arg or attr == "sep":
++                    setattr(self, attr, arg)
++        if _SEP_UNSAFE.match(self.sep):
++            raise ValueError(
++                "Unsafe Signer separator: %r (cannot be empty or consist of "
++                "only A-z0-9-_=)" % sep,
++            )
+
+     def signature(self, value, key=None):
+         key = key or self.key
+
+</patch>
+
+--------------------------------------------------
+analyze:
+prompt misleading error:
+It is reasonable and safe to require developers to use keyword parameters to initialize Signer, but simply adding * to the parameter list (as shown in model_patch) will directly destroy backward compatibility, causing existing codes that use positional parameters to not work properly. Therefore, both CoT and generated code are wrong.
+
+text:
+<issue>
+Choose which items are displayed per language in Sitemap
+Description
+
+The current implementation of Sitemap is : if we use i18n, then we display a cartesian product between some items and some languages.
+There is no way to use the provided i18n automation if we want to display some items depending on the language (for instance non-translated blog articles).
+I precise in my case, urls are translated, so given a language the url may not exist or raise an error.
+
+</issue>
+
+steps:
+
+1. Analyze the current implementation of the Sitemap class to see how items are retrieved when i18n is enabled.
+	1.1 Observe that the _items() method creates a cartesian product of languages and items.
+	1.2 Notice that there is no straightforward way to filter items per language with the existing design.
+2. Define a new method items_for_language(lang_code) to allow returning a language-specific item set.
+	2.1 Decide that items_for_language(lang_code) returns all items by default so this change is backward compatible.
+	2.2 Plan to override this method in user-defined sitemaps when language-specific filtering is desired.
+3. Replace the existing _items() method to iterate over each language, fetching items by calling items_for_language(lang_code) before constructing pairs.
+	3.1 Ensure that the default behavior remains consistent with the prior approach if items_for_language is not overridden.
+	3.2 Confirm that behavior remains unaltered for the non-i18n scenario.
+4. Provide the final patch that adds items_for_language and modifies _items accordingly without altering other functionality.
+
+model_patch:
+
+--- a/django/contrib/sitemaps/__init__.py
++++ b/django/contrib/sitemaps/__init__.py
+@@ -99,6 +99,18 @@
+         return [lang_code for lang_code, _ in settings.LANGUAGES]
+
++    def items_for_language(self, lang_code):
++        """
++        Return the list of items available for the given language.
++        By default, returns self.items() so that all items are displayed
++        in all languages. Override this method to customize the set of
++        items for each language.
++        """
++        return self.items()
++
+     def _items(self):
+-        if self.i18n:
+-            items = [
+-                (item, lang_code)
+-                for lang_code in self._languages()
+-                for item in self.items()
+-            ]
+-            return items
+-        return self.items()
++        if self.i18n:
++            items = []
++            for lang_code in self._languages():
++                items_for_lang = self.items_for_language(lang_code)
++                for item in items_for_lang:
++                    items.append((item, lang_code))
++            return items
++        return self.items()
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/sitemaps/__init__.py b/django/contrib/sitemaps/__init__.py
+--- a/django/contrib/sitemaps/__init__.py
++++ b/django/contrib/sitemaps/__init__.py
+@@ -92,6 +92,10 @@ def _get(self, name, item, default=None):
+             return attr(item)
+         return attr
+
++    def get_languages_for_item(self, item):
++        """Languages for which this item is displayed."""
++        return self._languages()
++
+     def _languages(self):
+         if self.languages is not None:
+             return self.languages
+@@ -103,8 +107,8 @@ def _items(self):
+             # This is necessary to paginate with all languages already considered.
+             items = [
+                 (item, lang_code)
+-                for lang_code in self._languages()
+                 for item in self.items()
++                for lang_code in self.get_languages_for_item(item)
+             ]
+             return items
+         return self.items()
+@@ -201,7 +205,8 @@ def _urls(self, page, protocol, domain):
+             }
+
+             if self.i18n and self.alternates:
+-                for lang_code in self._languages():
++                item_languages = self.get_languages_for_item(item[0])
++                for lang_code in item_languages:
+                     loc = f"{protocol}://{domain}{self._location(item, lang_code)}"
+                     url_info["alternates"].append(
+                         {
+@@ -209,7 +214,7 @@ def _urls(self, page, protocol, domain):
+                             "lang_code": lang_code,
+                         }
+                     )
+-                if self.x_default:
++                if self.x_default and settings.LANGUAGE_CODE in item_languages:
+                     lang_code = settings.LANGUAGE_CODE
+                     loc = f"{protocol}://{domain}{self._location(item, lang_code)}"
+                     loc = loc.replace(f"/{lang_code}/", "/", 1)
+
+</patch>
+
+--------------------------------------------------
+analyze:
+prompt misleading error:
+The inaccuracy of the description in the background of the problem lies in the expression of the current implementation's combination method. In the background, it says "If i18n is used, the Cartesian product of some projects and some languages ​​will be displayed", which makes people misunderstood that only some projects will be combined with some languages. But in fact, the current implementation will combine all projects with all configured languages, which is why the URL generated in some languages ​​does not exist or is incorrect. Therefore, the problem is that the description of the scope of the "Cartesian product" is not accurate enough, which misleads the essence of the actual problem.
+text:
+<issue>
+Admin Site shall filter LogEntries by registered models
+Description
+
+This ticket has been discussed here: ​https://groups.google.com/g/django-developers/c/OyTo0P2TfAE
+If an implementer registers more than one AdminSite, one might expect that only changes on models registered at that specific site are logged.
+This currently is not the case, all registered sites show all entries of LogEntry. It is confusing for users to access a specific site and see log entries for models they can't access.
+
+</issue>
+
+steps:
+
+1. Understand the requirement
+	1.1 Identify that each AdminSite is expected to show only LogEntries relevant to the models registered on that AdminSite
+	1.2 Note that without customization, the AdminSite shows all LogEntries, regardless of whether the corresponding models are registered
+2. Determine a strategy
+	2.1 Realize that subclassing or customizing ModelAdmin for LogEntry can filter LogEntries by the AdminSite’s registered models
+	2.2 Plan to inject a custom LogEntryAdmin when initializing each AdminSite that filters queried logs based on the site’s registered models
+3. Implement the fix
+	3.1 Modify the AdminSite __init__ to dynamically register a custom LogEntryAdmin
+	3.2 Within that custom LogEntryAdmin, filter queryset using only the ContentTypes for models in the site’s registry
+	3.3 Test the changes in multiple AdminSites to verify that logs remain unique to the models registered on each site
+
+model_patch:
+
+--- a/django/contrib/admin/sites.py
++++ b/django/contrib/admin/sites.py
+@@ - def __init__(self, name="admin"):
+     self._registry = {}  # model_class class -> admin_class instance
+     self.name = name
++    from django.contrib.admin.models import LogEntry
++    from django.contrib.admin.options import ModelAdmin
++    from django.contrib.contenttypes.models import ContentType
++
++    class SiteLogEntryAdmin(ModelAdmin):
++        def get_queryset(self, request):
++            qs = super().get_queryset(request)
++            ctype_ids = [
++                ContentType.objects.get_for_model(m).pk
++                for m in self._registry.keys()
++            ]
++            return qs.filter(content_type_id__in=ctype_ids)
++
++    if LogEntry not in self._registry:
++        self.register(LogEntry, SiteLogEntryAdmin)
+
+
+gold_patch:
+<patch>
+diff --git a/django/contrib/admin/sites.py b/django/contrib/admin/sites.py
+--- a/django/contrib/admin/sites.py
++++ b/django/contrib/admin/sites.py
+@@ -336,6 +336,7 @@ def each_context(self, request):
+             "available_apps": self.get_app_list(request),
+             "is_popup": False,
+             "is_nav_sidebar_enabled": self.enable_nav_sidebar,
++            "log_entries": self.get_log_entries(request),
+         }
+
+     def password_change(self, request, extra_context=None):
+@@ -588,6 +589,11 @@ def app_index(self, request, app_label, extra_context=None):
+             context,
+         )
+
++    def get_log_entries(self, request):
++        from django.contrib.admin.models import LogEntry
++
++        return LogEntry.objects.select_related("content_type", "user")
++
+
+ class DefaultAdminSite(LazyObject):
+     def _setup(self):
+diff --git a/django/contrib/admin/templatetags/log.py b/django/contrib/admin/templatetags/log.py
+--- a/django/contrib/admin/templatetags/log.py
++++ b/django/contrib/admin/templatetags/log.py
+@@ -1,5 +1,4 @@
+ from django import template
+-from django.contrib.admin.models import LogEntry
+
+ register = template.Library()
+
+@@ -12,16 +11,13 @@ def __repr__(self):
+         return "<GetAdminLog Node>"
+
+     def render(self, context):
+-        if self.user is None:
+-            entries = LogEntry.objects.all()
+-        else:
++        entries = context["log_entries"]
++        if self.user is not None:
+             user_id = self.user
+             if not user_id.isdigit():
+                 user_id = context[self.user].pk
+-            entries = LogEntry.objects.filter(user__pk=user_id)
+-        context[self.varname] = entries.select_related("content_type", "user")[
+-            : int(self.limit)
+-        ]
++            entries = entries.filter(user__pk=user_id)
++        context[self.varname] = entries[: int(self.limit)]
+         return ""
+
+
+
+</patch>
+
+--------------------------------------------------
+analyze:
+Prompt misleading error:
+The assumptions about the LogEntry record range are inaccurate: In the background of the problem, each AdminSite should only display the logs generated by the model it registered, but in fact, LogEntry is a global logging mechanism, and all model changes registered with any AdminSite will be recorded. That is to say, LogEntry does not distinguish records based on which AdminSite is registered, which leads to the expected behavior of "only displaying the logs of this site registration model" in the background that are inconsistent with the actual architecture. The coexistence of models in multiple AdminSites is ignored: If a model is registered with multiple AdminSites, filtering based on the registration situation may cause some legal log records to be mistakenly filtered out in a certain site, and this background description is not taken into account.
+

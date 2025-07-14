@@ -1,0 +1,547 @@
+==================== 62b45e175108cfac7f210a19 ====================
+file_path: ocfl/inventory_validator.py
+project: zimeon/ocfl-py
+name: validate_fixity
+
+prompt:
+Validate fixity block in inventory.
+
+Check the structure of the fixity block and makes sure that only files
+listed in the manifest are referenced.
+
+steps:
+1. Check if the `fixity` input is a dictionary. If not, it's structurally invalid. Report an error indicating that the fixity block is not a dictionary and return `False`.
+2. Initialize an empty set called `manifest_file_set` by converting the input list `manifest_files` into a set. This will allow for efficient checking of whether a file path from the fixity block is present in the manifest.
+3. Initialize an empty set called `fixity_files_in_manifest` to keep track of all file paths found in the fixity block that are also in the manifest.
+4. Iterate through each `algorithm` (e.g., 'sha256', 'md5') in the `fixity` dictionary.
+5. For each `algorithm`, check if the value associated with it in the `fixity` dictionary is a dictionary itself. If not, it's structurally invalid. Report an error indicating that the fixity information for the algorithm is not a dictionary and return `False`.
+6. For each `algorithm`, iterate through each `filepath` in the dictionary associated with that `algorithm`. These filepaths are keys in the inner dictionary.
+7. For each `filepath` extracted from the fixity block, check if this `filepath` exists in the `manifest_file_set`.
+8. If a `filepath` from the fixity block is found in the `manifest_file_set`, add this `filepath` to the `fixity_files_in_manifest` set.
+9. If a `filepath` from the fixity block is *not* found in the `manifest_file_set`, it means a file is referenced in the fixity block that is not listed in the manifest. This is an error. Report an error indicating that the file in the fixity block is not in the manifest and return `False`.
+10. After iterating through all algorithms and filepaths in the fixity block, if no errors have been reported so far, it means the fixity block is structurally valid and all referenced files are in the manifest. Return `True` to indicate successful validation.
+
+generate_code:
+def validate_fixity(self, fixity, manifest_files):
+		"""
+		Validate fixity block in inventory. Check the structure of the fixity block and makes sure that only files listed in the manifest are referenced. Return error() in the class.
+		"""
+		if not isinstance(fixity, dict):
+			self.error("Fixity block is not a dictionary.")
+			return False
+
+		manifest_file_set = set(manifest_files)
+		fixity_files_in_manifest = set()
+
+		for algorithm, files_dict in fixity.items():
+			if not isinstance(files_dict, dict):
+				self.error(f"Fixity for algorithm '{algorithm}' is not a dictionary.")
+				return False
+			for filepath in files_dict.keys():
+				if filepath in manifest_file_set:
+					fixity_files_in_manifest.add(filepath)
+				else:
+					self.error(f"File '{filepath}' found in fixity but not in manifest.")
+					return False
+
+		return True
+analyze:
+Missing repo information
+Different error code information are missing, and what is included in fixty.
+--------------------------------------------------
+
+==================== 62b463153879012d1948149a ====================
+file_path: packtools/sps/models/packages.py
+project: scieloorg/packtools
+name: _group_files_by_xml_filename
+
+prompt:
+Group files by their XML basename
+
+Groups files by their XML basename and returns data in dict format.
+
+Parameters
+----------
+xml_filename : str
+    XML filenames
+files : list
+    list of files in the folder or zipfile
+
+Returns
+-------
+dict
+    key: name of the XML files
+    value: Package
+
+steps:
+1. Initialize an empty dictionary called `grouped_files` to store the results. This dictionary will map base XML filenames to lists of associated files.
+2. Iterate through each `xml_file` in the input list `xmls`.
+3. For each `xml_file`, extract the base filename of the XML file. This can be done by removing the file extension (e.g., '.xml') from the filename. Let's call this `xml_base_filename`.
+4. Create a new entry in the `grouped_files` dictionary with `xml_base_filename` as the key and an empty list as the value. This list will store files associated with this XML.
+5. Iterate through each `file_path` in the input list `files`.
+6. For each `file_path`, extract the base filename of the file. Let's call this `file_basename`.
+7. Check if the `file_basename` starts with the `xml_base_filename`. This assumes that files related to an XML file will have filenames that start with the base name of the XML file.
+8. If the `file_basename` starts with the `xml_base_filename`, append the `file_path` to the list associated with `xml_base_filename` in the `grouped_files` dictionary.
+9. After processing all XML files and files, return the `grouped_files` dictionary.
+
+generate_code:
+import os
+
+def _group_files_by_xml_filename(source, xmls, files):
+	"""
+	Groups files by xmls and returns data in dict format.
+	"""
+	grouped_files = {}
+	for xml_file in xmls:
+		xml_filename = os.path.basename(xml_file)
+		xml_base_filename, _ = os.path.splitext(xml_filename)
+		grouped_files[xml_base_filename] = []
+
+	for xml_file in xmls:
+		xml_filename = os.path.basename(xml_file)
+		xml_base_filename, _ = os.path.splitext(xml_filename)
+		for file_path in files:
+			file_basename = os.path.basename(file_path)
+			if file_basename.startswith(xml_base_filename):
+				grouped_files[xml_base_filename].append(file_path)
+	return grouped_files
+analyze:
+Prompt implementation details are unclear
+Prompt does not specify what content should be stored in the returned dictionary, and the specific details of the implementation are described vaguely.
+--------------------------------------------------
+
+==================== 62b463153879012d1948149d ====================
+file_path: packtools/sps/models/packages.py
+project: scieloorg/packtools
+name: _explore_folder
+
+prompt:
+Get packages' data from folder
+
+Groups files by their XML basename and returns data in dict format.
+
+Parameters
+----------
+folder : str
+    Folder of the package
+Returns
+-------
+dict
+
+steps:
+1. Get the list of all items (files and directories) present in the input `folder` path. This can be achieved using the `os.listdir()` function.
+2. Iterate through each item obtained in the previous step. For each item, check if it is a file or a directory. We are only interested in files for this function. Use `os.path.isfile()` to check if an item is a file.
+3. For each item that is identified as a file, construct its full absolute path. This is done by joining the input `folder` path with the filename using `os.path.join()`.
+4. Assume there is a function named `_group_files_by_xml_filename` already defined elsewhere. Call this function, passing the list of full file paths collected in the previous steps as an argument.
+5. Return the value returned by the `_group_files_by_xml_filename` function. This will be the grouped files as described in the function's docstring.
+
+generate_code:
+def _explore_folder(folder):
+	"""
+	Groups files in the given group by using _group_files_by_xml_filename.
+	"""
+	import os
+	files = []
+	for item in os.listdir(folder):
+		item_path = os.path.join(folder, item)
+		if os.path.isfile(item_path):
+			files.append(item_path)
+	return _group_files_by_xml_filename(files)
+analyze:
+Missing repo information
+The information about relevant methods in the repo is missing, file_utils.is_folder, file_utils.xml_files_list, file_utils.files_list, etc., making it impossible to correctly generate the CoT steps.
+--------------------------------------------------
+
+==================== 62b463153879012d1948149f ====================
+file_path: packtools/sps/models/packages.py
+project: scieloorg/packtools
+name: _eval_file
+
+prompt:
+Identifica o tipo de arquivo do pacote: `asset` ou `rendition`.
+
+Identifica o tipo de arquivo do pacote e atualiza `packages` com o tipo e
+o endereço do arquivo em análise.
+
+Parameters
+----------
+prefix : str
+    nome do arquivo XML sem extensão
+filename : str
+    filename
+file_folder : str
+    file folder
+
+Returns
+-------
+dict
+
+steps:
+1. Check if the given `file_path` starts with the provided `prefix`. If it does not, return `None`.
+2. Extract the file extension from the `file_path`.
+3. Convert the extracted file extension to lowercase for case-insensitive comparison.
+4. Check if the lowercase file extension corresponds to "xml". If it does, return `None`.
+5. Check if the lowercase file extension corresponds to "pdf".
+6. If the file extension is "pdf", create a dictionary with a single key "component_id" and its value as the provided `file_path`. Return this dictionary.
+7. If the file extension is not "pdf" (and also not "xml" as handled in step 4), determine a file type identifier (`ftype`). For simplicity, we can use the extracted file extension as `ftype`.
+8. Create a dictionary with keys "component_id", "file_path", and "ftype". Set the value of "component_id" to the `prefix` (as it's not explicitly defined how to derive it from the `file_path` and prefix is available), set the value of "file_path" to the input `file_path`, and set the value of "ftype" to the determined `ftype`. Return this dictionary.
+
+generate_code:
+import os
+
+def _eval_file(prefix, file_path):
+	"""
+	Identify the type of the given file. Return None if the file do not match the given prefix or the type of the file is xml. Return dict with the key of component_id, file_path if the type of the file is "pdf", return dict with the key of component_id, file_path, ftype, file_path if the type of the file is not "pdf".
+	"""
+	if not file_path.startswith(prefix):
+		return None
+
+	_, file_extension = os.path.splitext(file_path)
+	file_extension = file_extension.lower()
+
+	if file_extension == '.xml':
+		return None
+	elif file_extension == '.pdf':
+		return {"component_id": file_path, "file_path": file_path} # Added file_path as value for key 'file_path' to match description
+	else:
+		ftype = file_extension[1:] if file_extension else 'unknown' # remove leading dot from extension
+		return {"component_id": prefix, "file_path": file_path, "ftype": ftype} # Changed component_id to prefix and added ftype as extension
+analyze
+Improving details are unclear
+Prompt does not introduce what is asset and rendition, which makes it impossible for the CoT step to determine what is asset and rendition, causing the CoT step to go wrong.
+--------------------------------------------------
+
+==================== 62b463153879012d194814a1 ====================
+file_path: packtools/sps/models/packages.py
+project: scieloorg/packtools
+name: add_rendition
+
+prompt:
+{
+    "original": "artigo02.pdf",
+    "en": "artigo02-en.pdf",
+}
+
+steps:
+1. Access the class's `_renditions` attribute using `self._renditions`.
+2.  Assign the provided `file_path` to the provided `lang` key within the `_renditions` dictionary. This means setting `self._renditions[lang] = file_path`.
+3.  The method does not need to explicitly return any value as per the problem description.
+
+generate_code:
+self._renditions[lang] = file_path
+analyze:
+Prompt implementation details are unclear
+The information provided by Prompt is very simple and cannot determine what the specific requirements are, which makes the CoT step error
+--------------------------------------------------
+
+==================== 62b463163879012d194814a4 ====================
+file_path: packtools/sps/models/packages.py
+project: scieloorg/packtools
+name: _explore_zipfile
+
+prompt:
+Get packages' data from zip_path
+
+Groups files by their XML basename and returns data in dict format.
+
+Parameters
+----------
+zip_path : str
+    zip file path
+Returns
+-------
+dict
+
+steps:
+1. Step 1: Open the zip file located at the provided `zip_path` in read mode. This will allow us to access the contents of the zip archive.
+2. Step 2: Get a list of all filenames contained within the opened zip file. This list will include all files and directories present in the zip archive.
+3. Step 3: Filter the list of filenames to only include those that are XML files. This can be done by checking if each filename ends with the extension ".xml" (case-insensitive).
+4. Step 4: Call the function `_group_files_by_xml_filename` and pass the filtered list of XML filenames as an argument. This function is assumed to group the XML files based on their filenames as described in the docstring.
+5. Step 5: Return the result obtained from the `_group_files_by_xml_filename` function. This result represents the grouped XML files from the zip archive.
+
+generate_code:
+import zipfile
+import os
+
+def _explore_zipfile(zip_path):
+	"""
+	Groups the given zip path by using _group_files_by_xml_filename.
+	"""
+	with zipfile.ZipFile(zip_path, 'r') as zipf:
+		file_list = zipf.namelist()
+		xml_files = [filename for filename in file_list if filename.lower().endswith('.xml')]
+		grouped_files = _group_files_by_xml_filename(xml_files)
+		return grouped_files
+
+def _group_files_by_xml_filename(xml_files):
+	"""
+	This is a placeholder function. In a real implementation,
+	it would group the given list of XML filenames based on some logic,
+	likely related to their base filenames.
+	For example, it might group files like:
+	['file1.xml', 'file1_v2.xml', 'file2.xml']
+	into something like:
+	{'file1': ['file1.xml', 'file1_v2.xml'], 'file2': ['file2.xml']}
+	"""
+	# Placeholder implementation - replace with actual grouping logic
+	groups = {}
+	for filename in xml_files:
+		base_filename = os.path.splitext(filename)[0] # Example base filename extraction
+		if base_filename not in groups:
+			groups[base_filename] = []
+		groups[base_filename].append(filename)
+	return groups
+analyze:
+Missing repo information
+The specific information of functions such as repo is missing, and the specific information of _group_files_by_xml_filename is unclear.
+
+--------------------------------------------------
+
+==================== 62b4631b3879012d194814dd ====================
+file_path: packtools/sps/utils/xml_utils.py
+project: scieloorg/packtools
+name: fix_namespace_prefix_w
+
+prompt:
+Convert text that defaults to 'w:st="' to 'w-st="'
+
+steps:
+1. Define the target string to be replaced, which is "w:st=".
+2. Define the replacement string, which is "w-st=".
+3. Use the string's `replace()` method to replace all occurrences of the target string with the replacement string in the input `content`.
+4. Return the modified string.
+
+generate_code:
+def fix_namespace_prefix_w(content):
+	"""
+	Replace "w:st=" in content with "w-st=".
+	"""
+	target = "w:st="
+	replacement = "w-st="
+	modified_content = content.replace(target, replacement)
+	return modified_content
+analyze:
+Prompt implementation details are unclear
+Prompt only tells you to change 'w:st="' to 'w-st="', without specifying that this is a format, and you need to convert all w:xx formats to w-xx
+
+--------------------------------------------------
+
+==================== 62b463303879012d19481579 ====================
+file_path: packtools/sps/models/front_articlemeta_issue.py
+project: scieloorg/packtools
+name: _extract_number_and_supplment_from_issue_element
+
+prompt:
+Extract the possible values of number and suppl from the contents of issue.
+
+steps:
+1. First, get the text content of the input `issue` element. Assume the `issue` element has a `.text` attribute containing the relevant text.
+2. Second, if the text content is not available (e.g., it's None or empty), return `None` for both number and supplement.
+3. Third, convert the text content to lowercase to perform case-insensitive matching.
+4. Fourth, split the lowercase text content into a list of words using whitespace as a delimiter.
+5. Fifth, initialize variables `number` and `supplement` to `None`. These variables will store the extracted number and supplement values.
+6. Sixth, iterate through the list of words.
+7. Seventh, inside the loop, attempt to convert each word to an integer. If successful and if `number` is still `None`, assign the integer value to the `number` variable. This assumes the first encountered integer is the issue number.
+8. Eighth, check if the current word is one of the supplement keywords, such as "supp", "suppl", or "supplement".
+9. Ninth, if a supplement keyword is found, check if there is a next word in the list. If there is a next word, attempt to convert the next word to an integer. If successful and if `supplement` is still `None`, assign this integer value to the `supplement` variable. Advance the loop counter to skip the next word as it has been processed as the supplement number.
+10. Tenth, after iterating through all words, return the tuple `(number, supplement)`. This tuple contains the extracted issue number and supplement number (both can be `None` if not found).
+
+generate_code:
+def _extract_number_and_supplment_from_issue_element(issue):
+	"""
+	Return the possible values of number and sup from the contents of issue.
+	"""
+	text_content = issue.text
+	if not text_content:
+		return None, None
+
+	text_lower = text_content.lower()
+	words = text_lower.split()
+
+	number = None
+	supplement = None
+
+	i = 0
+	while i < len(words):
+		word = words[i]
+		try:
+			num = int(word)
+			if number is None:
+				number = num
+		except ValueError:
+			if word in ["supp", "suppl", "supplement"]:
+				if i + 1 < len(words):
+					next_word = words[i+1]
+					try:
+						sup_num = int(next_word)
+						if supplement is None:
+							supplement = sup_num
+						i += 1 # Skip the next word as it's processed as supplement number
+					except ValueError:
+						pass # next word is not a number, ignore as supplement number
+		i += 1
+
+	return number, supplement
+analyze
+Prompt implementation details are unclear
+Prompt only describes the need to extract the value of number and suppl from the issue, and does not specify whether the issue is text, file or other form.
+
+--------------------------------------------------
+
+==================== 62b46746d2f69a53b4661722 ====================
+file_path: boolean/boolean.py
+project: bastikr/boolean
+name: absorb
+
+prompt:
+Given an `args` sequence of expressions, return a new list of expression
+applying absorption and negative absorption.
+
+See https://en.wikipedia.org/wiki/Absorption_law
+
+Absorption::
+
+    A & (A | B) = A, A | (A & B) = A
+
+Negative absorption::
+
+    A & (~A | B) = A & B, A | (~A & B) = A | B
+
+steps:
+1. Initialize an empty list called `absorbed_args` to store the resulting expressions after absorption.
+2. Iterate through each expression `arg` in the input list `args`.
+3. For each `arg`, check if it represents an OR operation. Assume there is a method `is_or()` for expression objects that returns `True` if it is an OR operation and `False` otherwise.
+4. If `arg` is an OR operation, get its operands. Assume there is a method `operands()` that returns a list of operands for an expression. Let's call the operands of `arg` as `or_operands`.
+5. Iterate through each operand `op1` in `or_operands`.
+6. For each `op1`, check if it represents an AND operation using `op1.is_and()`.
+7. If `op1` is an AND operation, get its operands, let's call them `and_operands`.
+8. Iterate through the remaining operands `op2` in `or_operands` (where `op2` is not `op1`).
+9. For each `and_operand` in `and_operands`, compare it with `op2`. Assume expressions can be compared using `==`.
+10. If any `and_operand` is equal to `op2`, it means we can apply the absorption rule: `op2 OR (op2 AND ...) = op2`. In this case, the absorbed expression is `op2`. Replace `arg` with `op2` and break from the inner loops to avoid further unnecessary checks for this `arg`.
+11. If the OR absorption rule was not applied (meaning `arg` was not replaced in step 10), then check if `arg` represents an AND operation using `arg.is_and()`.
+12. If `arg` is an AND operation, get its operands, let's call them `and_operands`.
+13. Iterate through each operand `op1` in `and_operands`.
+14. For each `op1`, check if it represents an OR operation using `op1.is_or()`.
+15. If `op1` is an OR operation, get its operands, let's call them `or_operands`.
+16. Iterate through the remaining operands `op2` in `and_operands` (where `op2` is not `op1`).
+17. For each `or_operand` in `or_operands`, compare it with `op2`.
+18. If any `or_operand` is equal to `op2`, it means we can apply the absorption rule: `op2 AND (op2 OR ...) = op2`. In this case, the absorbed expression is `op2`. Replace `arg` with `op2` and break from the inner loops.
+19. Append the (possibly absorbed or original) `arg` to the `absorbed_args` list.
+20. After iterating through all expressions in `args`, return the `absorbed_args` list.
+
+
+generate_code:
+def absorb(self, args):
+	absorbed_args = []
+	for arg in args:
+		absorbed = False
+		if hasattr(arg, 'is_or') and arg.is_or():
+			or_operands = list(arg.operands())
+			for i in range(len(or_operands)):
+				op1 = or_operands[i]
+				if hasattr(op1, 'is_and') and op1.is_and():
+					and_operands = list(op1.operands())
+					for j in range(len(or_operands)):
+						if i != j:
+							op2 = or_operands[j]
+							for and_operand in and_operands:
+								if and_operand == op2:
+									arg = op2
+									absorbed = True
+									break
+							if absorbed:
+								break
+				if absorbed:
+					break
+		if not absorbed and hasattr(arg, 'is_and') and arg.is_and():
+			and_operands = list(arg.operands())
+			for i in range(len(and_operands)):
+				op1 = and_operands[i]
+				if hasattr(op1, 'is_or') and op1.is_or():
+					or_operands = list(op1.operands())
+					for j in range(len(and_operands)):
+						if i != j:
+							op2 = and_operands[j]
+							for or_operand in or_operands:
+								if or_operand == op2:
+									arg = op2
+									absorbed = True
+									break
+							if absorbed:
+								break
+				if absorbed:
+					break
+		absorbed_args.append(arg)
+	return absorbed_args
+analyze:
+Prompt implementation details blurred
+The format of args is not given in the Prompt description, and it is not clear how to read the content of args
+
+--------------------------------------------------
+
+==================== 62b86707b4d922cb0e688c2a ====================
+file_path: krake/krake/controller/kubernetes/hooks.py
+project: rak-n-rok/Krake
+name: on
+
+prompt:
+Decorator function to add a new handler to the registry.
+
+Args:
+    hook (HookType): Hook attribute for which to register the handler.
+
+Returns:
+    callable: Decorator for registering listeners for the specified
+    hook.
+
+steps:
+1. Define a class named `EventHandler` to encapsulate the hook registry and the `on` decorator.
+```
+2. Inside the `EventHandler` class, create an `__init__` method. In the `__init__` method, initialize an empty dictionary called `self.handlers` to store the hook handlers. This dictionary will store hook names as keys and lists of handler functions as values.
+```
+3. Define the `on` method within the `EventHandler` class. The `on` method should take `self` (the instance of `EventHandler`) and `hook` (the name of the hook to register the handler for) as arguments.
+```
+4. Inside the `on` method, define a decorator function. This decorator function will take a function `func` (the method being decorated) as an argument.
+```
+5. Within the decorator function, access the `self.handlers` dictionary of the `EventHandler` instance.
+```
+6. Check if the `hook` already exists as a key in `self.handlers`.
+```
+7. If the `hook` exists as a key, append the decorated function `func` to the list of handlers associated with that `hook` (i.e., `self.handlers[hook]`).
+```
+8. If the `hook` does not exist as a key, create a new entry in `self.handlers` with `hook` as the key and a list containing `func` as the value (i.e., `self.handlers[hook] = [func]`).
+```
+9. The decorator function should return the original function `func` to ensure the decorated method remains usable.
+```
+10. The `on` method should return the decorator function.
+```
+```python
+class EventHandler:
+	def __init__(self):
+		self.handlers = {}
+
+	def on(self, hook):
+		def decorator(func):
+			if hook not in self.handlers:
+				self.handlers[hook] = []
+			self.handlers[hook].append(func)
+			return func
+		return decorator
+```
+
+generate_code:
+class EventHandler:
+	def __init__(self):
+		self.handlers = {}
+
+	def on(self, hook):
+		def decorator(func):
+			if hook not in self.handlers:
+				self.handlers[hook] = []
+			self.handlers[hook].append(func)
+			return func
+		return decorator
+analyze:
+There are redundant steps in CoT
+The steps in CoT to check whether hooks are in handler are redundant, which will cause repeated initialization, or conflict with the behavior of the default dictionary
+--------------------------------------------------

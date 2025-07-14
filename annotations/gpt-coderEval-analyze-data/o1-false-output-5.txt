@@ -1,0 +1,921 @@
+
+==================== 62b87af19a0c4fa8b80b34f7 ====================
+file_path: lena/context/functions.py
+project: ynikitenko/lena
+name: difference
+
+prompt:
+Return a dictionary with items from *d1* not contained in *d2*.
+
+*level* sets the maximum depth of recursion. For infinite recursion,
+set that to -1. For level 1,
+if a key is present both in *d1* and *d2* but has different values,
+it is included into the difference.
+See :func:`intersection` for more details.
+
+*d1* and *d2* remain unchanged. However, *d1* or some of its
+subdictionaries may be returned directly.
+Make a deep copy of the result when appropriate.
+
+Returns a dictionary containing items in d1 that are not in d2. level sets the maximum depth of recursion. For infinite recursion, set to -1. For level=1, if a key exists in both d1 and d2 but has different values, the key-value pair is included in the difference. See more details: func:intersection.d1 and d2 remain unchanged, but d1 or its subdictionary may return directly. Deep copy of the result when appropriate.
+
+.. versionadded:: 0.5
+   add keyword argument *level*.
+Returns a dictionary containing items from *d1* but not in *d2*.
+
+*level* Sets the maximum depth of recursion. For infinite recursion,
+Set it to -1. For level 1,
+If a key exists in both *d1* and *d2*, but has different values,
+Then include it in the difference.
+For more details, see :func:`intersection`.
+
+*d1* and *d2* remain the same. However, *d1* or some of its
+The subdictionary may return directly.
+Deeply copy the results when appropriate.
+
+.. versionadded:: 0.5
+Add keyword parameter *level*.
+
+
+steps:
+1. Initialize an empty dictionary (e.g., result) to hold the differences.
+2. Iterate over each key-value pair in the first dictionary (d1).
+3. If the current key does not exist in the second dictionary (d2), add this key-value pair to the result.
+4. Otherwise, check if the value in both dictionaries is a dictionary and the level argument is not zero.
+5. If both values are dictionaries and we have remaining levels of depth to explore, recursively call the difference function on these sub-dictionaries (with level - 1 if level is positive or the same if level is negative). If the returned sub-difference is not empty, store it under the same key in the result.
+6. If the values do not match or are not both dictionaries, store the value from d1 in the result.
+7. At the end of the iteration, return the result dictionary.
+1. Initialize an empty dictionary (for example, results) to save the difference.
+2. Iterate over each key-value pair in the first dictionary (d1).
+3. If the current key does not exist in the second dictionary (d2), add this key-value pair to the result.
+4. Otherwise, check whether the values ​​in both dictionaries are dictionaries and the level parameter is not zero.
+5. If both values ​​are dictionaries and we have the remaining levels of depth to explore, then call the difference function recursively on these subdictionaries (level -1 if level is positive, and level -1 if level is negative, the same depth is used). If the returned subdivision is not empty, it is stored under the same key in the result.
+6. If the values ​​do not match or are not two dictionaries, store the values ​​in d1 in the result.
+7. At the end of the iteration, return the result dictionary.
+generate_code:
+
+def difference(d1, d2, level=-1):
+    result = {}
+    for k, v in d1.items():
+        # Key not in second dictionary
+        if k not in d2:
+            result[k] = v
+        else:
+            # If both values are dicts and we can go deeper
+            if isinstance(v, dict) and isinstance(d2[k], dict) and level != 0:
+                sub_diff = difference(
+                    v, d2[k], level - 1 if level > 0 else level
+                )
+                if sub_diff:
+                    result[k] = sub_diff
+            else:
+                # If values differ
+                if v != d2[k]:
+                    result[k] = v
+return result
+Reference code:
+def difference(d1, d2, level=-1):
+    """Return a dictionary with items from *d1* not contained in *d2*.
+
+    *level* sets the maximum depth of recursion. For infinite recursion,
+    set that to -1. For level 1,
+    if a key is present both in *d1* and *d2* but has different values,
+    it is included into the difference.
+    See :func:`intersection` for more details.
+
+    *d1* and *d2* remain unchanged. However, *d1* or some of its
+    subdictionaries may be returned directly.
+    Make a deep copy of the result when appropriate.
+
+    .. versionadded:: 0.5
+       add keyword argument *level*.
+    """
+    # can become not dicts during the recursion
+    if not isinstance(d1, dict) or not isinstance(d2, dict):
+        return d1
+
+    if d1 == d2:
+        return {}
+    elif level == 0:
+        return d1
+
+    # some keys differ
+    result = {}
+    for key in d1:
+        if key not in d2:
+            result[key] = d1[key]
+        elif d1[key] != d2[key]:
+            res = difference(d1[key], d2[key], level-1)
+            # if d2[key] contains all d1[key] elements,
+            # the difference will be empty
+            if res:
+                result[key] = res
+    return result
+
+analyze:
+
+prompt fuzzy --- implementation details are unclear --- recursion, nested processing and level default values ​​are fuzzy
+ The definition of recursive behavior is unclear
+Prompt mentioned that level controls the depth of recursion, but does not specify how to deal with nested dictionaries under different level values. For example, when level=1, it is clearly required that "the key exists but the values ​​are different and are included in the difference", but does not specify whether the nested dictionary needs to compare the contents of the values ​​recursively. This ambiguity may cause the implementer to mistakenly think that only the top-level key-value pairs need to be processed.
+ The meaning of "not in d2" is unclear
+Prompt requires returning items that are "not in d2" in d1, but in the case of nested dictionaries, "not in d2" can refer to the missing top-level keys, or they can refer to the difference in keys or values ​​at nested levels. Prompt does not clarify this point, which may lead to deviations in understanding the differences.
+ The default behavior of level is not defined
+Prompt does not specify the default value when level is not provided. The generated code assumes to be -1 (infinite recursion), but this is not explicit in Prompt and may affect the design of CoT.
+
+
+Prompt blur causes the reference code to be inconsistent with the generated code when processing level=0.
+When level=0, behavior:
+Reference code: If d1!=d2, directly return d1 and no item-by-item comparison is performed.
+generate_code: Still compare key-value pairs, only items with keys not in d2 or with different values ​​are stored in result.
+Example: d1={'a': {'b':1}}, d2={'a': {'b':2}}, level=0:
+The reference code returns {'a': {'b':1}}.
+generate_code compares d1['a'] and d2['a'], which are not equal, and returns {'a': {'b':1}}, and the results are consistent.
+
+
+
+
+==================== 62b87af09a0c4fa8b80b34f1 ====================
+file_path: lena/structures/histogram.py
+project: ynikitenko/lena
+name: fill
+
+prompt:
+Fill histogram at *coord* with the given *weight*.
+
+Coordinates outside the histogram edges are ignored.
+
+steps:
+1. Calculate the bin index based on the coord.
+2. Check if the calculated bin index is within the valid histogram range.
+3. If the bin index is out of range, ignore the fill operation.
+4. If the bin index is valid, increment the corresponding bin by the specified weight.
+
+generate_code:
+
+def fill(self, coord, weight=1):
+    bin_index = int((coord - self.xmin) // self.bin_width)
+    if 0 <= bin_index < self.nbins:
+        self.data[bin_index] += weight
+Reference code:
+  def fill(self, coord, weight=1):
+        """Fill histogram at *coord* with the given *weight*.
+
+        Coordinates outside the histogram edges are ignored.
+        """
+        indices = hf.get_bin_on_value(coord, self.edges)
+        subarr = self.bins
+        for ind in indices[:-1]:
+            # underflow
+            if ind < 0:
+                return
+            try:
+                subarr = subarr[ind]
+            # overflow
+            except IndexError:
+                return
+        ind = indices[-1]
+        # underflow
+        if ind < 0:
+            return
+
+        # fill
+        try:
+            subarr[ind] += weight
+        except IndexError:
+            return
+
+--------------------------------------------------
+analyze:
+Prompt fuzzy ---- The implementation details are unclear --- The data structure does not give a specific form
+Prompt does not clarify the dimensions and structure of the histogram, which leads to CoT assuming it as a one-dimensional histogram, which is inconsistent with the multi-dimensional processing of the reference code.
+
+
+==================== 62b86aa3b4d922cb0e688d36 ====================
+file_path: krake/krake/data/core.py
+project: rak-n-rok/Krake
+name: _validate_labels
+
+prompt:
+Check that keys and values in the given labels match against their corresponding
+regular expressions.
+Prompt's content requires checking whether the keys and values ​​in labels match the "corresponding regular expression", and throw a ValidationError when verification fails, and the error message contains a list of all errors.
+
+Args:
+    labels (dict): the different labels to validate.
+
+Raises:
+    ValidationError: if any of the keys and labels does not match their respective
+        regular expression. The error contains as message the list of all errors
+        which occurred in the labels. Each element of the list is a dictionary with
+        one key-value pair:
+        - key: the label key or label value for which an error occurred as string.
+        - value: the error message.
+
+        .. code:: python
+
+            # Example:
+            labels = {
+                "key1": "valid",
+                "key2": ["invalid"],
+                "$$": "invalid",
+                True: True,
+            }
+            try:
+                _validate_labels(labels)
+            except ValidationError as err:
+                assert err.messages == [
+                    {"['invalid']": 'expected string or bytes-like object'},
+                    {'$$': "Label key '$$' does not match the regex [...]"},
+                    {'True': 'expected string or bytes-like object'},
+                    {'True': 'expected string or bytes-like object'},
+                ]
+
+steps:
+1. Define a helper function validate_key(key) that checks whether the key conforms to certain requirements (e.g., type, format, or allowed characters).
+2. Define a helper function validate_value(value) that checks whether the value meets the specified criteria (e.g., type, format, or constraints).
+3. In the _validate_labels(labels) function, iterate over each key-value pair in labels.
+4. Call validate_key(key) for each key to ensure it's valid.
+5. Call validate_value(value) for each value to ensure it's valid.
+6. If any validation fails, raise an error or handle it accordingly. Otherwise, complete successfully.
+7. Return from the function after all labels have been validated without issues.
+
+generate_code:
+
+def validate_key(key):
+    # Placeholder for key validation
+    if not isinstance(key, str):
+        raise ValueError("Label key must be a string.")
+    # Additional validation checks can be added here
+
+def validate_value(value):
+    # Placeholder for value validation
+    if not isinstance(value, str):
+        raise ValueError("Label value must be a string.")
+    # Additional validation checks can be added here
+
+def _validate_labels(labels):
+    """
+    Check that keys and values in the given labels by validate_key() and validate_value().
+    """
+    if not isinstance(labels, dict):
+        raise TypeError("Labels must be a dictionary.")
+    for key, val in labels.items():
+        validate_key(key)
+        validate_value(val)
+Reference code:
+def _validate_labels(labels):
+    """Check that keys and values in the given labels match against their corresponding
+    regular expressions.
+
+    Args:
+        labels (dict): the different labels to validate.
+
+    Raises:
+        ValidationError: if any of the keys and labels does not match their respective
+            regular expression. The error contains as message the list of all errors
+            which occurred in the labels. Each element of the list is a dictionary with
+            one key-value pair:
+            - key: the label key or label value for which an error occurred as string.
+            - value: the error message.
+
+            .. code:: python
+
+                # Example:
+                labels = {
+                    "key1": "valid",
+                    "key2": ["invalid"],
+                    "$$": "invalid",
+                    True: True,
+                }
+                try:
+                    _validate_labels(labels)
+                except ValidationError as err:
+                    assert err.messages == [
+                        {"['invalid']": 'expected string or bytes-like object'},
+                        {'$$': "Label key '$$' does not match the regex [...]"},
+                        {'True': 'expected string or bytes-like object'},
+                        {'True': 'expected string or bytes-like object'},
+                    ]
+    """
+    errors = []
+    for key, value in labels.items():
+        try:
+            validate_key(key)
+        except (ValidationError, TypeError) as err:
+            errors.append({str(key): str(err)})
+
+        try:
+            validate_value(value)
+        except (ValidationError, TypeError) as err:
+            errors.append({str(value): str(err)})
+
+    if errors:
+        raise ValidationError(list(errors))
+
+--------------------------------------------------
+analyze :
+prompt fuzzy --- Context missing --- Repo-level information is missing. That is: regular expressions defined in the context
+Prompt mentions "their corresponding regular expressions", but does not specify what these regular expressions are. For example, do keys need to be alphanumeric strings? Do values ​​need to follow a specific format? The example mentions Label key '$$' does not match the regex [...], but does not provide a specific regular expression pattern. This ambiguity makes it difficult for implementers to accurately design verification logic.
+
+
+
+==================== 62b86a9eb4d922cb0e688d25 ====================
+file_path: krake/krake/data/core.py
+project: rak-n-rok/Krake
+name: _get_resource_name_regex
+
+prompt:
+Build or return the regular expressions that are used to validate
+the name of the Krake resources.
+
+Returns:
+    (re.Pattern): the compiled regular expressions, to validate
+    the resource name.
+
+steps:
+1. 1) Determine naming requirements for Krake resources (e.g., allowed characters, length restrictions).
+2. 2) Construct a regular expression pattern based on these naming rules (e.g., start/end constraints, allowed characters in between).
+3. 3) Use or return the regular expression(s) enforcing these constraints for validation.
+4. 4) Return the pattern in a suitable format, such as a compiled regex or a string.
+
+generate_code:
+
+import re
+
+def _get_resource_name_regex():
+    """
+    Return the regular expressions that are used to validate the name of the Krake resources
+    """
+    # Example pattern: starts with letter, followed by letters, digits, underscores or dashes
+    # and enforces a minimum length of 1 character.
+    pattern = r"^[A-Za-z][A-Za-z0-9_-]*$"
+    return re.compile(pattern)
+Reference code
+
+def _get_resource_name_regex():
+    """Build or return the regular expressions that are used to validate
+    the name of the Krake resources.
+
+    Returns:
+        (re.Pattern): the compiled regular expressions, to validate
+        the resource name.
+    """
+    global _resource_name_regex, _resource_name_pattern
+
+    # Build the patterns only if not already built
+    if _resource_name_regex:
+        return _resource_name_regex
+
+    # First and last characters must be alphanumeric. The rest of the string must be
+    # alphanumeric, "-", "_" or "." and without whitespace as well as have a
+    # max length of 255 and a min length of 1
+    max_name_size = 253  # reduced by 2 for the regex
+    min_name_size = 0  # reduced by 1 for the regex
+    base_alphanumeric_pattern = "\\w|(\\w[\\w\\-_.:]{{{min_length},{length}}}\\w)"
+
+    resource_name_pattern = base_alphanumeric_pattern.format(
+        min_length=min_name_size, length=max_name_size
+    )
+
+    _resource_name_pattern = resource_name_pattern
+    _resource_name_regex = re.compile(_resource_name_pattern, re.ASCII)
+return _resource_name_regex
+--------------------------------------------------
+analyze:
+Prompt blur ---- Implementing blur details --- The regular expression definition is unclear
+Prompt does not clarify the naming rules of Krake resource names and the way regular expressions are built. Ambiguity is the root cause of CoT and code implementation problems.
+
+ The naming rules are unclear
+Prompt requires verification of the regular expression of "Krake resource name", but does not specify specific naming rules, such as allowed characters, length limits, end-to-end character requirements, etc. This ambiguity makes it difficult for implementers to accurately construct regular expressions, and can only rely on assumptions or guesses.
+ The source of regular expressions is blurred
+The sentence "Build or return the regular expressions" implies that regular expressions may require dynamic construction or return existing patterns, but Prompt does not specify the specific source or construction logic, which increases implementation uncertainty.
+ Clear return type
+Prompt explicitly requires returning a compiled regular expression object re.Pattern, which has no ambiguity.
+
+
+
+==================== 62b86a4fb4d922cb0e688cf7 ====================
+file_path: krake/krake/data/core.py
+project: rak-n-rok/Krake
+name: validate_key
+
+prompt:
+Validate the given key against the corresponding regular expression.
+Verify the given key based on the corresponding regular expression.
+
+
+Args:
+    key: the string to validate
+
+Raises:
+    ValidationError: if the given key is not conform to the regular expression.
+
+steps:
+1. Import the 're' module from the Python standard library to handle regular expressions.
+2. Define the function 'validate_key(key)' which will receive a key as its parameter.
+3. Create a regex pattern string that represents the format rules for a valid key (e.g., only letters and digits allowed: ^[A-Za-z0-9]+$).
+4. Use re.fullmatch(pattern, key) (or re.match with start/end anchors) to verify if the entire string matches the pattern.
+5. If the key matches the pattern, return True. Otherwise, return False.
+
+generate_code:
+
+import re
+
+def validate_key(key):
+    pattern = r'^[A-Za-z0-9]+$'
+    return bool(re.fullmatch(pattern, key))
+Reference code:
+def validate_key(key):
+    """Validate the given key against the corresponding regular expression.
+
+    Args:
+        key: the string to validate
+
+    Raises:
+        ValidationError: if the given key is not conform to the regular expression.
+    """
+    key_regex, _ = _get_labels_regex()
+    if not key_regex.fullmatch(key):
+        raise ValidationError(
+            f"Label key {key!r} does not match the regex {_label_key_pattern!r}."
+        )
+
+
+--------------------------------------------------
+analyze:
+The source of regular expressions is unclear --- Actually, it is a regular expression that has been predefined in the context
+Prompt requires verification whether the value matches "corresponding regular expression", but does not specify the source of the regular expression. Is it passed in as a parameter, predefined inside the function, or is it obtained in other ways? This ambiguity directly affects the design direction of CoT and code. For example, CoT assumes that the regular expression is defined inside the function, and generate_code passes it as a parameter. Both implementations may be reasonable guesses about Prompt, but may also be inconsistent with the actual requirements.
+
+==================== 62b86a01b4d922cb0e688ccc ====================
+file_path: krake/krake/controller/kubernetes/hooks.py
+project: rak-n-rok/Krake
+name: generate_default_observer_schema_dict
+
+prompt:
+Together with :func:``generate_default_observer_schema_list``, this function is
+called recursively to generate part of a default ``observer_schema`` from part of a
+Kubernetes resource, defined respectively by ``manifest_dict`` or ``manifest_list``.
+
+Args:
+    manifest_dict (dict): Partial Kubernetes resources
+    first_level (bool, optional): If True, indicates that the dictionary represents
+        the whole observer schema of a Kubernetes resource
+
+Returns:
+    dict: Generated partial observer_schema
+
+This function creates a new dictionary from ``manifest_dict`` and replaces all
+non-list and non-dict values by ``None``.
+
+In case of ``first_level`` dictionary (i.e. complete ``observer_schema`` for a
+resource), the values of the identifying fields are copied from the manifest file.
+
+ Recursively generates the default observer_schema for Kubernetes resources with generate_default_observer_schema_list.
+ Enter parameters:
+manifest_dict:Section of Kubernetes resources.
+first_level: Boolean value, if True, means that the dictionary represents the observer_schema of the entire resource.
+ Return value: The generated observer_schema partial dictionary.
+ Behavior:
+Create a new dictionary from manifest_dict, replacing non-list and non-dictionary values ​​with None.
+When first_level is True, copy the value of "identifying fields".
+
+steps:
+1. Initialize an empty dictionary to store the default schema.
+2. Iterate over each key-value pair in the input dictionary.
+3. If the value is a dictionary, recursively call the function on this dictionary to generate its schema and store it in the new dictionary under the same key.
+4. If the value is a list, determine the default structure for its items. Optionally apply recursion if the list contains dictionaries, and store the resulting list under the same key.
+5. Otherwise, assign a suitable default value based on the value's type under the same key.
+6. Return the new dictionary.
+
+generate_code:
+
+def generate_default_observer_schema_dict(manifest_dict, first_level=False):
+    def create_default_structure(value):
+        if isinstance(value, dict):
+            return generate_default_observer_schema_dict(value, False)
+        elif isinstance(value, list):
+            return [create_default_structure(item) for item in value]
+        else:
+            return None  # Assign a default value based on your requirement
+
+    result = {}
+    for key, val in manifest_dict.items():
+        result[key] = create_default_structure(val)
+    return result
+Reference code:
+def generate_default_observer_schema_dict(manifest_dict, first_level=False):
+    """Together with :func:``generate_default_observer_schema_list``, this function is
+    called recursively to generate part of a default ``observer_schema`` from part of a
+    Kubernetes resource, defined respectively by ``manifest_dict`` or ``manifest_list``.
+
+    Args:
+        manifest_dict (dict): Partial Kubernetes resources
+        first_level (bool, optional): If True, indicates that the dictionary represents
+            the whole observer schema of a Kubernetes resource
+
+    Returns:
+        dict: Generated partial observer_schema
+
+    This function creates a new dictionary from ``manifest_dict`` and replaces all
+    non-list and non-dict values by ``None``.
+
+    In case of ``first_level`` dictionary (i.e. complete ``observer_schema`` for a
+    resource), the values of the identifying fields are copied from the manifest file.
+
+    """
+    observer_schema_dict = {}
+
+    for key, value in manifest_dict.items():
+
+        if isinstance(value, dict):
+            observer_schema_dict[key] = generate_default_observer_schema_dict(value)
+
+        elif isinstance(value, list):
+            observer_schema_dict[key] = generate_default_observer_schema_list(value)
+
+        else:
+            observer_schema_dict[key] = None
+
+    if first_level:
+        observer_schema_dict["apiVersion"] = manifest_dict["apiVersion"]
+        observer_schema_dict["kind"] = manifest_dict["kind"]
+        observer_schema_dict["metadata"]["name"] = manifest_dict["metadata"]["name"]
+
+        if (
+            "spec" in manifest_dict
+            and "type" in manifest_dict["spec"]
+            and manifest_dict["spec"]["type"] == "LoadBalancer"
+        ):
+            observer_schema_dict["status"] = {"load_balancer": {"ingress": None}}
+
+    return observer_schema_dict
+
+analyze:
+prompt fuzzy—missing context information—missing repo-level information
+Prompt did not specify which fields "identifying fields" are specifically, nor did it mention other fields that may be involved when first_level is True (such as status processing)
+
+
+
+==================== 62b869ebb4d922cb0e688cc6 ====================
+file_path: krake/krake/controller/kubernetes/hooks.py
+project: rak-n-rok/Krake
+name: update_last_applied_manifest_list_from_resp
+
+prompt:
+Together with :func:``update_last_applied_manifest_dict_from_resp``, this
+function is called recursively to update a partial ``last_applied_manifest``
+from a partial Kubernetes response
+
+Together with :func: ' ' update_last_applied_manifest_dict_from_resp ' ', this function is called recursively, updating part of part of Kubernetes response' ' last_applied_manifest ' '
+Args:
+    last_applied_manifest (list): partial ``last_applied_manifest`` being
+        updated
+    observer_schema (list): partial ``observer_schema``
+    response (list): partial response from the Kubernetes API.
+
+This function go through all observed fields, and initialized their value in
+last_applied_manifest if they are not yet present
+
+steps:
+1. Identify all items in the observer_schema that correspond to list elements.
+2. Ensure that last_applied_manifest has valid indices for each element; if not, initialize them.
+3. Determine the type of each element in the schema (dict, list, or leaf) and match it with the corresponding data in the response.
+4. If the schema element is a dict type, recursively call the function handling dict updates.
+5. If the schema element is a list type, recursively call this function to process nested lists.
+6. If it is a leaf, assign or update the value directly from the response.
+7. Return the updated last_applied_manifest.
+
+generate_code:
+
+def update_last_applied_manifest_list_from_resp(last_applied_manifest, observer_schema, response):
+    for i, schema_item in enumerate(observer_schema):
+        # Ensure the list has enough elements
+        if i >= len(last_applied_manifest):
+            last_applied_manifest.append(None)
+        
+        # Safely get the response item if available
+        resp_item = response[i] if i < len(response) else None
+        
+        if isinstance(schema_item, dict) and schema_item.get("type") == "list":
+            if not isinstance(last_applied_manifest[i], list):
+                last_applied_manifest[i] = []
+            if isinstance(resp_item, list):
+                update_last_applied_manifest_list_from_resp(last_applied_manifest[i], schema_item.get("items", []), resp_item)
+        
+        elif isinstance(schema_item, dict) and schema_item.get("type") == "dict":
+            if not isinstance(last_applied_manifest[i], dict):
+                last_applied_manifest[i] = {}
+            # Assuming update_last_applied_manifest_dict_from_resp is defined elsewhere
+            update_last_applied_manifest_dict_from_resp(last_applied_manifest[i], schema_item.get("properties", {}), resp_item if isinstance(resp_item, dict) else {})
+        
+        else:
+            last_applied_manifest[i] = resp_item
+    
+    return last_applied_manifest
+Reference code
+def update_last_applied_manifest_list_from_resp(
+    last_applied_manifest, observer_schema, response
+):
+    """Together with :func:``update_last_applied_manifest_dict_from_resp``, this
+    function is called recursively to update a partial ``last_applied_manifest``
+    from a partial Kubernetes response
+
+    Args:
+        last_applied_manifest (list): partial ``last_applied_manifest`` being
+            updated
+        observer_schema (list): partial ``observer_schema``
+        response (list): partial response from the Kubernetes API.
+
+    This function go through all observed fields, and initialized their value in
+    last_applied_manifest if they are not yet present
+
+    """
+    # Looping over the observed resource, except the last element which is the
+    # special control dictionary
+    for idx, val in enumerate(observer_schema[:-1]):
+
+        if idx >= len(response):
+            # Element is observed but not present in k8s response, so following
+            # elements will also not exist.
+            #
+            # This doesn't raise an Exception as observing the element of a list
+            # doesn't ensure its presence. The list length is controlled by the
+            # special control dictionary
+            return
+
+        if isinstance(val, dict):
+            if idx >= len(last_applied_manifest):
+                # The dict is observed, but not present in last_applied_manifest
+                last_applied_manifest.append({})
+
+            update_last_applied_manifest_dict_from_resp(
+                last_applied_manifest[idx], observer_schema[idx], response[idx]
+            )
+
+        elif isinstance(response[idx], list):
+            if idx >= len(last_applied_manifest):
+                # The list is observed, but not present in last_applied_manifest
+                last_applied_manifest.append([])
+
+            update_last_applied_manifest_list_from_resp(
+                last_applied_manifest[idx], observer_schema[idx], response[idx]
+            )
+
+        elif idx >= len(last_applied_manifest):
+            # Element is not yet present in last_applied_manifest. Adding it.
+            last_applied_manifest.append(response[idx])
+
+--------------------------------------------------
+analyze:
+prompt blur---missing context information--missing repo-level
+Missing update_last_applied_manifest_list_from_resp function information, etc.
+Data structure not detailed: The internal structure of observer_schema and response is not specifically described. For example, the element of observer_schema may be a dictionary, a list, or another type? Is the last element special?
+
+
+==================== 62b869eab4d922cb0e688cc5 ====================
+file_path: krake/krake/controller/kubernetes/hooks.py
+project: rak-n-rok/Krake
+name: update_last_applied_manifest_dict_from_resp
+
+prompt:
+Together with :func:``update_last_applied_manifest_list_from_resp``, this
+function is called recursively to update a partial ``last_applied_manifest``
+from a partial Kubernetes response
+
+Args:
+    last_applied_manifest (dict): partial ``last_applied_manifest`` being
+        updated
+    observer_schema (dict): partial ``observer_schema``
+    response (dict): partial response from the Kubernetes API.
+
+Raises:
+    KeyError: If the observed field is not present in the Kubernetes response
+
+This function go through all observed fields, and initialized their value in
+last_applied_manifest if they are not yet present
+
+steps:
+1. Iterate over each key-value pair in the observer_schema argument.
+2. For each key in observer_schema, verify that the same key exists in the response. If not, raise a KeyError.
+3. Check the data type of the value associated with this key in observer_schema:  
+   • If it is a dictionary, then:  
+     a) Ensure that the corresponding key in last_applied_manifest is also initialized as a dictionary.  
+     b) Recursively call update_last_applied_manifest_dict_from_resp on the nested structures.
+4. If the value is a list, then:  
+   a) Ensure that the corresponding key in last_applied_manifest is initialized as a list.  
+   b) Call a separate function update_last_applied_manifest_list_from_resp to handle the list update.
+5. Otherwise, simply set the value in last_applied_manifest by taking it from the response.
+6. Repeat the above steps for all observed fields.
+7. Return the updated last_applied_manifest.
+
+generate_code:
+
+def update_last_applied_manifest_dict_from_resp(
+    last_applied_manifest, observer_schema, response
+):
+    for field, sub_schema in observer_schema.items():
+        if field not in response:
+            raise KeyError(f"Field '{field}' is not present in the response.")
+
+        if isinstance(sub_schema, dict):
+            if field not in last_applied_manifest:
+                last_applied_manifest[field] = {}
+            update_last_applied_manifest_dict_from_resp(
+                last_applied_manifest[field],
+                sub_schema,
+                response[field],
+            )
+        elif isinstance(sub_schema, list):
+            if field not in last_applied_manifest:
+                last_applied_manifest[field] = []
+            # Assuming you have a separate function to handle list updates
+            update_last_applied_manifest_list_from_resp(
+                last_applied_manifest[field],
+                sub_schema,
+                response[field],
+            )
+        else:
+            last_applied_manifest[field] = response[field]
+
+    return last_applied_manifest
+analyze:
+prompt blur---missing context information--missing repo-level
+Missing update_last_applied_manifest_list_from_resp function information, etc.
+Data structure not detailed: The internal structure of observer_schema and response is not specifically described. For example, the element of observer_schema may be a dictionary, a list, or another type? Is the last element special?
+
+
+--------------------------------------------------
+
+==================== 62b869eab4d922cb0e688cbf ====================
+file_path: krake/krake/controller/kubernetes/hooks.py
+project: rak-n-rok/Krake
+name: generate_default_observer_schema
+
+prompt:
+Generate the default observer schema for each Kubernetes resource present in
+``spec.manifest`` for which a custom observer schema hasn't been specified.
+
+Args:
+    app (krake.data.kubernetes.Application): The application for which to generate a
+        default observer schema
+
+Generates a default observer schema for each Kubernetes resource in the app.spec.manifest that does not specify a custom observer schema.
+
+Parameters: app is an object of type krake.data.kubernetes.Application.
+
+
+
+steps:
+1. Identify all Kubernetes resources from app.spec.manifest.
+2. Check if the resource has a custom observer schema defined.
+3. If a custom observer schema is not specified, generate the default observer schema.
+4. Assign the newly generated or existing observer schema to the resource.
+5. Return the updated application object.
+
+generate_code:
+
+def generate_default_observer_schema(app):
+    """
+    Generate the default observer schema for each Kubernetes resource present in ``spec.manifest``
+    for which a custom observer schema hasn't been specified.
+    """
+    manifest = app.spec.get("manifest", [])
+    default_observer_schema = {
+        "metadata": ["name", "namespace", "labels"],
+        "spec": {},
+        "status": {}
+    }
+
+    for resource in manifest:
+        if "observer_schema" not in resource or not resource["observer_schema"]:
+            resource["observer_schema"] = default_observer_schema.copy()
+
+    return app
+Reference code:
+def generate_default_observer_schema(app):
+    """Generate the default observer schema for each Kubernetes resource present in
+    ``spec.manifest`` for which a custom observer schema hasn't been specified.
+
+    Args:
+        app (krake.data.kubernetes.Application): The application for which to generate a
+            default observer schema
+    """
+
+    app.status.mangled_observer_schema = deepcopy(app.spec.observer_schema)
+
+    for resource_manifest in app.spec.manifest:
+        try:
+            get_kubernetes_resource_idx(
+                app.status.mangled_observer_schema, resource_manifest
+            )
+
+        except IndexError:
+            # Only create a default observer schema, if a custom observer schema hasn't
+            # been set by the user.
+            app.status.mangled_observer_schema.append(
+                generate_default_observer_schema_dict(
+                    resource_manifest,
+                    first_level=True,
+                )
+            )
+
+--------------------------------------------------
+analyze:
+prompt blur---missing context information--missing repo-level
+Function implementation requires importing the get_kubernetes_resource_idx function from other files
+
+==================== 62b43427903eeb48555d3ea5 ====================
+file_path: sqlparams/__init__.py
+project: cpburnz/python-sql-parameters
+name: format
+
+prompt:
+Convert the SQL query to use the out-style parameters instead of
+the in-style parameters.
+
+*sql* (:class:`str` or :class:`bytes`) is the SQL query.
+
+*params* (:class:`~collections.abc.Mapping` or :class:`~collections.abc.Sequence`)
+contains the set of in-style parameters. It maps each parameter
+(:class:`str` or :class:`int`) to value. If :attr:`.SQLParams.in_style`
+is a named parameter style. then *params* must be a :class:`~collections.abc.Mapping`.
+If :attr:`.SQLParams.in_style` is an ordinal parameter style, then
+*params* must be a :class:`~collections.abc.Sequence`.
+
+Returns a :class:`tuple` containing:
+
+-       The formatted SQL query (:class:`str` or :class:`bytes`).
+
+-       The set of converted out-style parameters (:class:`dict` or
+        :class:`list`).
+
+steps:
+1. Retrieve the input SQL statement and input parameters.
+2. Convert the SQL statement using the method self._converter.convert.
+3. Return the converted SQL statement along with the original parameters.
+
+generate_code:
+
+def format(
+    self,
+    sql: AnyStr,
+    params: Union[Dict[Union[str, int], Any], Sequence[Any]],
+) -> Tuple[AnyStr, Union[Dict[Union[str, int], Any], Sequence[Any]]]:
+    converted_sql = self._converter.convert(sql)
+    return converted_sql, params
+Reference code:
+def format(
+		self,
+		sql: SqlStr,
+		params: Union[Dict[Union[str, int], Any], Sequence[Any]],
+	) -> Tuple[SqlStr, Union[Dict[str, Any], Sequence[Any]]]:
+		"""
+		Convert the SQL query to use the out-style parameters instead of
+		the in-style parameters.
+
+		*sql* (:class:`LiteralString`, :class:`str`, or :class:`bytes`) is
+		the SQL query.
+
+		*params* (:class:`~collections.abc.Mapping` or :class:`~collections.abc.Sequence`)
+		contains the set of in-style parameters. It maps each parameter
+		(:class:`str` or :class:`int`) to value. If :attr:`.SQLParams.in_style`
+		is a named parameter style. then *params* must be a :class:`~collections.abc.Mapping`.
+		If :attr:`.SQLParams.in_style` is an ordinal parameter style, then
+		*params* must be a :class:`~collections.abc.Sequence`.
+
+		Returns a :class:`tuple` containing:
+
+		-	The formatted SQL query (:class:`LiteralString`, :class:`str` or
+			:class:`bytes`).
+
+		-	The set of converted out-style parameters (:class:`dict` or
+			:class:`list`).
+		"""
+		# Normalize query encoding to simplify processing.
+		if isinstance(sql, str):
+			use_sql = sql
+			string_type = str
+		elif isinstance(sql, bytes):
+			use_sql = sql.decode(_BYTES_ENCODING)
+			string_type = bytes
+		else:
+			raise TypeError("sql:{!r} is not a unicode or byte string.".format(sql))
+
+		# Strip comments.
+		use_sql = self.__strip_comments_from_sql(use_sql)
+
+		# Replace in-style with out-style parameters.
+		use_sql, out_params = self.__converter.convert(use_sql, params)
+
+		# Make sure the query is returned as the proper string type.
+		if string_type is bytes:
+			out_sql = use_sql.encode(_BYTES_ENCODING)
+		else:
+			out_sql = use_sql
+
+		# Return converted SQL and out-parameters.
+		return out_sql, out_params
+analyze:
+prompt blur---missing context information--missing repo-level
+Implementations in functions require calling some methods from the context class
+--------------------------------------------------
