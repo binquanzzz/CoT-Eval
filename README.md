@@ -11,7 +11,7 @@ low-quality CoTs reveals that LLMs can improve CoT, especially when providing de
 
 # Project Structure
 ```text
-├── 📁 annotations            # Manual annotation results, including DeepSeek-R1, Gemini-2.0-Flash-Thinking, and o1-2024-12-17 on coderEval and SWE-Bench (New Feature).
+├── 📁 annotations         #ℹ️Manual annotation results, including DeepSeek-R1, Gemini-2.0-Flash-Thinking, and o1-2024-12-17 on coderEval and SWE-Bench (New Feature).
 │   ├── 📁 deepseek-coderEval-analyze-data                     
 │   │   ├── 📄 deepseek-false-output-1.txt
 │   │   ├── 📄 deepseek-false-output-2.txt
@@ -42,18 +42,18 @@ low-quality CoTs reveals that LLMs can improve CoT, especially when providing de
 │       ├── 📄 o1-output-2.txt
 │       ├── …
 │       └── 📄 o1-output-19.txt
-├── 📁 codebook            # Contains the results of building the codebook
+├── 📁 codebook            #💡Contains the results of building the codebook
 │   └── 📄 codebook.txt
-├── 📁 CoT_examples 
-│   ├── 📄 external_factors_examples.md
-│   ├── 📄 internal_factors_examples.md
-│   └── 📄 taxonomy_CoT.png
-├── 📁 LLM_gen_CoT_results # DeepSeek-R1, Gemini-2.0-Flash-Thinking, and o1-2024-12-17 generate CoT results on coderEval and SWE-Bench (New Feature)
-│   ├── 📄 CoderEval_humanLabel_deepseek-r1_solutions.jsonl
-│   ├── 📄 CoderEval_humanLabel_gemini-2.0-flash-thinking-exp-01-21_solutions_step.jsonl
-│   ├── 📄 CoderEval_humanLabel_o1-2024-12-17_solutions_steps.jsonl
-│   ├── 📄 SWE-bench-NF_deepseek-r1_solutions_final.jsonl
-│   ├── 📄 SWE-bench-NF_gemini-2.0-flash-thinking-exp-01-21_solutions_final.jsonl
-│   └── 📄 SWE-bench-NF_o1-2024-12-17_solutions_final.jsonl
-└── 📁 prompt              # Prompt for generating CoT
-    └── 📄 prompt.md
+├── 📁 CoT_examples        #💡Taxonomy of factors influencing CoT quality and examples
+│   ├── 📓 external_factors_examples.md
+│   ├── 📓 internal_factors_examples.md
+│   └── 🖼️ taxonomy_CoT.png
+├── 📁 LLM_gen_CoT_results #📌DeepSeek-R1, Gemini-2.0-Flash-Thinking, and o1-2024-12-17 generate CoT results on coderEval and SWE-Bench (New Feature)
+│   ├── ⚙️ CoderEval_humanLabel_deepseek-r1_solutions.jsonl
+│   ├── ⚙️ CoderEval_humanLabel_gemini-2.0-flash-thinking-exp-01-21_solutions_step.jsonl
+│   ├── ⚙️ CoderEval_humanLabel_o1-2024-12-17_solutions_steps.jsonl
+│   ├── ⚙️ SWE-bench-NF_deepseek-r1_solutions_final.jsonl
+│   ├── ⚙️ SWE-bench-NF_gemini-2.0-flash-thinking-exp-01-21_solutions_final.jsonl
+│   └── ⚙️ SWE-bench-NF_o1-2024-12-17_solutions_final.jsonl
+└── 📁 prompt              #💡Prompt for generating CoT
+    └── 📓 prompt.md
