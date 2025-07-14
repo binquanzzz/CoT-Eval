@@ -13,35 +13,17 @@ low-quality CoTs reveals that LLMs can improve CoT, especially when providing de
 ```text
 ├── 📁 annotations         #ℹ️Manual annotation results, including DeepSeek-R1, Gemini-2.0-Flash-Thinking, and o1-2024-12-17 on coderEval and SWE-Bench (New Feature).
 │   ├── 📁 deepseek-coderEval-analyze-data                     
-│   │   ├── 📄 deepseek-false-output-1.txt
-│   │   ├── 📄 deepseek-false-output-2.txt
-│   │   ├── …
-│   │   └── 📄 deepseek-false-output-17.txt
+│   │   └── 📄 deepseek-false-output-[1-17].txt
 │   ├── 📁 deepseek-swe-bench-analyze-data
-│   │   ├── 📄 deepseek-r1-output-1.txt
-│   │   ├── 📄 deepseek-r1-output-2.txt
-│   │   ├── …
-│   │   └── 📄 deepseek-r1-output-19.txt
+│   │   └── 📄 deepseek-r1-output-[1-19].txt
 │   ├── 📁 gemini-coderEval-analyze-data
-│   │   ├── 📄 gemini-false-output-1.txt
-│   │   ├── 📄 gemini-false-output-2.txt
-│   │   ├── …
-│   │   └── 📄 gemini-false-output-17.txt
+│   │   └── 📄 gemini-false-output-[1-17].txt
 │   ├── 📁 gemini-swe-bench-analyze-data
-│   │   ├── 📄 gemini-output-1.txt
-│   │   ├── 📄 gemini-output-2.txt
-│   │   ├── …
-│   │   └── 📄 gemini-output-19.txt
+│   │   └── 📄 gemini-output-[1-19].txt
 │   ├── 📁 gpt-coderEval-analyze-data
-│   │   ├── 📄 o1-false-output-1.txt
-│   │   ├── 📄 o1-false-output-2.txt
-│   │   ├── …
-│   │   └── 📄 o1-false-output-17.txt
+│   │   └── 📄 o1-false-output-[1-17].txt
 │   └── 📁 gpt-swe-bench-analyze-data
-│       ├── 📄 o1-output-1.txt
-│       ├── 📄 o1-output-2.txt
-│       ├── …
-│       └── 📄 o1-output-19.txt
+│       └── 📄 o1-output-[1-19].txt
 ├── 📁 codebook            #💡Contains the results of building the codebook
 │   └── 📄 codebook.txt
 ├── 📁 CoT_examples        #💡Taxonomy of factors influencing CoT quality and examples
